@@ -181,9 +181,7 @@ func analyzeWorkflow(path string, rawParams []string, env validate.Env, strict b
 		a.env.Calls = calls
 		calls.Walk(g)
 	}
-	findings := validate.Structural(g)
-	findings = append(findings, validate.Values(doc, g)...)
-	findings = append(findings, validate.Linearity(g)...)
+	findings := validate.Intrinsic(doc, g)
 	findings = append(findings, validate.Calls(g, env)...)
 	if calls != nil {
 		findings = append(findings, subworkflowFindings(calls)...)
