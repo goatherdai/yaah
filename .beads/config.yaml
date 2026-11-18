@@ -72,6 +72,4 @@
 # - github.token    → use GITHUB_TOKEN env var instead
 
 sync:
-    remote: goatherdai/yaah
-routing:
-    mode: explicit
+    remote: "git+https://github.com/goatherdai/yaah.git"

@@ -7,7 +7,6 @@ proxieddb/
 bd.sock
 bd.sock.startlock
 sync-state.json
-interactions.jsonl
 last-touched
 .exclusive-lock
 
