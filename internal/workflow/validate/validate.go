@@ -29,6 +29,19 @@ func Structural(g *ir.Graph) []Diagnostic {
 	return out
 }
 
+// Intrinsic runs the document-intrinsic families over a resolved graph and the
+// document it came from, in catalog order: Structural, Values, Linearity. It is
+// the shared middle of Validate, the subworkflow registry, and the CLI
+// analysis, so adding an intrinsic family means changing one place rather than
+// three. Host-relative families (Authority, Cost, Calls) take an Env the caller
+// resolves from the live host and stay separate.
+func Intrinsic(doc *spec.Document, g *ir.Graph) []Diagnostic {
+	out := Structural(g)
+	out = append(out, Values(doc, g)...)
+	out = append(out, Linearity(g)...)
+	return out
+}
+
 // Validate is the end-to-end seam: workflow document bytes in, the
 // resolved graph and its diagnostics out. A document that strict decoding
 // or resolution rejects never becomes a graph, so the failure is reported
@@ -54,8 +67,5 @@ func Validate(data []byte) (*ir.Graph, []Diagnostic) {
 	if err != nil {
 		return nil, Diagnose(err)
 	}
-	out := Structural(g)
-	out = append(out, Values(doc, g)...)
-	out = append(out, Linearity(g)...)
-	return g, out
+	return g, Intrinsic(doc, g)
 }

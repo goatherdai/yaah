@@ -208,10 +208,7 @@ func (r *Registry) Load(name string) (*Entry, error) {
 	}
 	e.Document = doc
 	e.Graph = g
-	findings := validate.Structural(g)
-	findings = append(findings, validate.Values(doc, g)...)
-	findings = append(findings, validate.Linearity(g)...)
-	e.Findings = findings
+	e.Findings = validate.Intrinsic(doc, g)
 	r.remember(e)
 	return e, nil
 }
