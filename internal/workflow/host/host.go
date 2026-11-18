@@ -151,13 +151,22 @@ func (rt *Runtime) Start(ctx context.Context, d exec.Dispatch) (exec.Handle, err
 	if err != nil {
 		return exec.Handle{}, err
 	}
-	req := dispatch.DispatchRequest{
+	 req := dispatch.DispatchRequest{
 		Description: descriptionFor(d.Node),
 		Prompt:      prompt,
 		Lane:        lane,
 		Params:      paramsFor(d.Node),
 		Timeout:     d.Timeout,
 		Runner:      rt.Runner,
+	}
+	if d.Node.Network != "" || d.Node.Grants != nil {
+		// A posture the door cannot honor is a silent downgrade: the node
+		// would run with more authority than the document declares. Refuse
+		// instead of guessing — the host that can honor the posture passes
+		// it explicitly through its own runner/retained configuration.
+		return exec.Handle{}, fmt.Errorf(
+			"workflow/host: node %s declares an isolation posture (network or grants); the shared dispatch cannot enforce it — configure the runtime's own grants/network or run the node on a lane that can enforce it",
+			d.Node.Path)
 	}
 	if lane == dispatch.LaneProposal {
 		// A proposal sealed by a run that cannot settle it is a leak the
