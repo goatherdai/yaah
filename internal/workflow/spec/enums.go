@@ -101,6 +101,22 @@ func nodeKindValues() []string {
 	}
 }
 
+// EnumValues returns the accepted values of a registered enum type, in the
+// declaration order used by the decoder and the JSON Schema emitter. The
+// argument is a zero value of the enum type, for example spec.NodeKind("").
+// It returns nil when the type is not a registered enum.
+//
+// It exists so a consumer that mirrors a spec enum — the resolved graph's
+// parallel enums, for instance — can assert parity in a test: a value added
+// to the registry must also be handled on the other side.
+func EnumValues(enum any) []string {
+	values, ok := enumRegistry[reflect.TypeOf(enum)]
+	if !ok {
+		return nil
+	}
+	return append([]string(nil), values...)
+}
+
 // checkEnum validates a decoded string against the registry. Types not in
 // the registry pass through unchecked.
 func checkEnum(t reflect.Type, s, path string) error {
