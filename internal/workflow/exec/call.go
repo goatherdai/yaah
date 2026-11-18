@@ -104,12 +104,12 @@ func (r *Run) callStep(ctx context.Context, path string) (bool, error) {
 		// the proof of what it did — so the node records the same id it would
 		// on success: the parent's trace points at the child's records either
 		// way (yaah-0u0v.25), and a failed child is not an unmentioned child.
+		// The child's disposition is recorded structured; the reason below is
+		// a rendering of it, not the source a replay reads back.
 		st.CallRunID = res.ChildRunID
-		reason := ReasonCallFailed + ": subworkflow " + n.Workflow + " (run " + res.ChildRunID + ")"
-		if res.Reason != "" {
-			reason += " — " + res.Reason
-		}
-		return true, r.failTerminal(path, reason)
+		st.CallChildStatus = res.Status
+		st.CallChildReason = res.Reason
+		return true, r.failTerminal(path, callFailureReason(n.Workflow, res))
 	}
 	// The child's bindings are the node's value: a map under the output name,
 	// recorded as JSON the same way a structured report is, so a template
@@ -136,6 +136,7 @@ func (r *Run) callStep(ctx context.Context, path string) (bool, error) {
 		Value:    text,
 	})
 	st.CallRunID = res.ChildRunID
+	st.CallChildStatus = res.Status
 	return true, r.derive(NodeSucceededEvent{NodePath: n.Path, Outputs: outputNames(st)})
 }
 
@@ -167,6 +168,18 @@ func callDepthOf(n *ir.Node) int {
 		return 0
 	}
 	return *n.MaxDepth
+}
+
+// callFailureReason renders the human-facing reason for a child that ran but
+// did not succeed. The structured facts are recorded on NodeState
+// (CallChildStatus, CallChildReason); this string is a rendering of them, so
+// a reader that needs the child's disposition must not parse it back out.
+func callFailureReason(workflow string, res CallResult) string {
+	reason := ReasonCallFailed + ": subworkflow " + workflow + " (run " + res.ChildRunID + ")"
+	if res.Reason != "" {
+		reason += " — " + res.Reason
+	}
+	return reason
 }
 
 func marshalCallOutputs(out map[string]string) (string, error) {

@@ -244,10 +244,20 @@ type NodeState struct {
 	Combined any
 
 	// CallRunID (yaah-0u0v.23) is the child run's identity when a call node's
-	// nested workflow succeeded — the run record its state lives under, so a
+	// nested workflow ran — the run record its state lives under, so a
 	// report or an audit can follow a call into the workflow it ran. Empty
-	// before the first call and on a node that did not succeed.
+	// before the first call and on a node whose door never produced a child.
 	CallRunID string
+
+	// CallChildStatus and CallChildReason are the nested workflow's own
+	// disposition when a call node's child ran: CallChildStatus is the child's
+	// RunStatus and CallChildReason its reason. They are the structured facts
+	// a replay reads back; Reason is the rendered "call_failed: ..." line a
+	// human sees, never the source a reader parses the child's outcome out of.
+	// CallChildReason is empty on success (the child's Reason there is a
+	// rendering detail) and on a door error, where no child ran.
+	CallChildStatus RunStatus
+	CallChildReason string
 
 	// Candidates, Chosen, Selection, SelectPolicy, and Verdict are a select
 	// node's own ledger (yaah-0u0v.20): what it chose among, which one won, the

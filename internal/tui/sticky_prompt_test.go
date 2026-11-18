@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goatherdai/yaah/internal/tui/components/messages"
 	"github.com/gdamore/tcell/v2"
+	"github.com/goatherdai/yaah/internal/tui/components/messages"
 )
 
 // TestAddPrompt_RendersInStream_DoesNotPin verifies the submit-path
