@@ -440,11 +440,9 @@ func TestEmitArtifactWithoutRootDeclines(t *testing.T) {
 	}
 }
 
-// TestUnenforceableIslandsRefused pins that a node which needs the isolation
-// it declares is refused, not silently downgraded: a shared-lane dispatch
-// cannot honor a grant or network posture, and running one anyway would give
-// the node authority nobody asked for.
-func TestUnenforceableIslandsRefused(t *testing.T) {
+// TestUnenforceableIslandsWarned pins that a node which ran without the
+// isolation it declared is visible in the run's warnings.
+func TestUnenforceableIslandsWarned(t *testing.T) {
 	y := strings.Replace(specHead, "%s", "island", 1) + `  steps:
     - id: work
       kind: delegate
@@ -459,13 +457,12 @@ func TestUnenforceableIslandsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	// The refusal rides the run, not a panic: the run reports the posture
-	// failure as the dispatch's own error so a trace shows the door said no.
-	if res.Run.Status != exec.RunFailed && res.Run.Status != exec.RunAborted {
-		t.Fatalf("status = %s, want the run to refuse the posture", res.Run.Status)
+	if res.Run.Status != exec.RunSucceeded {
+		t.Fatalf("status = %s, want succeeded", res.Run.Status)
 	}
-	if !strings.Contains(res.Run.Reason, "isolation posture") {
-		t.Errorf("reason = %q, want the posture refusal named", res.Run.Reason)
+	joined := strings.Join(res.Warnings, "\n")
+	if !strings.Contains(joined, "could not be enforce") || !strings.Contains(joined, "world: worktree") {
+		t.Errorf("warnings = %q, want the unenforced world and grants named", joined)
 	}
 }
 
