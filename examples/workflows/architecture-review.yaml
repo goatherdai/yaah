@@ -1,0 +1,136 @@
+# Architecture review — a workflow example (parallel aspect audit).
+#
+# What it does: one dispatch per architectural concern of the repo, each
+# sub-agent reading the workspace and reporting findings on its slice; the
+# synthesizing step merges the per-aspect reports into a single document.
+# The meta-agent's role is two-phase: scope (which aspects, in what depth)
+# then synthesis (dedupe, arbitrate, and prioritize the findings). This is
+# the document a maintainer runs from inside a yaah session:
+#
+#     yaah workflow validate examples/workflows/architecture-review.yaml
+#     yaah workflow run examples/workflows/architecture-review.yaml \
+#                       --param focus='coupling, error handling' \
+#                       --artifact-root .
+#
+# Shape, and why: `scope` inventories the repo and decides the aspect set
+# (or narrows the caller-provided `focus` list to what actually exists); the
+# fan-out runs one independent analysis per aspect so no single report has to
+# hold the whole repo in its head; `synthesis` reads all of the reports and
+# writes the final assessment. The settle step exists because the fan-out's
+# proposals are reviews, not edits: nothing is applied, so the run discards
+# each proposal after its content has been read.
+
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: architecture-review
+  version: 1.0.0
+
+spec:
+  params:
+    # Comma-separated aspect hints to steer the review; when left empty,
+    # the scope step picks the aspects itself from the repository shape.
+    focus:
+      type: string
+      required: false
+      default: ""
+
+  defaults:
+    lane: proposal
+    network: deny_all
+    grants:
+      - path: cmd
+        access: readonly
+      - path: internal
+        access: readonly
+      - path: docs
+        access: readonly
+
+  budgets:
+    max_dispatches: 12
+    max_concurrent_dispatches: 3
+    max_wall_clock_seconds: 1800
+
+  steps:
+    # Scope settles the aspect set first; the reviews' fanout dispatches one
+    # sub-agent per aspect; the synthesis step merges them into the report.
+    - id: scope
+      kind: delegate
+      role: developer
+      lane: report
+      output: plan
+      prompt: |
+        Decide the aspect list this architecture review covers. Caller-supplied
+        focus areas: {{ params.focus }}. When that list is empty, derive the
+        aspects from the repository shape you can read (module count, entry
+        points, test layout). The aspect vocabulary is:
+        boundaries, data-flow, error-handling, testing, docs, dependencies,
+        performance, security.
+
+        Return ONLY a JSON object (no prose, no code fence):
+
+            {"aspects": ["<name>", "..."], "notes": "one line on why these"}
+
+        Keep the list between 2 and 5 aspects. Do not modify anything.
+
+    - id: reviews
+      kind: fanout
+      needs: [scope]
+      over: { from: steps.scope.output.aspects }
+      as: aspect
+      max_parallel: 3
+      on_item_failure: continue
+      collect: reviews
+      body:
+        - id: review
+          kind: delegate
+          role: developer
+          output: review
+          prompt: |
+            Audit one architectural concern of this repository: {{ aspect }}.
+
+            Walk the sources under the repo root that this concern touches.
+            Report findings, each with a file:line anchor, ordered by the
+            risk it carries. Keep the report under 300 words. Do not modify
+            anything.
+
+            Return ONLY a JSON object (no prose, no code fence):
+
+                {"aspect": "<name>",
+                 "findings": [{"anchor": "path:line", "note": "one line"}],
+                 "summary": "one paragraph, <=3 sentences"}
+
+    - id: assess
+      kind: settle
+      needs: [reviews]
+      proposals: { from: steps.reviews.collect }
+      action: discard
+      on_empty: skip
+
+    - id: synthesize
+      kind: delegate
+      role: developer
+      lane: report
+      needs: [assess]
+      output: synthesis
+      prompt: |
+        Synthesize the per-aspect reviews below into one architecture
+        assessment. Deduplicate findings that name the same defect, rank by
+        risk to the consumer of this repo, and call out any finding the
+        reviews disagree on rather than averaging over it. Do not introduce
+        findings the reviews did not make.
+
+        {{ steps.reviews.collect }}
+
+        Return ONLY a JSON object (no prose, no code fence):
+
+            {"headline": "one line verdict",
+             "findings": [{"anchor": "path:line", "note": "one line",
+                           "severity": "high|medium|low"}]}
+
+    - id: report
+      kind: emit
+      needs: [synthesize]
+      value: |
+        architecture review: {{ steps.synthesize.output }}
+      path: artifacts/architecture-review.md
