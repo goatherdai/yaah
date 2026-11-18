@@ -1,8 +1,8 @@
 package input
 
 import (
-	"github.com/goatherdai/yaah/internal/tui/colors"
 	"github.com/gdamore/tcell/v2"
+	"github.com/goatherdai/yaah/internal/tui/colors"
 	"github.com/rivo/tview"
 )
 

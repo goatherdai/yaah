@@ -3,12 +3,12 @@ package tui
 import (
 	"strings"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/goatherdai/yaah/internal/tui/components/activity"
 	"github.com/goatherdai/yaah/internal/tui/components/banner"
 	"github.com/goatherdai/yaah/internal/tui/components/infopane"
 	"github.com/goatherdai/yaah/internal/tui/components/input"
 	localTodo "github.com/goatherdai/yaah/internal/tui/components/todo"
-	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 

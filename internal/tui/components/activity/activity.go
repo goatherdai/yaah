@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/goatherdai/yaah/internal/tui/colors"
 	"github.com/goatherdai/yaah/internal/tui/lolcat"
-	"github.com/gdamore/tcell/v2"
 	"github.com/navidys/tvxwidgets"
 	"github.com/rivo/tview"
 )
