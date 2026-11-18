@@ -26,7 +26,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/goatherdai/yaah/internal/workflow/exec"
@@ -278,6 +277,7 @@ func (rt *Runtime) Call(_ context.Context, req exec.CallRequest) (exec.CallResul
 		return exec.CallResult{
 			Succeeded:  true,
 			ChildRunID: st.CallRunID,
+			Status:     st.CallChildStatus,
 			Outputs:    outputs,
 		}, nil
 	}
@@ -292,27 +292,10 @@ func (rt *Runtime) Call(_ context.Context, req exec.CallRequest) (exec.CallResul
 		return exec.CallResult{
 			Succeeded:  false,
 			ChildRunID: st.CallRunID,
-			Status:     exec.RunFailed,
-			Reason:     callChildReason(req.Node.Workflow, st),
+			Status:     st.CallChildStatus,
+			Reason:     st.CallChildReason,
 		}, nil
 	}
-}
-
-// callChildReason recovers the child's own reason from the reason the parent
-// composed for the call node: the fold's composition is fixed —
-// "call_failed: subworkflow <name> (run <id>)[ — <child reason>]" — so the
-// prefix names what to cut, and a reason that does not match the recorded id
-// is carried verbatim rather than guessed at.
-func callChildReason(workflow string, st *exec.NodeState) string {
-	prefix := fmt.Sprintf("%s: subworkflow %s (run %s)",
-		exec.ReasonCallFailed, workflow, st.CallRunID)
-	if st.Reason == prefix || st.Reason == "" {
-		return ""
-	}
-	if rest, ok := strings.CutPrefix(st.Reason, prefix); ok {
-		return strings.TrimPrefix(rest, " — ")
-	}
-	return st.Reason
 }
 
 // DispatchIDs lists the recorded dispatch ids in canonical order, so a report

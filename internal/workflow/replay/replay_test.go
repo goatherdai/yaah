@@ -159,17 +159,20 @@ func TestDoorAnswersSettlementsFromTheRecords(t *testing.T) {
 
 // TestDoorAnswersCallsFromTheRecordedNode pins the call half: a recorded
 // successful call's bindings are the answer, the child run id is the recorded
-// one, and a failed call recovers the child's own reason from the composed
-// one so the node's fold states the same outcome it recorded.
+// one, and a failed call answers with the child's recorded status and reason
+// so the node's fold states the same outcome it recorded. The reason is read
+// from the structured fields, not parsed back out of the rendered Reason line.
 func TestDoorAnswersCallsFromTheRecordedNode(t *testing.T) {
 	cp := exec.Checkpoint{RunID: "run-x", Status: exec.RunSucceeded}
 	cp.Trace = append(cp.Trace, dispatchRecord("steps.other#1", "steps.other", 1, "report", "completed", "x"))
 	cp.Nodes = []*exec.NodeState{
 		{Path: "steps.sub", Kind: ir.KindCall, State: exec.StateSucceeded,
-			CallRunID: "run-x!steps.sub", Result: `{"summary":"done"}`},
+			CallRunID: "run-x!steps.sub", CallChildStatus: exec.RunSucceeded, Result: `{"summary":"done"}`},
 		{Path: "steps.bad", Kind: ir.KindCall, State: exec.StateFailed,
-			CallRunID: "run-x!steps.bad",
-			Reason:    fmt.Sprintf("%s: subworkflow child (run run-x!steps.bad) — the child finished failed", exec.ReasonCallFailed)},
+			CallRunID: "run-x!steps.bad", CallChildStatus: exec.RunFailed, CallChildReason: "the child finished failed",
+			// A rendered line that deliberately does NOT contain the child's
+			// reason: replay must answer from CallChildReason, not parse this.
+			Reason: fmt.Sprintf("%s: subworkflow child (run run-x!steps.bad)", exec.ReasonCallFailed)},
 	}
 	rt, err := New(cp)
 	if err != nil {
@@ -194,6 +197,9 @@ func TestDoorAnswersCallsFromTheRecordedNode(t *testing.T) {
 	}
 	if fail.Succeeded || fail.ChildRunID != "run-x!steps.bad" || fail.Reason != "the child finished failed" {
 		t.Errorf("failed call result = %+v, want the recorded child failure recovered", fail)
+	}
+	if fail.Status != exec.RunFailed {
+		t.Errorf("failed call status = %q, want the recorded child status", fail.Status)
 	}
 }
 

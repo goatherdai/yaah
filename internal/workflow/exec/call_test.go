@@ -73,6 +73,9 @@ func TestCallStepRunsSubworkflow(t *testing.T) {
 	if st.CallRunID != "caller!steps.sub" {
 		t.Errorf("CallRunID = %q, want the child run the door named", st.CallRunID)
 	}
+	if st.CallChildStatus != RunSucceeded {
+		t.Errorf("CallChildStatus = %q, want the child's success recorded structured", st.CallChildStatus)
+	}
 	// The rendered params reached the door: the delegate's report text
 	// interpolated into the call's `task` param.
 	asked := fake.Calls()
@@ -129,6 +132,14 @@ func TestCallStepChildFailed(t *testing.T) {
 		if !strings.Contains(st.Reason, want) {
 			t.Errorf("reason %q does not name %q", st.Reason, want)
 		}
+	}
+	// The child's disposition is recorded structured, so a replay reads the
+	// facts rather than parsing the rendered reason line above.
+	if st.CallChildStatus != RunFailed {
+		t.Errorf("CallChildStatus = %q, want the child's failure recorded structured", st.CallChildStatus)
+	}
+	if st.CallChildReason != "steps.w1: dispatch_failed: the provider exploded" {
+		t.Errorf("CallChildReason = %q, want the child's own reason", st.CallChildReason)
 	}
 }
 
