@@ -9,7 +9,7 @@
 #
 #     yaah workflow validate examples/workflows/architecture-review.yaml
 #     yaah workflow run examples/workflows/architecture-review.yaml \
-#                       --param focus='coupling, error handling'
+#                       --param focus='coupling, error handling' \
 #                       --artifact-root .
 #
 # Shape, and why: `scope` inventories the repo and decides the aspect set
@@ -28,11 +28,12 @@ metadata:
 
 spec:
   params:
-    # Comma-separated aspect hints to steer the review; when empty, the
-    # scope step picks the aspects itself from the repository shape.
+    # Comma-separated aspect hints to steer the review; when left empty,
+    # the scope step picks the aspects itself from the repository shape.
     focus:
       type: string
       required: false
+      default: ""
 
   defaults:
     lane: proposal
@@ -78,7 +79,7 @@ spec:
       over: { from: steps.scope.output.aspects }
       as: aspect
       max_parallel: 3
-      on_item_failure: collect_failures
+      on_item_failure: continue
       collect: reviews
       body:
         - id: review
