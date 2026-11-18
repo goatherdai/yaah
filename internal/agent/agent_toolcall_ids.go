@@ -3,7 +3,7 @@ package agent
 import (
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // dedupeToolCallIDs returns msg with every tool call id made unique across

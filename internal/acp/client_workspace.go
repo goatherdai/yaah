@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 const terminalOutputByteLimit = 1 << 20

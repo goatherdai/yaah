@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // pruneBig is a tool-result body small enough to escape ToolResultMaxLen

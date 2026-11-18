@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // GrepTool searches file contents using ripgrep with a Go-native fallback.

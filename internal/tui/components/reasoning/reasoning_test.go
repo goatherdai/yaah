@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/tui/colors"
-	"github.com/buchenberg/yaah/internal/tui/lolcat"
+	"github.com/goatherdai/yaah/internal/tui/colors"
+	"github.com/goatherdai/yaah/internal/tui/lolcat"
 )
 
 func TestNew(t *testing.T) {

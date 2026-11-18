@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // TestEventInterfaceSatisfaction — the compile-time assertions in events.go

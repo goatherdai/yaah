@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/jobs"
 )
 
 // TestDelegateSharedLaneRecordsWorld pins the per-dispatch world for a

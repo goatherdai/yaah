@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // CalculateTool evaluates mathematical expressions with zero external dependencies.

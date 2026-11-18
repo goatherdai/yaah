@@ -10,8 +10,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/sessions"
+	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/sessions"
 )
 
 // The interactive --resume picker. `yaah --resume` (no value) resolves

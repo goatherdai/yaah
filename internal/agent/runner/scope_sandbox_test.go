@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
-	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
-	"github.com/buchenberg/yaah/internal/config"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
+	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 // TestWorktreeSandboxOutlivesRunEndDiscard pins the yaah-95ri.6 fix: the

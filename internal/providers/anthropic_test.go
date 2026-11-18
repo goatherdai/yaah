@@ -13,7 +13,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // ── lowering helpers ─────────────────────────────────────────────

@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/goatherd-runtime"
-	"github.com/buchenberg/yaah/internal/agent/supervision"
-	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/goatherd-runtime"
+	"github.com/goatherdai/yaah/internal/agent/supervision"
+	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // explodeTool always fails: the plan's "sub-agent that keeps failing a

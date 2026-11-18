@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
 
-	"github.com/buchenberg/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 // Plan 7 Phase 3: agents.subagent.network is lowered into the posture a confined

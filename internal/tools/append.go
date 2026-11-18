@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io/fs"
 
-	"github.com/buchenberg/yaah/internal/prompts"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // AppendTool appends to a file without reading or rewriting it. It is the

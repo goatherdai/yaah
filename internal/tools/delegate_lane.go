@@ -1,6 +1,6 @@
 package tools
 
-import "github.com/buchenberg/yaah/internal/dispatch"
+import "github.com/goatherdai/yaah/internal/dispatch"
 
 // DelegateLane selects the substrate/output pairing for one delegate
 // dispatch (yaah-7yf): where the work runs, and what comes back. The

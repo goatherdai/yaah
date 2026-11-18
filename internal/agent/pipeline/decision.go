@@ -3,7 +3,7 @@ package pipeline
 import (
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/permissions"
 )
 
 // RuleOrigin names the policy stage that produced a Decision — or that

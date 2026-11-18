@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent/recovery"
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/agent/recovery"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // TestRetained_RehydrateScopesBySession pins the session boundary: a proposal

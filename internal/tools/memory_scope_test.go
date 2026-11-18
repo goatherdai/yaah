@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/memory"
 )
 
 func openScopeTestDB(t *testing.T) *memory.DB {

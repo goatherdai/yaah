@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/dispatch"
-	"github.com/buchenberg/yaah/internal/workflow/exec"
+	"github.com/goatherdai/yaah/internal/dispatch"
+	"github.com/goatherdai/yaah/internal/workflow/exec"
 )
 
 func decodeCompletion(t *testing.T, env dispatch.ProposalEnvelope) exec.Completion {

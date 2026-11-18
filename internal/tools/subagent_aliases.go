@@ -6,8 +6,8 @@ package tools
 import (
 	"context"
 
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 type (

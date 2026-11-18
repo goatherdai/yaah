@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/jobs"
 )
 
 // Lane selects the substrate/output pairing for one dispatch: where the work

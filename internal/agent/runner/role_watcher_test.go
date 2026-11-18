@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // countingResolver implements tools.RoleResolver for watcher tests: it

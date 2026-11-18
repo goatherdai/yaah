@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	kernel "github.com/buchenberg/goatherd-kernel"
+	kernel "github.com/goatherdai/goatherd-kernel"
 )
 
 // newToolbeltTestRegistry builds the .5 startup shape: a belt that

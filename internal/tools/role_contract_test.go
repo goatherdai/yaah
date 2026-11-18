@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/rolefile"
+	"github.com/goatherdai/yaah/internal/rolefile"
 )
 
 const roleWithContract = `---

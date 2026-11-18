@@ -11,7 +11,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // editEntry is a single edit operation within a multi-edit call.

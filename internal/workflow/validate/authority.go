@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // Rule codes for the authority and cost family. A workflow file is a

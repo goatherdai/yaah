@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
-	"github.com/buchenberg/yaah/internal/config"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 // SandboxOpener constructs one unprovisioned goatherdsandbox.Sandbox from the

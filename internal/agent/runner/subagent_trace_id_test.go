@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // staticReplyProvider answers every request with one final message, so a

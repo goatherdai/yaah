@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 	"github.com/spf13/cobra"
 
-	"github.com/buchenberg/yaah/internal/agent/recovery"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/agent/recovery"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // shepherdCmd surfaces the supervision state's leftovers (adoption

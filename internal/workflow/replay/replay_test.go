@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/workflow/exec"
-	"github.com/buchenberg/yaah/internal/workflow/ir"
-	"github.com/buchenberg/yaah/internal/workflow/trace"
+	"github.com/goatherdai/yaah/internal/workflow/exec"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/trace"
 )
 
 func dispatchRecord(id, node string, attempt int, status, reason, result string) trace.Record {

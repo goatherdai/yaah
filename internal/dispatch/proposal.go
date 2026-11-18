@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/prompts"
-	"github.com/buchenberg/yaah/internal/toolargs"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/toolargs"
 )
 
 // ProposalTool settles retained sub-agent proposals (Plan 7 Phase 2). A retained

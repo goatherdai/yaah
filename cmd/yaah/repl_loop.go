@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/repl"
-	"github.com/buchenberg/yaah/internal/worldinfo"
+	"github.com/goatherdai/yaah/internal/agent"
+	"github.com/goatherdai/yaah/internal/repl"
+	"github.com/goatherdai/yaah/internal/worldinfo"
 )
 
 // printWorldBanner writes the session's workspace/dispatch-world summary

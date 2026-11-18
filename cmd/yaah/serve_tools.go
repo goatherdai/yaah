@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/mcp"
-	"github.com/buchenberg/yaah/internal/observability"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/mcp"
+	"github.com/goatherdai/yaah/internal/observability"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 func registerServeTools(

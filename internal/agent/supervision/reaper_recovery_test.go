@@ -7,12 +7,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
-	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
+	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 
-	"github.com/buchenberg/yaah/internal/agent/recovery"
+	"github.com/goatherdai/yaah/internal/agent/recovery"
 )
 
 // mustGitRepo builds a committed repository — worktrees and captures both

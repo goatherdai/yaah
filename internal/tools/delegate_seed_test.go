@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/jobs"
 )
 
 // TestDelegate_SeedFromValidation pins the threading guards: seed_from needs

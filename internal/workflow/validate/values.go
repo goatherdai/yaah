@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
-	"github.com/buchenberg/yaah/internal/workflow/spec"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/spec"
 )
 
 // Rule codes for the value and template family. Like the structural codes,

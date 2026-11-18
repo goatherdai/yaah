@@ -9,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 
-	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
-	"github.com/buchenberg/yaah/internal/agent/recovery"
+	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
+	"github.com/goatherdai/yaah/internal/agent/recovery"
 )
 
 // shepherdOrphanEnv builds the crash-window state the prune tests

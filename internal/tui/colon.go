@@ -4,7 +4,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/buchenberg/yaah/internal/tui/components/command"
+	"github.com/goatherdai/yaah/internal/tui/components/command"
 )
 
 // handleColonInput dispatches text entered with a leading ":" as a colon

@@ -10,12 +10,12 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/buchenberg/yaah/internal/agent/events"
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/observability"
-	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/agent/events"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/observability"
+	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // MaxIterationsError is returned when the agent loop exhausts its configured

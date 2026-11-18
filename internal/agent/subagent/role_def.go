@@ -10,8 +10,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/buchenberg/yaah/internal/permissions"
-	"github.com/buchenberg/yaah/internal/rolefile"
+	"github.com/goatherdai/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/rolefile"
 )
 
 // RoleDef is the persistent format for a sub-agent role definition,

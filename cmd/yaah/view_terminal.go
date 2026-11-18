@@ -6,9 +6,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/spinner"
-	"github.com/buchenberg/yaah/internal/toolfmt"
+	"github.com/goatherdai/yaah/internal/agent"
+	"github.com/goatherdai/yaah/internal/spinner"
+	"github.com/goatherdai/yaah/internal/toolfmt"
 )
 
 // terminalView implements agent.View for REPL terminal output.

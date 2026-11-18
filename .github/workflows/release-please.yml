@@ -99,11 +99,11 @@ jobs:
           # v0.77.0 asset and reproduced locally with go1.27.)
           test -n "$TAG_NAME" || { echo "missing release tag"; exit 1; }
           ldflags="-s -w"
-          ldflags="$ldflags -X github.com/buchenberg/yaah/cmd/yaah.version=$TAG_NAME"
+          ldflags="$ldflags -X github.com/goatherdai/yaah/cmd/yaah.version=$TAG_NAME"
           # HEAD, not GITHUB_SHA: on dispatch the latter is the branch tip,
           # which may be newer than the tag being rebuilt.
-          ldflags="$ldflags -X github.com/buchenberg/yaah/cmd/yaah.commit=$(git rev-parse --short=7 HEAD)"
-          ldflags="$ldflags -X github.com/buchenberg/yaah/cmd/yaah.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ldflags="$ldflags -X github.com/goatherdai/yaah/cmd/yaah.commit=$(git rev-parse --short=7 HEAD)"
+          ldflags="$ldflags -X github.com/goatherdai/yaah/cmd/yaah.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           go build -trimpath -ldflags "$ldflags" -o "$out" .
 
       # The registry manifest's distribution.binary map needs a per-platform

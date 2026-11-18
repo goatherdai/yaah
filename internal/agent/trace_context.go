@@ -4,7 +4,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
 )
 
 // traceSessionContext builds the immutable session-start context from the

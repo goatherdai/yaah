@@ -7,12 +7,12 @@ import (
 	"sort"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/observability"
+	"github.com/goatherdai/yaah/internal/observability"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/buchenberg/yaah/internal/tui/components/messages"
+	"github.com/goatherdai/yaah/internal/tui/components/messages"
 )
 
 // markDirty sets the refresh flag. Call instead of refreshMessages()

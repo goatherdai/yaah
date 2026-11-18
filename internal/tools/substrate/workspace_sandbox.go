@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 )
 
 // SandboxWorkspace runs a tool's filesystem and process operations inside an

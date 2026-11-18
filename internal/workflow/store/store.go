@@ -33,9 +33,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/workflow/exec"
-	"github.com/buchenberg/yaah/internal/workflow/trace"
+	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/workflow/exec"
+	"github.com/goatherdai/yaah/internal/workflow/trace"
 )
 
 // Store adapts *memory.DB to exec.Store.

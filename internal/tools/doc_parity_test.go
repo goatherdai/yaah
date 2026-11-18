@@ -22,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // docForTool maps a registered tool name to the doc file base name in

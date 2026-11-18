@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // readMaxLines bounds one read call. A limit of 0 (or absent) means "no

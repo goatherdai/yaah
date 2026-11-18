@@ -14,9 +14,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/cwdpath"
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/cwdpath"
+	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/permissions"
 )
 
 // normalizeToolNames trims a tools list and drops blank entries,

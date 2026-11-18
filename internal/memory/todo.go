@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/todo"
+	"github.com/goatherdai/yaah/internal/todo"
 )
 
 // SaveTodos persists the todo list as a JSON blob.

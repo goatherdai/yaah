@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/providers"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/providers"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 var okResponse = &types.ChatResponse{

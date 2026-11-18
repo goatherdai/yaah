@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // Rule codes for the proposal linearity family. This is the last family the

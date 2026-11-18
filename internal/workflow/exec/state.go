@@ -3,7 +3,7 @@ package exec
 import (
 	"time"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // State is one node's position in the lifecycle. The vocabulary is exactly the

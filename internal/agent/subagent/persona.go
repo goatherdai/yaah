@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/buchenberg/yaah/internal/permissions"
-	"github.com/buchenberg/yaah/internal/prompts"
-	"github.com/buchenberg/yaah/internal/rolefile"
+	"github.com/goatherdai/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/rolefile"
 )
 
 // Persona is a primary-capable agent persona (yaah-21uk D4): an

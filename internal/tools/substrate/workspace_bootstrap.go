@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/goatherd-runtime/effect"
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/goatherd-runtime/effect"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 )
 
 // workspace_bootstrap.go implements the D1 bootstrap (isolated-workspace plan

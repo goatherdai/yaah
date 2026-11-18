@@ -3,8 +3,8 @@ package yaah
 import (
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/providers"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/providers"
 )
 
 // TestResolveCompact_UsesConfiguredModel pins yaah-v378.4: the resolved

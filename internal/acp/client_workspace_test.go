@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
-	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
+	"github.com/goatherdai/goatherd-runtime/sandbox/containment"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 func testContext(t *testing.T) context.Context {

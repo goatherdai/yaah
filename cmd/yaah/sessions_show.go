@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/sessions"
+	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/sessions"
 	"github.com/spf13/cobra"
 )
 

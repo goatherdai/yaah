@@ -8,9 +8,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/toolfmt"
-	"github.com/buchenberg/yaah/internal/tui/components/activity"
+	"github.com/goatherdai/yaah/internal/agent"
+	"github.com/goatherdai/yaah/internal/toolfmt"
+	"github.com/goatherdai/yaah/internal/tui/components/activity"
 )
 
 func (t *App) HandleEvent(event agent.Event) {

@@ -7,7 +7,7 @@ import (
 )
 
 // defaultConfigYAML is the scaffold written to disk on first run.
-const defaultConfigYAML = `# yaah configuration — see https://github.com/buchenberg/yaah
+const defaultConfigYAML = `# yaah configuration — see https://github.com/goatherdai/yaah
 # Edit this file to configure providers and defaults.
 # Environment variables can be referenced as ${VAR_NAME}.
 

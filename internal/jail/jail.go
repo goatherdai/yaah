@@ -18,10 +18,10 @@ package jail
 import (
 	"runtime"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
-	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
-	"github.com/buchenberg/goatherd-runtime/sandbox/seatbelt"
-	"github.com/buchenberg/goatherd-runtime/sandbox/winacl"
+	"github.com/goatherdai/goatherd-runtime/sandbox/containment"
+	"github.com/goatherdai/goatherd-runtime/sandbox/landlock"
+	"github.com/goatherdai/goatherd-runtime/sandbox/seatbelt"
+	"github.com/goatherdai/goatherd-runtime/sandbox/winacl"
 )
 
 // detectors maps a GOOS to the member module's Detect. Read-only in

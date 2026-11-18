@@ -3,16 +3,16 @@ package dispatch
 import (
 	"context"
 	"errors"
-	"github.com/buchenberg/yaah/internal/tools/substrate"
+	"github.com/goatherdai/yaah/internal/tools/substrate"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/config"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 // containerReportRuntime builds a host-session retained runtime whose report

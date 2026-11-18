@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/todo"
+	"github.com/goatherdai/yaah/internal/todo"
 )
 
 func TestFormat_Pending(t *testing.T) {

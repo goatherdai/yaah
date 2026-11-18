@@ -3,7 +3,7 @@ package providers
 import (
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/providers/catalog"
+	"github.com/goatherdai/yaah/internal/providers/catalog"
 )
 
 // modelWindows is the hand-maintained context-window table. It sits above the

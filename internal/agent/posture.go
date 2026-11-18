@@ -1,6 +1,6 @@
 package agent
 
-import "github.com/buchenberg/yaah/internal/permissions"
+import "github.com/goatherdai/yaah/internal/permissions"
 
 // approvalPosture is the derived approval configuration for one session: both
 // postures the config exposes, decided once from the scalars, so the gate

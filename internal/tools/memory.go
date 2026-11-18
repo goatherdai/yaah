@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // memoryMaxTopK bounds one memory search. The schema advertises the same

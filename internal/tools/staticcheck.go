@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // StaticcheckTool runs go vet and/or staticcheck, returning structured diagnostics.

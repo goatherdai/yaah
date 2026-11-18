@@ -6,13 +6,13 @@ import (
 	"log/slog"
 	"strings"
 
-	goatherd "github.com/buchenberg/goatherd-runtime"
-	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
-	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/jail"
-	"github.com/buchenberg/yaah/internal/tools"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
+	"github.com/goatherdai/goatherd-runtime/sandbox/containment"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/jail"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // recordConfinementFact appends the resolved jail placement to a sub-agent's

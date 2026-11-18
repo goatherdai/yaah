@@ -3,8 +3,8 @@ package acp
 import (
 	"context"
 
-	"github.com/buchenberg/yaah/internal/control"
-	"github.com/buchenberg/yaah/internal/todo"
+	"github.com/goatherdai/yaah/internal/control"
+	"github.com/goatherdai/yaah/internal/todo"
 )
 
 // forwardCtrl translates control-channel messages into session/update

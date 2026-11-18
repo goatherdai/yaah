@@ -3,8 +3,8 @@ module orch-recovery-seed
 go 1.26.0
 
 require (
-	github.com/buchenberg/goatherd-kernel v0.18.0
-	github.com/buchenberg/goatherd-runtime v0.21.0
+	github.com/goatherdai/goatherd-kernel v0.18.0
+	github.com/goatherdai/goatherd-runtime v0.21.0
 )
 
 require (

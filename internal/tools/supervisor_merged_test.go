@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
 )
 
 func TestSupervisorTool_HaltMergedScope_ReportedNotErrored(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // TestEndSessionRowIsIdempotent pins the one write a session makes on its way

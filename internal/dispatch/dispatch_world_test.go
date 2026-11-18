@@ -2,12 +2,12 @@ package dispatch
 
 import (
 	"errors"
-	"github.com/buchenberg/yaah/internal/tools/substrate"
+	"github.com/goatherdai/yaah/internal/tools/substrate"
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 func TestResolveDispatchWorld(t *testing.T) {

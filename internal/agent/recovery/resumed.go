@@ -3,7 +3,7 @@ package recovery
 import (
 	"sort"
 
-	goatherd "github.com/buchenberg/goatherd-runtime"
+	goatherd "github.com/goatherdai/goatherd-runtime"
 )
 
 // ResumedExecution is the execution outcome recovery records for a scope

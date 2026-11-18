@@ -6,15 +6,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	agentctx "github.com/buchenberg/yaah/internal/agent/context"
-	"github.com/buchenberg/yaah/internal/agent/llm"
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/permissions"
-	"github.com/buchenberg/yaah/internal/pubsub"
-	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	agentctx "github.com/goatherdai/yaah/internal/agent/context"
+	"github.com/goatherdai/yaah/internal/agent/llm"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/pubsub"
+	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // Provider is the interface for model backends.

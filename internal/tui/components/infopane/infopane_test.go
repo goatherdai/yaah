@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/tui/colors"
-	"github.com/buchenberg/yaah/internal/tui/components/mcpinfo"
-	worldstatus "github.com/buchenberg/yaah/internal/worldinfo"
+	"github.com/goatherdai/yaah/internal/tui/colors"
+	"github.com/goatherdai/yaah/internal/tui/components/mcpinfo"
+	worldstatus "github.com/goatherdai/yaah/internal/worldinfo"
 )
 
 func TestFormat_Basic(t *testing.T) {

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	agentctx "github.com/buchenberg/yaah/internal/agent/context"
-	"github.com/buchenberg/yaah/internal/pubsub"
-	"github.com/buchenberg/yaah/internal/types"
+	agentctx "github.com/goatherdai/yaah/internal/agent/context"
+	"github.com/goatherdai/yaah/internal/pubsub"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // compactionRecordingProvider records every compaction request. It can force

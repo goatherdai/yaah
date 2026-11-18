@@ -15,11 +15,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/control"
-	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
-	"github.com/buchenberg/yaah/internal/worldinfo"
+	"github.com/goatherdai/yaah/internal/agent"
+	"github.com/goatherdai/yaah/internal/control"
+	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/worldinfo"
 )
 
 // ProtocolVersion is the ACP major version this server speaks.

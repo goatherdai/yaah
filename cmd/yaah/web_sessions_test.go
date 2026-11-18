@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/cwdpath"
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/sessions"
+	"github.com/goatherdai/yaah/internal/cwdpath"
+	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/sessions"
 )
 
 // sessionsStub installs a canned sessionList on a bare webServer (the

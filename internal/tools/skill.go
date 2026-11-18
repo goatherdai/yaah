@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/prompts"
-	"github.com/buchenberg/yaah/internal/skills"
+	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/skills"
 )
 
 // SkillTool loads, creates, edits, archives, and searches skills.

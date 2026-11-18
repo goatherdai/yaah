@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"github.com/buchenberg/yaah/internal/tui/components/command"
+	"github.com/goatherdai/yaah/internal/tui/components/command"
 )
 
 // modePickerNames and modePickerDescriptions back the :mode picker. The

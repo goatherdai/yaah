@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // ReplaceTool performs regex find-and-replace across multiple files.

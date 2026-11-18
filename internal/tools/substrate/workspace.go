@@ -17,10 +17,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
-	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
+	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
+	"github.com/goatherdai/goatherd-runtime/sandbox/containment"
 
-	"github.com/buchenberg/yaah/internal/atomicfile"
+	"github.com/goatherdai/yaah/internal/atomicfile"
 )
 
 // ExecRequest describes a command to run in a workspace.

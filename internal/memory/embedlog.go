@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/observability"
+	"github.com/goatherdai/yaah/internal/observability"
 )
 
 // embedWarnInterval is the minimum spacing between embedding-failure

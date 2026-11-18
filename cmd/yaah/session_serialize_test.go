@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/control"
+	"github.com/goatherdai/yaah/internal/control"
 )
 
 // The run gate must queue a second run until the first returns: overlapping

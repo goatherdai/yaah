@@ -3,7 +3,7 @@ package yaah
 import (
 	"os"
 
-	"github.com/buchenberg/yaah/internal/doctor"
+	"github.com/goatherdai/yaah/internal/doctor"
 	"github.com/spf13/cobra"
 )
 

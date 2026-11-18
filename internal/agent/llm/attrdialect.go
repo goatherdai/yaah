@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // Attribute-style tool-call dialect: a function tag carrying the tool name

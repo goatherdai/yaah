@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // Selection tests (bead yaah-0u0v.20). Every test drives the real reducer

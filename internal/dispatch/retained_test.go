@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
 )
 
 // decodeProposalEnvelope unmarshals a proposal envelope and fails the test on

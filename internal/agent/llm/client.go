@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent/errorclassify"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/agent/errorclassify"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // Client wraps a provider with streaming, retry, and fallback logic.

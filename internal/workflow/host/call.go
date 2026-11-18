@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/workflow/exec"
-	"github.com/buchenberg/yaah/internal/workflow/ir"
-	"github.com/buchenberg/yaah/internal/workflow/registry"
-	"github.com/buchenberg/yaah/internal/workflow/validate"
+	"github.com/goatherdai/yaah/internal/workflow/exec"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/registry"
+	"github.com/goatherdai/yaah/internal/workflow/validate"
 )
 
 // call.go is the door half of a call node (yaah-0u0v.23): resolve the name

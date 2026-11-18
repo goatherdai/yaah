@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
 
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/jobs"
 )
 
 // TestSessionCloseKeepsFollowupsOpenThroughTheDrain pins the teardown

@@ -5,8 +5,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/agent/llm"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/agent/llm"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // buildToolsForLevel selects tool definitions based on ToolsLevel config,

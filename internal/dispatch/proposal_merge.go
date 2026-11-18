@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	goatherd "github.com/buchenberg/goatherd-runtime"
+	goatherd "github.com/goatherdai/goatherd-runtime"
 )
 
 // proposal_merge.go implements the explicit worktree-only three-way apply

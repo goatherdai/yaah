@@ -3,7 +3,7 @@ package validate
 import (
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // MaxCallDepth is the ceiling on a call node's declared recursion depth.

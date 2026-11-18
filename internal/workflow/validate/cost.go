@@ -4,8 +4,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
-	"github.com/buchenberg/yaah/internal/workflow/spec"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/spec"
 )
 
 // costSaturate bounds the arithmetic behind a worst-case estimate. A graph

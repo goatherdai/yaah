@@ -28,12 +28,12 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
-	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 
-	"github.com/buchenberg/yaah/internal/dispatch"
-	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/dispatch"
+	"github.com/goatherdai/yaah/internal/jobs"
 )
 
 // mustBenchGit runs git in dir, failing the test on error — the same helper

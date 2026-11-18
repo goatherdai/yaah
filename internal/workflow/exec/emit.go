@@ -1,7 +1,7 @@
 package exec
 
 import (
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // ReasonEmitValueFailed prefixes an emit node whose declared value could not

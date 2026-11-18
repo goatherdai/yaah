@@ -6,9 +6,9 @@ import (
 
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/buchenberg/yaah/internal/agent/events"
-	"github.com/buchenberg/yaah/internal/observability"
-	"github.com/buchenberg/yaah/internal/wake"
+	"github.com/goatherdai/yaah/internal/agent/events"
+	"github.com/goatherdai/yaah/internal/observability"
+	"github.com/goatherdai/yaah/internal/wake"
 )
 
 // wakeObserver turns the engine's lifecycle notifications into OTel spans and

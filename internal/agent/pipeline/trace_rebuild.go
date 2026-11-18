@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/yaah/internal/types"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // TraceTranscript is a provider-shaped conversation reconstructed from one

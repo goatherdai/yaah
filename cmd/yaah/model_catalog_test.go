@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/control"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/control"
 )
 
 // testModelCatalog builds a modelCatalog whose discovery phase is a test stub.

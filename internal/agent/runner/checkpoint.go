@@ -3,9 +3,9 @@ package runner
 import (
 	"context"
 
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
-	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
+	"github.com/goatherdai/yaah/internal/agent"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
 )
 
 // ShepherdTurnCheckpointer adapts agent.TurnCheckpointer to the shared

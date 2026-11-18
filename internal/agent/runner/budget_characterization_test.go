@@ -16,9 +16,9 @@ package runner
 import (
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/agent/budget"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/agent/budget"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 const charRole = subagent.SubAgentRole("charrole") // never registered: RoleProfileFor returns zero

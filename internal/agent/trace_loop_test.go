@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 func TestLoopWritesReconstructableTranscript(t *testing.T) {

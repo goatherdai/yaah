@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/yaah/internal/dispatch"
-	"github.com/buchenberg/yaah/internal/memory"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/yaah/internal/dispatch"
+	"github.com/goatherdai/yaah/internal/memory"
 )
 
 func TestTraceConflictsAggregate(t *testing.T) {

@@ -3,9 +3,9 @@ package agent
 import (
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/permissions"
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // TestAuthorizeSensitiveAskSkipsSavedAllow pins the carve-out half that the

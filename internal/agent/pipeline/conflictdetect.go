@@ -3,8 +3,8 @@ package pipeline
 import (
 	"context"
 
-	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // ConflictDetectMiddleware inspects tool results after each batch and

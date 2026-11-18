@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // consolidateKindMemory is the only product the nudge consolidates today:

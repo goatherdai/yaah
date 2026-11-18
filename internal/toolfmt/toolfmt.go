@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
 )
 
 var grepMatchRe = regexp.MustCompile(`^\d+:`)

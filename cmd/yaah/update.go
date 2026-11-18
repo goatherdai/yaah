@@ -7,13 +7,13 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/doctor"
-	"github.com/buchenberg/yaah/internal/update"
+	"github.com/goatherdai/yaah/internal/doctor"
+	"github.com/goatherdai/yaah/internal/update"
 	"github.com/spf13/cobra"
 )
 
 // GitHub repo for release checks. Can be overridden via -ldflags for forks.
-var gitHubRepo = "buchenberg/yaah"
+var gitHubRepo = "goatherdai/yaah"
 
 // updateCmd is the `yaah update` subcommand. Without flags, it checks
 // for a newer release and applies it automatically.

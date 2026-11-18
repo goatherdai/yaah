@@ -7,11 +7,11 @@ import (
 	"log/slog"
 	"os"
 
-	goatherd "github.com/buchenberg/goatherd-runtime"
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
-	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/jobs"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
+	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/jobs"
 )
 
 // subAgentSandbox returns the workspace substrate for a sub-agent: its own

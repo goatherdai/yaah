@@ -9,13 +9,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
-	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
-	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/jail"
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
+	"github.com/goatherdai/goatherd-runtime/sandbox/containment"
+	"github.com/goatherdai/goatherd-runtime/sandbox/landlock"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/jail"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // A scratch that cannot be prepared must FAIL the dispatch, not be silently

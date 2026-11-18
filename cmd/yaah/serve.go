@@ -11,10 +11,10 @@ import (
 
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/mcp"
-	"github.com/buchenberg/yaah/internal/observability"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/agent"
+	"github.com/goatherdai/yaah/internal/mcp"
+	"github.com/goatherdai/yaah/internal/observability"
+	"github.com/goatherdai/yaah/internal/types"
 	"github.com/spf13/cobra"
 )
 

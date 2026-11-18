@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/goatherdai/yaah/internal/agent"
 )
 
 // modeStatusLine renders /mode with no argument: the current session's

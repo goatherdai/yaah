@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	agentctx "github.com/buchenberg/yaah/internal/agent/context"
-	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
+	agentctx "github.com/goatherdai/yaah/internal/agent/context"
+	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 func TestPreflightTokens_emptyMessages(t *testing.T) {

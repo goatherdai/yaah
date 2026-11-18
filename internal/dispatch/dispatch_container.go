@@ -4,15 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/buchenberg/yaah/internal/tools/substrate"
+	"github.com/goatherdai/yaah/internal/tools/substrate"
 	"strings"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/jobs"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/jobs"
 )
 
 // dispatch_container.go implements per-dispatch container worlds (yaah-ihfh.3).

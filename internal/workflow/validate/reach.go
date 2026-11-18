@@ -1,6 +1,6 @@
 package validate
 
-import "github.com/buchenberg/yaah/internal/workflow/ir"
+import "github.com/goatherdai/yaah/internal/workflow/ir"
 
 // unreachable checks WF004: every node must be reachable from the entry
 // set, which is the top-level steps that declare no needs — the nodes a

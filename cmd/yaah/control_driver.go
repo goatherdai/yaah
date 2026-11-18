@@ -12,8 +12,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/control"
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/control"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // sendCtrlMsg delivers one control-plane prompt onto a consumer's channel,

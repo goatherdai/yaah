@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/yaah/internal/memory"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/yaah/internal/memory"
 )
 
 // Evictor is the kernel-first half of session deletion, wired on a

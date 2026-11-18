@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/banner"
+	"github.com/goatherdai/yaah/internal/banner"
 	"github.com/rivo/tview"
 )
 

@@ -3,7 +3,7 @@ package validate
 import (
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // templatesNotRecursive checks WF013: no template recursion, no function

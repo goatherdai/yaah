@@ -6,9 +6,9 @@ import (
 	"io"
 	"os"
 
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/mcp"
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/mcp"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // initMCP starts configured MCP servers, registers their tools into

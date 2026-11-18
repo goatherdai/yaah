@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
 )
 
 func TestResolveDispatchScopeCap(t *testing.T) {

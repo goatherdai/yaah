@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // Join execution (yaah-0u0v.19).

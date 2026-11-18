@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // SubAgentJobsTool provides list/status/cancel/wait for background

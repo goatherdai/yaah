@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/buchenberg/yaah/internal/tools/substrate"
+	"github.com/goatherdai/yaah/internal/tools/substrate"
 )
 
 // Tool-result policy: truncation and multi-step outcomes live here and

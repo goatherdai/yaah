@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/tui/colors"
+	"github.com/goatherdai/yaah/internal/tui/colors"
 )
 
 func Icon(name string) string {

@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
-	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
 )
 
 // TestShepherdTurnCheckpointer_RestoreRevertsWorkspace verifies the adapter's

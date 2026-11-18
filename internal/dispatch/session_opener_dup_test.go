@@ -5,10 +5,10 @@ package dispatch
 // package boundaries. Keep the copies in sync.
 
 import (
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/sandboxfake"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/sandboxfake"
 )
 
 // cleanOpener hands out fresh fakes in call order — probe sandbox, then

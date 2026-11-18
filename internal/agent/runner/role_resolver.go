@@ -1,8 +1,8 @@
 package runner
 
 import (
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // SubAgentRoleResolver adapts the global subagent.RoleRegistry to the

@@ -6,9 +6,9 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/prompts"
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // buildSubAgentSysPrompt assembles the full system prompt for a sub-agent

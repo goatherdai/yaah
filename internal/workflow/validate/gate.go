@@ -3,8 +3,8 @@ package validate
 import (
 	"strings"
 
-	wfassert "github.com/buchenberg/yaah/internal/workflow/assert"
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	wfassert "github.com/goatherdai/yaah/internal/workflow/assert"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // CodeWF037 is declared in authority.go with the rest of the family's

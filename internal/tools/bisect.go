@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // BisectTool runs guided `git bisect` to find which commit introduced a bug.

@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	agentctx "github.com/buchenberg/yaah/internal/agent/context"
-	"github.com/buchenberg/yaah/internal/types"
+	agentctx "github.com/goatherdai/yaah/internal/agent/context"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // EstimatedTokens returns the estimated token count for all messages

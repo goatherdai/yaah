@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/prompts"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // LoopDetectedError is returned when the loop-detection middleware halts the

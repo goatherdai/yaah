@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/goatherd-runtime/effect"
-	"github.com/buchenberg/yaah/internal/prompts"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/goatherd-runtime/effect"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // apply_out.go is the accept seam of the isolated workspace (plan §2.3,

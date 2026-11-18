@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/process"
+	"github.com/goatherdai/yaah/internal/process"
 )
 
 // TestBackgroundProcessStartFailureIsError pins yaah-gvv: a launch failure is

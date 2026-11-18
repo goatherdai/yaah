@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"unicode/utf8"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // maxAssistantContentBytes is the ceiling on a single assistant message's

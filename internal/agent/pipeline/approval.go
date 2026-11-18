@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // GateDecision is the approval classification for a tool call. It is the

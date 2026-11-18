@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/workflow/validate"
+	"github.com/goatherdai/yaah/internal/workflow/validate"
 	"github.com/spf13/cobra"
 	"path/filepath"
 )

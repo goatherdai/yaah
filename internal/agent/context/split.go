@@ -1,7 +1,7 @@
 package context
 
 import (
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // TurnRange identifies a contiguous turn: a user message followed by its

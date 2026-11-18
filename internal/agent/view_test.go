@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/pubsub"
+	"github.com/goatherdai/yaah/internal/pubsub"
 )
 
 // recordingView captures events for test assertions.

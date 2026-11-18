@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/buchenberg/yaah/cmd/yaah"
-	"github.com/buchenberg/yaah/internal/jail"
+	"github.com/goatherdai/yaah/cmd/yaah"
+	"github.com/goatherdai/yaah/internal/jail"
 )
 
 func main() {

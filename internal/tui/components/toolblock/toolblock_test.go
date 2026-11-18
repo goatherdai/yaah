@@ -8,7 +8,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
-	"github.com/buchenberg/yaah/internal/tui/colors"
+	"github.com/goatherdai/yaah/internal/tui/colors"
 )
 
 func TestIcon_Known(t *testing.T) {

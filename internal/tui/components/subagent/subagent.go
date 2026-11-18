@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
 )
 
 // Block is the live state of one sub-agent row in the dedicated Subagents

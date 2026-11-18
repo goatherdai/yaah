@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/goatherd-runtime/effect"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/goatherd-runtime/effect"
 )
 
 // state.go implements the snapshot half of the fake: Capture records the

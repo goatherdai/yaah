@@ -37,8 +37,8 @@ import (
 	"sort"
 	"strings"
 
-	kernel "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/yaah/internal/prompts"
+	kernel "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // ToolFamily is one mountable family: a name, a one-line purpose for

@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/tools/substrate"
+	"github.com/goatherdai/yaah/internal/tools/substrate"
 )
 
 // confinement.go holds the retained lane's environment redirect. A confined

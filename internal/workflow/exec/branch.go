@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // Branch execution (yaah-0u0v.15).

@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // OpenAIClient sends chat completion requests to an OpenAI-compatible endpoint.

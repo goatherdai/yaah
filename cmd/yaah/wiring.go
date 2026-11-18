@@ -10,16 +10,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
-	"github.com/buchenberg/goatherd-runtime/sandbox/egress"
+	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
+	"github.com/goatherdai/goatherd-runtime/sandbox/egress"
 
-	"github.com/buchenberg/yaah/internal/agent/runner"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/agent/supervision"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/cwdpath"
-	"github.com/buchenberg/yaah/internal/dispatch"
-	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/agent/runner"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/agent/supervision"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/cwdpath"
+	"github.com/goatherdai/yaah/internal/dispatch"
+	"github.com/goatherdai/yaah/internal/memory"
 )
 
 func newAgentSession() (*agentSession, error) {

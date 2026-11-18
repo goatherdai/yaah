@@ -25,9 +25,9 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/jail"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/jail"
 )
 
 // Status is the derived session-level posture. It is display data only:

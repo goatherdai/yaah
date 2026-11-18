@@ -1,6 +1,6 @@
 package agent
 
-import "github.com/buchenberg/yaah/internal/pubsub"
+import "github.com/goatherdai/yaah/internal/pubsub"
 
 // View consumes agent events from the agent loop. Implementations include
 // the TUI (internal/tui), the REPL terminal output (cmd/yaah/terminalView),

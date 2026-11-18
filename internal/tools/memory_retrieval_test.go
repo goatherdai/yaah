@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/memory"
 )
 
 // fixedEmbedder returns one vector for every input, so every embedded entry

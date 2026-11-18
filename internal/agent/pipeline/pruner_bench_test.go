@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // Measured (AMD Ryzen 7 3700X, Go 1.26):

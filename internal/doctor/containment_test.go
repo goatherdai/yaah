@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/jail"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/jail"
 )
 
 // Plan 7 Phase 3: the pure decision behind CheckContainment, including the case

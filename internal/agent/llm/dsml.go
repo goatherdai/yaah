@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // DeepSeek's DSML tool-call dialect.

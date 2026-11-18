@@ -31,7 +31,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/providers/catalog"
+	"github.com/goatherdai/yaah/internal/providers/catalog"
 )
 
 const (

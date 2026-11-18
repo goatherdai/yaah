@@ -11,8 +11,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/buchenberg/yaah/internal/prompts"
-	"github.com/buchenberg/yaah/internal/rolefile"
+	"github.com/goatherdai/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/rolefile"
 )
 
 // RoleTool lets the agent list, show, create, edit, and delete sub-agent role

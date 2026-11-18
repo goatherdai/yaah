@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // GoModTool performs Go module operations (tidy, verify, list, graph, etc.).

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // NewQuestion maps one question-tool entry onto the control-plane message a

@@ -1,9 +1,9 @@
 package tui
 
 import (
-	"github.com/buchenberg/yaah/internal/tui/components/reasoning"
-	"github.com/buchenberg/yaah/internal/tui/components/subagent"
-	"github.com/buchenberg/yaah/internal/tui/components/toolblock"
+	"github.com/goatherdai/yaah/internal/tui/components/reasoning"
+	"github.com/goatherdai/yaah/internal/tui/components/subagent"
+	"github.com/goatherdai/yaah/internal/tui/components/toolblock"
 )
 
 // blocks.go — block operations (reasoning, tool, sub-agent).

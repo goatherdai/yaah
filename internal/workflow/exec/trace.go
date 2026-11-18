@@ -3,8 +3,8 @@ package exec
 import (
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
-	"github.com/buchenberg/yaah/internal/workflow/trace"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/trace"
 )
 
 // trace.go is the run's trace projection (yaah-0u0v.17): the one seam that

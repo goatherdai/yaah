@@ -45,8 +45,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
-	"github.com/buchenberg/yaah/internal/workflow/trace"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/trace"
 )
 
 // Errors a resume reports. They are distinct because the caller's response

@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/tui/colors"
-	"github.com/buchenberg/yaah/internal/tui/components/contextinfo"
-	"github.com/buchenberg/yaah/internal/tui/components/mcpinfo"
-	"github.com/buchenberg/yaah/internal/tui/components/sessioninfo"
-	worldsection "github.com/buchenberg/yaah/internal/tui/components/worldinfo"
-	"github.com/buchenberg/yaah/internal/worldinfo"
+	"github.com/goatherdai/yaah/internal/tui/colors"
+	"github.com/goatherdai/yaah/internal/tui/components/contextinfo"
+	"github.com/goatherdai/yaah/internal/tui/components/mcpinfo"
+	"github.com/goatherdai/yaah/internal/tui/components/sessioninfo"
+	worldsection "github.com/goatherdai/yaah/internal/tui/components/worldinfo"
+	"github.com/goatherdai/yaah/internal/worldinfo"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )

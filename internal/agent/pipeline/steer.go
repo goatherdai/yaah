@@ -3,7 +3,7 @@ package pipeline
 import (
 	"context"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // SteerMiddleware drains high-priority mid-turn steering messages.

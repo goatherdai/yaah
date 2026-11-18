@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	wfassert "github.com/buchenberg/yaah/internal/workflow/assert"
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	wfassert "github.com/goatherdai/yaah/internal/workflow/assert"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // uniqueReferences checks WF002: node ids are unique in their scope and

@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/cwdpath"
-	"github.com/buchenberg/yaah/internal/retention"
-	"github.com/buchenberg/yaah/internal/sessions"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/cwdpath"
+	"github.com/goatherdai/yaah/internal/retention"
+	"github.com/goatherdai/yaah/internal/sessions"
 	"github.com/spf13/cobra"
 )
 

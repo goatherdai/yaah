@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // GlobTool finds files matching a glob pattern.

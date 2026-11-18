@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // The streaming wire shapes are defined in internal/types (stream.go there):

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"sort"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // call.go is the call door (yaah-0u0v.23): one ready call node per scheduler

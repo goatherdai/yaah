@@ -2,7 +2,7 @@
 set -eu
 
 # yaah installer — one-liner:
-#   curl -fsSL https://raw.githubusercontent.com/buchenberg/yaah/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/goatherdai/yaah/main/install.sh | sh
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -14,7 +14,7 @@ info()  { printf "  ${GREEN}==>${NC} %s\n" "$1"; }
 warn()  { printf "  ${YELLOW}WARN${NC} %s\n" "$1"; }
 err()   { printf "  ${RED}ERROR${NC} %s\n" "$1"; exit 1; }
 
-REPO="buchenberg/yaah"
+REPO="goatherdai/yaah"
 
 # --- platform detection ---
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')

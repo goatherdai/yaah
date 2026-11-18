@@ -5,9 +5,9 @@ import (
 	"os"
 	"time"
 
-	goatherd "github.com/buchenberg/goatherd-runtime"
+	goatherd "github.com/goatherdai/goatherd-runtime"
 
-	"github.com/buchenberg/yaah/internal/agent/recovery"
+	"github.com/goatherdai/yaah/internal/agent/recovery"
 )
 
 // printRecoveryReport surfaces one startup recovery to the user

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // TestRetained_ContinueSeedsFromSealedProposal is the core "continue for N more

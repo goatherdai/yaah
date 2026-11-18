@@ -48,11 +48,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/dispatch"
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/workflow/exec"
-	"github.com/buchenberg/yaah/internal/workflow/ir"
-	"github.com/buchenberg/yaah/internal/workflow/registry"
+	"github.com/goatherdai/yaah/internal/dispatch"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/workflow/exec"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/registry"
 )
 
 // Runtime is the exec.Runtime door over the dispatch lane.

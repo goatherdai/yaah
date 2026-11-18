@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 type namedTestTool string

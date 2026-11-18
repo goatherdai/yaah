@@ -10,12 +10,12 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/workflow/exec"
-	"github.com/buchenberg/yaah/internal/workflow/host"
-	"github.com/buchenberg/yaah/internal/workflow/spec"
-	"github.com/buchenberg/yaah/internal/workflow/store"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/workflow/exec"
+	"github.com/goatherdai/yaah/internal/workflow/host"
+	"github.com/goatherdai/yaah/internal/workflow/spec"
+	"github.com/goatherdai/yaah/internal/workflow/store"
 	"github.com/spf13/cobra"
 )
 

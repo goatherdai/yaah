@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/permissions"
 	"gopkg.in/yaml.v3"
 )
 

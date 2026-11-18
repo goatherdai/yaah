@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/memory"
 )
 
 // dbStore adapts *memory.DB to Store. It exists for one reason: the store

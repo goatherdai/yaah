@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/jobs"
 )
 
 // Envelope status values. The set is closed: a lane that cannot describe its

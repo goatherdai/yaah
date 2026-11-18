@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // Body instances (yaah-0u0v.14, extended by yaah-0u0v.15).

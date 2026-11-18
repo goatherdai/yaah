@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // MkdirTool creates a directory inside the workspace, including any missing

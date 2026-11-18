@@ -8,7 +8,7 @@ package yaah
 import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	"github.com/buchenberg/yaah/internal/mcp"
+	"github.com/goatherdai/yaah/internal/mcp"
 )
 
 // SessionOptions carries everything the CLI flags (and serve mode)

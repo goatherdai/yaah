@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
-	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
+	"github.com/goatherdai/goatherd-runtime/sandbox/containment"
+	"github.com/goatherdai/goatherd-runtime/sandbox/landlock"
 )
 
 // TestConfinementScratchEnv_Redirects: the redirect points the housekeeping keys

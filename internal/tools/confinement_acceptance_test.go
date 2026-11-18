@@ -44,9 +44,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
-	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
-	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
+	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
+	"github.com/goatherdai/goatherd-runtime/sandbox/containment"
+	"github.com/goatherdai/goatherd-runtime/sandbox/landlock"
 )
 
 // confinedTestWorkspace mirrors the substrate test helper (test helpers do not

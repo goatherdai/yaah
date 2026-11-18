@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // capability_parity_test.go keeps the policy table honest about the two

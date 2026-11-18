@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // PowerShellTool runs a PowerShell command and returns its stdout.

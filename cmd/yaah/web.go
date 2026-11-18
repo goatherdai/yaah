@@ -21,12 +21,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/control"
-	"github.com/buchenberg/yaah/internal/cwdpath"
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/sessions"
+	"github.com/goatherdai/yaah/internal/agent"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/control"
+	"github.com/goatherdai/yaah/internal/cwdpath"
+	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/sessions"
 	"github.com/spf13/cobra"
 )
 

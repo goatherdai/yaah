@@ -11,7 +11,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/envelopecheck"
+	"github.com/goatherdai/yaah/internal/envelopecheck"
 )
 
 // resultEnvelopeDocs is the registry of result envelopes and the prompt file

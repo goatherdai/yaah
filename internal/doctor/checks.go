@@ -10,16 +10,16 @@ import (
 	"sort"
 	"strings"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/agent/recovery"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/jail"
-	"github.com/buchenberg/yaah/internal/update"
-	"github.com/buchenberg/yaah/internal/worldinfo"
+	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/agent/recovery"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/jail"
+	"github.com/goatherdai/yaah/internal/update"
+	"github.com/goatherdai/yaah/internal/worldinfo"
 )
 
 // Check represents a single diagnostic result.

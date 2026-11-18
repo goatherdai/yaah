@@ -16,13 +16,13 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
-	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 
-	"github.com/buchenberg/yaah/internal/dispatch"
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/workflow/exec"
+	"github.com/goatherdai/yaah/internal/dispatch"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/workflow/exec"
 )
 
 // retainedEnv builds the wiring the composition root injects for a live

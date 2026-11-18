@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/observability"
-	"github.com/buchenberg/yaah/internal/tui/components/activity"
+	"github.com/goatherdai/yaah/internal/observability"
+	"github.com/goatherdai/yaah/internal/tui/components/activity"
 )
 
 const (

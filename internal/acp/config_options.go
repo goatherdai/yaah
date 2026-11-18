@@ -3,7 +3,7 @@ package acp
 import (
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
 )
 
 // ModelOption is one selectable model, as the injected model catalog

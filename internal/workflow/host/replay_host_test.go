@@ -15,10 +15,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/workflow/exec"
-	"github.com/buchenberg/yaah/internal/workflow/replay"
-	"github.com/buchenberg/yaah/internal/workflow/store"
+	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/workflow/exec"
+	"github.com/goatherdai/yaah/internal/workflow/replay"
+	"github.com/goatherdai/yaah/internal/workflow/store"
 )
 
 // replayProjection is what an honest replay must reproduce: the run's

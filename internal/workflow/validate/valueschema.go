@@ -4,8 +4,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
-	"github.com/buchenberg/yaah/internal/workflow/spec"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/spec"
 )
 
 // fieldsDeclared checks WF012: a field a value reads exists in the shape the

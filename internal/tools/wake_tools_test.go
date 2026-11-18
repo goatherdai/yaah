@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/wake"
+	"github.com/goatherdai/yaah/internal/wake"
 )
 
 func testWakeManager(t *testing.T) *wake.Manager {

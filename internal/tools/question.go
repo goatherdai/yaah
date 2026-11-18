@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // QuestionEntry represents a single question to ask the user.

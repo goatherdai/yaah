@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/buchenberg/yaah/internal/tools/substrate"
+	"github.com/goatherdai/yaah/internal/tools/substrate"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -17,10 +17,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
-	"github.com/buchenberg/goatherd-runtime/effect"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+	"github.com/goatherdai/goatherd-runtime/effect"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
 )
 
 // git_delta.go implements the cross-backend settlement artifact for a

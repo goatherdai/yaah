@@ -3,14 +3,14 @@ package agent
 import (
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent/events"
-	"github.com/buchenberg/yaah/internal/agent/llm"
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/providers"
-	"github.com/buchenberg/yaah/internal/pubsub"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/agent/events"
+	"github.com/goatherdai/yaah/internal/agent/llm"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/providers"
+	"github.com/goatherdai/yaah/internal/pubsub"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // initMessages appends the user input to the conversation, persisting

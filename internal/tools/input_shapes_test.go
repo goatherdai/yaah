@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/rolefile"
+	"github.com/goatherdai/yaah/internal/rolefile"
 )
 
 // input_shapes_test.go pins was9.6: the schema advertises the typed shape, the

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/tui/colors"
+	"github.com/goatherdai/yaah/internal/tui/colors"
 	"github.com/rivo/uniseg"
 )
 

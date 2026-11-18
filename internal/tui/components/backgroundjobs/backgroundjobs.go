@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/tui/colors"
-	"github.com/buchenberg/yaah/internal/tui/components/subagent"
+	"github.com/goatherdai/yaah/internal/tui/colors"
+	"github.com/goatherdai/yaah/internal/tui/components/subagent"
 )
 
 // Format returns a compact listing of running background sub-agents.

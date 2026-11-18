@@ -11,8 +11,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/prompts"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // EvidenceThrashError is returned when the agent keeps issuing calls that

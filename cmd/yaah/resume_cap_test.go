@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/memory"
 )
 
 // TestRestoreMessagesCapsAssistantRows pins the replay half of the content cap

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/rolefile"
+	"github.com/goatherdai/yaah/internal/rolefile"
 )
 
 // role_mode_test.go pins yaah-21uk.13: the role tool exposes the mode

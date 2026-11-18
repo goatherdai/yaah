@@ -1,9 +1,9 @@
 # yaah installer for Windows
-#   iwr -useb https://raw.githubusercontent.com/buchenberg/yaah/main/install.ps1 | iex
+#   iwr -useb https://raw.githubusercontent.com/goatherdai/yaah/main/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
-$Repo = "buchenberg/yaah"
+$Repo = "goatherdai/yaah"
 
 $Arch = $env:PROCESSOR_ARCHITECTURE
 if ($Arch -eq "AMD64")   { $GoArch = "amd64" }

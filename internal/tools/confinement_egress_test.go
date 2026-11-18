@@ -21,10 +21,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
-	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
-	"github.com/buchenberg/goatherd-runtime/sandbox/egress"
-	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
+	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
+	"github.com/goatherdai/goatherd-runtime/sandbox/containment"
+	"github.com/goatherdai/goatherd-runtime/sandbox/egress"
+	"github.com/goatherdai/goatherd-runtime/sandbox/landlock"
 )
 
 // egressTestEnv skips unless this host can actually enforce egress.

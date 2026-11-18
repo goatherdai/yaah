@@ -13,9 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/agent"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 func TestArchitectureNamesDefaultPipelineInOrder(t *testing.T) {

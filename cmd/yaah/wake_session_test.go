@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/wake"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/wake"
 )
 
 func TestDeliverWakeQueuesFollowUpWithoutRequester(t *testing.T) {

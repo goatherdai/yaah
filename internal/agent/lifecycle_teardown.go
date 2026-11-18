@@ -3,8 +3,8 @@ package agent
 import (
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/agent/events"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/agent/events"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // publishDone publishes the final DoneEvent to the broker view.

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/yaah/internal/types"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // tracePayloadMaxBytes caps every free-text field written into the trace. The

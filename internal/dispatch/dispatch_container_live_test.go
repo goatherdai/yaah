@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/yaah/internal/config"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 // TestLive_DispatchContainerProposal is the live acceptance test for the

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // TestDispatchOpts pins the per-dispatch substrate override (yaah-ihfh.3): a

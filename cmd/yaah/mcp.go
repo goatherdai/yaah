@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/buchenberg/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/config"
 	"github.com/spf13/cobra"
 )
 

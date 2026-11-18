@@ -7,8 +7,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
-	"github.com/buchenberg/yaah/internal/workflow/trace"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/trace"
 )
 
 // Run is one workflow run: the graph, the ceilings, the door, and all of the

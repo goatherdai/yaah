@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // jobResult captures a delivery for test inspection.

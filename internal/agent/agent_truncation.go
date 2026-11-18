@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	agentctx "github.com/buchenberg/yaah/internal/agent/context"
+	agentctx "github.com/goatherdai/yaah/internal/agent/context"
 )
 
 // Re-exports for backward compatibility within the agent package (tests

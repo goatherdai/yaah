@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/observability"
+	"github.com/goatherdai/yaah/internal/agent"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/observability"
 )
 
 // initOtel initialises OpenTelemetry when configured. Serve mode passes

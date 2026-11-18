@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/agent"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 // TestConfigAgentConfigParity verifies that every field in agent.AgentConfig

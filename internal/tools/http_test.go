@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
+	"github.com/goatherdai/goatherd-runtime/sandbox/landlock"
 )
 
 func TestMain(m *testing.M) {

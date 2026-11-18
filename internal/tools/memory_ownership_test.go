@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/memory"
 )
 
 // memoryOwnershipCase is one (atom tier × atom owner × writer) combination

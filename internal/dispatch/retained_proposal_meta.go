@@ -11,9 +11,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	goatherd "github.com/buchenberg/goatherd-runtime"
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/types"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // maxDurableTranscriptBytes bounds the transcript carried in the sealed

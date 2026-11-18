@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // runCtxDone returns the turn context's Done channel; nil (no turn

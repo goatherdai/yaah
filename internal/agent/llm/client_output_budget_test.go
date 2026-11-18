@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/observability"
-	"github.com/buchenberg/yaah/internal/providers"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/observability"
+	"github.com/goatherdai/yaah/internal/providers"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // outputBudgetProvider fails with an output-budget error for the first

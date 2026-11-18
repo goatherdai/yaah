@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/jobs"
 )
 
 // TestSubAgentJobs_StatusReportsStillRunning pins the yaah-37s honesty fix:

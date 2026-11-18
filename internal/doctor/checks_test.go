@@ -10,12 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
 
-	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/config"
+	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 // TestCheckPipeline_MatchesSourceOfTruth pins the doctor's pipeline

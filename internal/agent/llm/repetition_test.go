@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // feedIn feeds content to the detector in deltas of deltaBytes so tests can

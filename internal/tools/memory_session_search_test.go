@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/memory"
 )
 
 // waitForMessageEmbedded polls SearchMessagesVector until wantID appears,

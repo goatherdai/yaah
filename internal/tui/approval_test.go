@@ -6,7 +6,7 @@ import (
 
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/control"
+	"github.com/goatherdai/yaah/internal/control"
 )
 
 func TestHandleControlMsg_Approval(t *testing.T) {

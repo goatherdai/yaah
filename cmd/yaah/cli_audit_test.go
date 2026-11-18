@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/cwdpath"
-	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/cwdpath"
+	"github.com/goatherdai/yaah/internal/memory"
 	"github.com/spf13/cobra"
 )
 

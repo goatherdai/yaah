@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/pubsub"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/pubsub"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // Must-deliver classification (yaah-8jou.6). The loop publishes rare,

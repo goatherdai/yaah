@@ -11,9 +11,9 @@ import (
 	"sync"
 	"testing"
 
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/sandboxfake"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/sandboxfake"
 )
 
 // gitRun runs one git command in dir and fails the test on a non-zero

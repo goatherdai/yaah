@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/acp"
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/sessions"
+	"github.com/goatherdai/yaah/internal/acp"
+	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/sessions"
 )
 
 // TestACPListSessionsCarriesMessageCount pins the session/list _meta

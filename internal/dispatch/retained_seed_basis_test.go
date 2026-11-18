@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	goatherd "github.com/buchenberg/goatherd-runtime"
+	goatherd "github.com/goatherdai/goatherd-runtime"
 
-	"github.com/buchenberg/yaah/internal/agent/recovery"
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/agent/recovery"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // TestRetained_ThreadedDeltaIgnoresHostDrift pins yaah-9m0c: a continuation

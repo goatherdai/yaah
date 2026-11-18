@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/permissions"
 )
 
 func TestExecute_RoleValidation(t *testing.T) {

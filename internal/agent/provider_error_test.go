@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent/llm"
+	"github.com/goatherdai/yaah/internal/agent/llm"
 )
 
 func TestProviderErrorLabelsProviderAndModel(t *testing.T) {

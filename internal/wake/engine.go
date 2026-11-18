@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/process"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/process"
 )
 
 // JobSource is the slice of the background-job manager the engine needs.

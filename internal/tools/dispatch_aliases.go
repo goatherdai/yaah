@@ -1,6 +1,6 @@
 package tools
 
-import "github.com/buchenberg/yaah/internal/dispatch"
+import "github.com/goatherdai/yaah/internal/dispatch"
 
 // Forwarders to the retained-dispatch lane now living in internal/dispatch.
 // The tool leaves in this package (delegate, proposal) keep their historical

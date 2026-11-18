@@ -12,7 +12,7 @@ package validate
 import (
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // fuzzEnv is a deliberately tight synthetic host — small ceilings, one

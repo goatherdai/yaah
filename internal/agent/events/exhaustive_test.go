@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/agent/events"
+	"github.com/goatherdai/yaah/internal/agent/events"
 )
 
 // allEvents returns one instance of every concrete Event type.
@@ -148,7 +148,7 @@ func TestConsumersHandleEveryEvent(t *testing.T) {
 // handles exactly one event, DoneEvent.
 const srcViewAgentSpell = `package view
 
-import "github.com/buchenberg/yaah/internal/agent"
+import "github.com/goatherdai/yaah/internal/agent"
 
 func (v *view) HandleEvent(evt agent.Event) {
 	switch evt.(type) {
@@ -162,7 +162,7 @@ func (v *view) HandleEvent(evt agent.Event) {
 // directly — the alias spelling the old regexp-based matcher missed.
 const srcViewEventsSpell = `package view
 
-import "github.com/buchenberg/yaah/internal/agent/events"
+import "github.com/goatherdai/yaah/internal/agent/events"
 
 func (v *view) HandleEvent(evt events.Event) {
 	switch evt.(type) {
@@ -183,7 +183,7 @@ func (NoopView) HandleEvent(Event) {}
 // in a comment, in a string literal, and as a case of a plain value switch.
 const srcMentionsOutsideCases = `package view
 
-import "github.com/buchenberg/yaah/internal/agent"
+import "github.com/goatherdai/yaah/internal/agent"
 
 func (v *view) HandleEvent(evt agent.Event) {
 	// case *agent.DoneEvent: acknowledged in prose, which is not handling.
@@ -200,7 +200,7 @@ func (v *view) HandleEvent(evt agent.Event) {
 // the pointer form every consumer actually receives.
 const srcValueTypeClause = `package view
 
-import "github.com/buchenberg/yaah/internal/agent"
+import "github.com/goatherdai/yaah/internal/agent"
 
 func (v *view) HandleEvent(evt agent.Event) {
 	switch evt.(type) {
@@ -285,7 +285,7 @@ func TestGateDetectsViewHandleEventSignature(t *testing.T) {
 	}
 	if declaresHandleEvent(parseSnippet(t, "arity.go", `package view
 
-import "github.com/buchenberg/yaah/internal/agent"
+import "github.com/goatherdai/yaah/internal/agent"
 
 func (v *view) HandleEvent(a, b agent.Event) {}
 `)) {
@@ -293,7 +293,7 @@ func (v *view) HandleEvent(a, b agent.Event) {}
 	}
 	if declaresHandleEvent(parseSnippet(t, "plain.go", `package view
 
-import "github.com/buchenberg/yaah/internal/agent"
+import "github.com/goatherdai/yaah/internal/agent"
 
 func HandleEvent(evt agent.Event) {}
 `)) {
@@ -301,7 +301,7 @@ func HandleEvent(evt agent.Event) {}
 	}
 	if declaresHandleEvent(parseSnippet(t, "other.go", `package view
 
-import "github.com/buchenberg/yaah/internal/agent"
+import "github.com/goatherdai/yaah/internal/agent"
 
 func (v *view) HandleEvent(update agent.SessionUpdate) {}
 `)) {

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/providers/catalog"
+	"github.com/goatherdai/yaah/internal/providers/catalog"
 )
 
 // syntheticUpstream is a miniature models.dev payload. It pins the generator's

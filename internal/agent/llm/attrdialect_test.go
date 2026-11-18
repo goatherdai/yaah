@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // The helpers below assemble dialect fixtures from fragments so the test

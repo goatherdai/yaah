@@ -1,7 +1,7 @@
 package validate
 
 import (
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // payloadsMatchKind checks WF014: a payload field belongs to the node kind

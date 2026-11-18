@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/goatherd-runtime"
-	"github.com/buchenberg/yaah/internal/agent/recovery"
-	"github.com/buchenberg/yaah/internal/jobs"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/goatherd-runtime"
+	"github.com/goatherdai/yaah/internal/agent/recovery"
+	"github.com/goatherdai/yaah/internal/jobs"
 )
 
 // scopeCapFixture builds a real ScopeManager over a temp SQLite trace

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // Step is the mutable state passed through the pipeline at each iteration.

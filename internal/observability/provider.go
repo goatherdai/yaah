@@ -6,8 +6,8 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/buchenberg/yaah/internal/providers"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/providers"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // LLMProvider is the subset of agent.Provider + agent.StreamProvider

@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent/budget"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/agent/budget"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // subAgentTimeoutResolver returns a DelegateTool timeout resolver that folds

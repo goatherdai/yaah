@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // sceneTestRegistry loads a temp-dir registry shaped like the user's

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // TestLoop_secondRunDeliversEvents pins the contract that every Run on a

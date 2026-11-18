@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"sync/atomic"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // ConsolidateDispatch is the callback invoked by ConsolidateMiddleware when

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // =============================================================================

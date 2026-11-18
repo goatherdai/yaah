@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/todo"
+	"github.com/goatherdai/yaah/internal/todo"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )

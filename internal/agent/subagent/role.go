@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/permissions"
 )
 
 // SubAgentRole identifies the profile a sub-agent runs under. The role

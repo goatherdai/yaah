@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/buchenberg/yaah/internal/cwdpath"
-	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/cwdpath"
+	"github.com/goatherdai/yaah/internal/memory"
 )
 
 // Registry sentinels. Each wraps the store's own error, so callers may match

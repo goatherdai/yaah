@@ -8,7 +8,7 @@ package tui
 import (
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/tui/components/activity"
+	"github.com/goatherdai/yaah/internal/tui/components/activity"
 	"github.com/rivo/tview"
 )
 

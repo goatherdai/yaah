@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 // TestPlanSearchPaths_UserLevelUsesRealHome pins the review B5 fix:

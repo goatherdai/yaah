@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // InlineLimitMiddleware caps the number of tool calls dispatched per

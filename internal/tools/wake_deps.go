@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/process"
-	"github.com/buchenberg/yaah/internal/wake"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/process"
+	"github.com/goatherdai/yaah/internal/wake"
 )
 
 // NewWakeDeps builds the predicate engine's side-effect seam on the session's

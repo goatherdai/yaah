@@ -6,9 +6,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // executeAndCollect runs tool calls concurrently and returns ToolResult

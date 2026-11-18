@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/jobs"
 )
 
 // TestRunSharedLaneReturnsTypedResult proves the executor-facing core can run a

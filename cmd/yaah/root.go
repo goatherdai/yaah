@@ -7,12 +7,12 @@ import (
 	"os"
 	"runtime/debug"
 
-	"github.com/buchenberg/yaah/internal/mcp"
+	"github.com/goatherdai/yaah/internal/mcp"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel"
 )
 
-// Build-time variables. Override via -ldflags "-X github.com/buchenberg/yaah/cmd/yaah.version=..."
+// Build-time variables. Override via -ldflags "-X github.com/goatherdai/yaah/cmd/yaah.version=..."
 // See scripts/release.sh for the full release pipeline.
 var (
 	version = "0.0.0"

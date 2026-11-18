@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/buchenberg/yaah/internal/atomicfile"
+	"github.com/goatherdai/yaah/internal/atomicfile"
 )
 
 // AtomicWriteFile writes data to path via a temp file in the same

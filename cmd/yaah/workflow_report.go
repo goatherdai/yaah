@@ -7,8 +7,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
-	"github.com/buchenberg/yaah/internal/workflow/validate"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/validate"
 )
 
 // workflow_report.go renders what the validator families already computed.

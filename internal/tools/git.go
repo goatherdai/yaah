@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 const gitMaxTimeoutSeconds = 300

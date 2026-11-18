@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // EventKind names one lifecycle fact. The vocabulary is fixed: a scheduler

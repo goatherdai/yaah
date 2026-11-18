@@ -1,6 +1,6 @@
 package yaah
 
-import "github.com/buchenberg/yaah/internal/banner"
+import "github.com/goatherdai/yaah/internal/banner"
 
 // The yaah goat. Running `yaah yaah` prints an ASCII goat; each extra
 // "yaah" argument escalates the celebration, capping at the final level.

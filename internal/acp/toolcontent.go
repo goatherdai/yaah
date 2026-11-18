@@ -3,7 +3,7 @@ package acp
 import (
 	"encoding/json"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // editArgs mirrors the wire shape of the edit tool's arguments. Only

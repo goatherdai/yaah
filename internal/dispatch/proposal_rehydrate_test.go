@@ -2,7 +2,7 @@ package dispatch
 
 import (
 	"context"
-	"github.com/buchenberg/yaah/internal/tools/substrate"
+	"github.com/goatherdai/yaah/internal/tools/substrate"
 	"io/fs"
 	"os"
 	"path"
@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 )
 
 func rehydrateDelta() *GitDelta {

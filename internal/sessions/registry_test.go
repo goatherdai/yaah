@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/cwdpath"
-	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/cwdpath"
+	"github.com/goatherdai/yaah/internal/memory"
 )
 
 // fakeStore is an in-memory Store: no SQLite, no cmd wiring. It records every

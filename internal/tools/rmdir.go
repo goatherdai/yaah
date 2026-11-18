@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"path"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // RmdirTool removes a directory from the workspace.

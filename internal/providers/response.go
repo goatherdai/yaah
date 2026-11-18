@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // wireResponse is the OpenAI-compatible non-streaming response body, decoded

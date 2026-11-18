@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/tui/components/command"
+	"github.com/goatherdai/yaah/internal/tui/components/command"
 
 	"github.com/gdamore/tcell/v2"
 )

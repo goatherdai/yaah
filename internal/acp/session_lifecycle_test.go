@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/agent"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // wireStore installs canned session/list and session/delete callbacks on

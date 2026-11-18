@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
-	"github.com/buchenberg/yaah/internal/sandboxfake"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
+	"github.com/goatherdai/yaah/internal/sandboxfake"
 )
 
 // newSandboxWS mirrors the substrate test helper (test helpers do not cross

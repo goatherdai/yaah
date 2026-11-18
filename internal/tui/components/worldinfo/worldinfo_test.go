@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/tui/colors"
-	worldstatus "github.com/buchenberg/yaah/internal/worldinfo"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/tui/colors"
+	worldstatus "github.com/goatherdai/yaah/internal/worldinfo"
 )
 
 func testTheme() *colors.Theme {

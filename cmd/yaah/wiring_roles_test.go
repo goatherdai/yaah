@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
 )
 
 // probeRoleContent is a minimal user-defined rolefile; the loader keys a

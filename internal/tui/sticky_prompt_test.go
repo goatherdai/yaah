@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/tui/components/messages"
+	"github.com/goatherdai/yaah/internal/tui/components/messages"
 	"github.com/gdamore/tcell/v2"
 )
 

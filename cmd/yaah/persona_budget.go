@@ -1,9 +1,9 @@
 package yaah
 
 import (
-	"github.com/buchenberg/yaah/internal/agent/budget"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/agent/budget"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 // persona_budget.go holds the orchestrator-budget seam (yaah-21uk.8): a

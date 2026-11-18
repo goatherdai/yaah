@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // recordedLoopPreambles are the assistant preambles from the 2026-10-26

@@ -1,8 +1,8 @@
 package yaah
 
 import (
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/wake"
+	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/wake"
 )
 
 // wakeStore adapts the session database to wake.Store. The adapter lives in

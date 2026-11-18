@@ -7,9 +7,9 @@ import (
 	"path"
 	"strings"
 
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
-	croftadapter "github.com/buchenberg/goatherd-runtime/sandbox/croft"
-	"github.com/buchenberg/yaah/internal/config"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
+	croftadapter "github.com/goatherdai/goatherd-runtime/sandbox/croft"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 // OpenContainerdWorkspaceSandbox resolves the container workspace through

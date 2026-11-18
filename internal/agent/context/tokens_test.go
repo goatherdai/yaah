@@ -3,7 +3,7 @@ package context
 import (
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 func TestActiveTaskPromptSkipsSyntheticUserRows(t *testing.T) {

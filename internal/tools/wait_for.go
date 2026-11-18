@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/prompts"
-	"github.com/buchenberg/yaah/internal/wake"
+	"github.com/goatherdai/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/wake"
 )
 
 // WaitForTool blocks inside the tool call until a predicate fires. Waiting

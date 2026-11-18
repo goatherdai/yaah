@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 func TestInlineLimitMiddleware_TruncatesAndSynthesizes(t *testing.T) {

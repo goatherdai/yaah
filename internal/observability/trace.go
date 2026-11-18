@@ -13,7 +13,7 @@ import (
 	gensemconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // detailLen is the max length for full content/reasoning/summary/task

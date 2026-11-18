@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/workflow/host"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/workflow/host"
 )
 
 // Tests for `yaah workflow run` (bead yaah-0u0v.12). The runner seam is

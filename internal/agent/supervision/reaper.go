@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	goatherd "github.com/buchenberg/goatherd-runtime"
+	goatherd "github.com/goatherdai/goatherd-runtime"
 
-	"github.com/buchenberg/yaah/internal/agent/recovery"
+	"github.com/goatherdai/yaah/internal/agent/recovery"
 )
 
 // errPermanentDiscard marks a discard failure that no later sweep can turn

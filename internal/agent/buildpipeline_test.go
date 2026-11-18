@@ -4,9 +4,9 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/agent/events"
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/agent/events"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 func TestBuildPipeline_SubAgentUsesSubAgentPipeline(t *testing.T) {

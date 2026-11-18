@@ -3,7 +3,7 @@ package validate
 import (
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // The rules in this file are the local half of the linearity family: each one

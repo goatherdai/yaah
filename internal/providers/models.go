@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"sort"
 
-	"github.com/buchenberg/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 // ModelLister is the narrow capability FetchAllModels needs.

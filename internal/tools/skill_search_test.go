@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/skills"
+	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/skills"
 )
 
 // vectorEmbedder returns a mapped vector or error for exact input texts.

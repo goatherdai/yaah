@@ -1,15 +1,15 @@
 package dispatch
 
 import (
-	"github.com/buchenberg/yaah/internal/tools/substrate"
+	"github.com/goatherdai/yaah/internal/tools/substrate"
 	"os"
 	"runtime"
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/worldinfo"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/worldinfo"
 )
 
 // TestWorldInfoParityWithRuntimeLadder pins the session-level derivation

@@ -6,13 +6,13 @@ import (
 
 	"github.com/rivo/tview"
 
-	"github.com/buchenberg/yaah/internal/control"
-	"github.com/buchenberg/yaah/internal/tui/components/activity"
-	"github.com/buchenberg/yaah/internal/tui/components/backgroundjobs"
-	"github.com/buchenberg/yaah/internal/tui/components/infopane"
-	"github.com/buchenberg/yaah/internal/tui/components/question"
-	subagent "github.com/buchenberg/yaah/internal/tui/components/subagent"
-	todoview "github.com/buchenberg/yaah/internal/tui/components/todo"
+	"github.com/goatherdai/yaah/internal/control"
+	"github.com/goatherdai/yaah/internal/tui/components/activity"
+	"github.com/goatherdai/yaah/internal/tui/components/backgroundjobs"
+	"github.com/goatherdai/yaah/internal/tui/components/infopane"
+	"github.com/goatherdai/yaah/internal/tui/components/question"
+	subagent "github.com/goatherdai/yaah/internal/tui/components/subagent"
+	todoview "github.com/goatherdai/yaah/internal/tui/components/todo"
 )
 
 func (t *App) handleControlMsg(msg control.Msg) {

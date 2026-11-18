@@ -3,8 +3,8 @@ package yaah
 import (
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/memory"
 )
 
 // TestEmbedderFor_fieldMapping pins the provider→embedder mapping. This

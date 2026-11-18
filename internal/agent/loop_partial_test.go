@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/providers"
-	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/providers"
+	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // partialThenHangProvider streams text and then stalls until the context ends —

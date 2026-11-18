@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/control"
-	"github.com/buchenberg/yaah/internal/tui"
-	"github.com/buchenberg/yaah/internal/tui/components/mcpinfo"
+	"github.com/goatherdai/yaah/internal/control"
+	"github.com/goatherdai/yaah/internal/tui"
+	"github.com/goatherdai/yaah/internal/tui/components/mcpinfo"
 	"github.com/spf13/cobra"
 )
 

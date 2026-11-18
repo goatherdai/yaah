@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/buchenberg/yaah/internal/workflow/exec"
-	"github.com/buchenberg/yaah/internal/workflow/host"
-	"github.com/buchenberg/yaah/internal/workflow/replay"
+	"github.com/goatherdai/yaah/internal/workflow/exec"
+	"github.com/goatherdai/yaah/internal/workflow/host"
+	"github.com/goatherdai/yaah/internal/workflow/replay"
 	"github.com/spf13/cobra"
 )
 

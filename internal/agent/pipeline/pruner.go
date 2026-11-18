@@ -17,7 +17,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 const (

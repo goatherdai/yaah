@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/tui/colors"
+	"github.com/goatherdai/yaah/internal/tui/colors"
 )
 
 // Info holds the current agent details.

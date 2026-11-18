@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 func TestCheckDispatchWorld(t *testing.T) {

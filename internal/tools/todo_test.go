@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/todo"
+	"github.com/goatherdai/yaah/internal/todo"
 )
 
 func TestTodoWriteTool_Execute(t *testing.T) {

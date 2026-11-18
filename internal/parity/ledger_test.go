@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
 )
 
 // ledgerPath is the in-repo parity ledger. The external gap report is a
@@ -30,13 +30,13 @@ func TestLedgerPinsMatchGoMod(t *testing.T) {
 	ledger := read(t, ledgerPath)
 
 	pins := []string{
-		"github.com/buchenberg/goatherd-kernel v0.21.0",
-		"github.com/buchenberg/goatherd-runtime v0.24.0",
-		"github.com/buchenberg/goatherd-runtime/sandbox/croft v0.2.1-0.20261031192038-da4e06c59318",
-		"github.com/buchenberg/goatherd-runtime/sandbox/landlock v0.1.2",
-		"github.com/buchenberg/goatherd-runtime/sandbox/winacl v0.1.1",
-		"github.com/buchenberg/goatherd-runtime/sandbox/seatbelt v0.1.0",
-		"github.com/buchenberg/goatherd-croft v0.9.2-0.20261031191238-a6d5f72a9b04",
+		"github.com/goatherdai/goatherd-kernel v0.21.0",
+		"github.com/goatherdai/goatherd-runtime v0.24.0",
+		"github.com/goatherdai/goatherd-runtime/sandbox/croft v0.2.1-0.20261031192038-da4e06c59318",
+		"github.com/goatherdai/goatherd-runtime/sandbox/landlock v0.1.2",
+		"github.com/goatherdai/goatherd-runtime/sandbox/winacl v0.1.1",
+		"github.com/goatherdai/goatherd-runtime/sandbox/seatbelt v0.1.0",
+		"github.com/goatherdai/croft v0.9.2-0.20261031191238-a6d5f72a9b04",
 	}
 	for _, pin := range pins {
 		module, version, ok := strings.Cut(pin, " ")

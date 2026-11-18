@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/tui/colors"
-	worldstatus "github.com/buchenberg/yaah/internal/worldinfo"
+	"github.com/goatherdai/yaah/internal/tui/colors"
+	worldstatus "github.com/goatherdai/yaah/internal/worldinfo"
 )
 
 // AgentRows returns the workspace rows folded into the Agent section: the

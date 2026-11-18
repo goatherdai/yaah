@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/sandboxfake"
+	"github.com/goatherdai/yaah/internal/sandboxfake"
 )
 
 // transferContent is deliberately not plain ASCII. A byte-fidelity test over

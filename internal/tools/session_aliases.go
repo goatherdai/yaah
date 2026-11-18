@@ -12,9 +12,9 @@ package tools
 import (
 	"context"
 
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/tools/substrate"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/tools/substrate"
 )
 
 // SessionSandbox is the session's isolated workspace sandbox, which owns one

@@ -20,11 +20,11 @@ import (
 	"sync"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/goatherd-runtime"
-	shepherdsupervisor "github.com/buchenberg/goatherd-runtime/supervisor"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/goatherd-runtime"
+	shepherdsupervisor "github.com/goatherdai/goatherd-runtime/supervisor"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // AdvisoryRules carries the advisory rules' switches and tuning.

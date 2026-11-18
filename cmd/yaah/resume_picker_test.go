@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/cwdpath"
-	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/cwdpath"
+	"github.com/goatherdai/yaah/internal/memory"
 )
 
 // pickerRows is the canned candidate list for the pure picker tests:

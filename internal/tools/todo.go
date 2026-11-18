@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/prompts"
-	"github.com/buchenberg/yaah/internal/todo"
+	"github.com/goatherdai/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/todo"
 )
 
 // TodoWriteTool allows the agent to manage a todo list during a session.

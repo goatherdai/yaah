@@ -3,7 +3,7 @@ package ir
 import (
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/workflow/spec"
+	"github.com/goatherdai/yaah/internal/workflow/spec"
 )
 
 // ResolveError locates a resolution failure at a node path. Paths use the

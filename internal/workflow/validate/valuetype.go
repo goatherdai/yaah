@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // typesCompatible checks WF011: a value a consumer reads must be the kind of

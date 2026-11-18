@@ -1,6 +1,6 @@
 package validate
 
-import "github.com/buchenberg/yaah/internal/workflow/ir"
+import "github.com/goatherdai/yaah/internal/workflow/ir"
 
 // graphNodes returns every node in the graph in document order — each
 // top-level step followed, depth-first, by the nodes of its body — and a

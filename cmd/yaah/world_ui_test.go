@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/worldinfo"
+	"github.com/goatherdai/yaah/internal/worldinfo"
 )
 
 func TestWorldBannerLines(t *testing.T) {

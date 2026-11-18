@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
-	croftadapter "github.com/buchenberg/goatherd-runtime/sandbox/croft"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/sandboxfake"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
+	croftadapter "github.com/goatherdai/goatherd-runtime/sandbox/croft"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/sandboxfake"
 )
 
 // probeResult is the canned outcome the fake's ExecHook returns for the

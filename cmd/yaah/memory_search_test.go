@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/memory"
 	"github.com/spf13/cobra"
 )
 

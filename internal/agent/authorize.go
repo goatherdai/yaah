@@ -3,8 +3,8 @@ package agent
 import (
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/permissions"
 )
 
 // Authorize is the single authorization entry point for a tool call: it

@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"time"
 
-	goatherd "github.com/buchenberg/goatherd-runtime"
+	goatherd "github.com/goatherdai/goatherd-runtime"
 
-	"github.com/buchenberg/yaah/internal/agent/supervision"
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/agent/supervision"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // haltQuiesceTimeout bounds the wait for a halted run to stop before

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // abort.go is the abort-time disposition pass (yaah-0u0v.24). A run that ends

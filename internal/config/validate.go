@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/agent/budget"
+	"github.com/goatherdai/yaah/internal/agent/budget"
 )
 
 // ValidationError collects one or more configuration problems. The error

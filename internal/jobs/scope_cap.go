@@ -1,6 +1,6 @@
 package jobs
 
-import goatherd "github.com/buchenberg/goatherd-runtime"
+import goatherd "github.com/goatherdai/goatherd-runtime"
 
 // DefaultMaxDispatchScopes caps the number of concurrently ACTIVE
 // dispatch scopes a session's scope tree may hold (yaah-95ri.4). Above

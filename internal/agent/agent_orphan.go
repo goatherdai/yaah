@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 func repairOrphans(messages []types.Message) []types.Message {

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	goatherd "github.com/buchenberg/goatherd-runtime"
-	"github.com/buchenberg/goatherd-runtime/sandbox"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+	"github.com/goatherdai/goatherd-runtime/sandbox"
 )
 
 // LoadProposalRegistry rebuilds the container-proposal registry from the

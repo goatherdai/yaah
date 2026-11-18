@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/tui/colors"
-	"github.com/buchenberg/yaah/internal/tui/lolcat"
+	"github.com/goatherdai/yaah/internal/tui/colors"
+	"github.com/goatherdai/yaah/internal/tui/lolcat"
 )
 
 func newTestRow() *Row {

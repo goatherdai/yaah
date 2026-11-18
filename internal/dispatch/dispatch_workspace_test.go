@@ -2,7 +2,7 @@ package dispatch
 
 import (
 	"context"
-	"github.com/buchenberg/yaah/internal/tools/substrate"
+	"github.com/goatherdai/yaah/internal/tools/substrate"
 	"testing"
 )
 

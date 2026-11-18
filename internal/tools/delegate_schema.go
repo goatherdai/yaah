@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
 )
 
 func (t *DelegateTool) Schema() json.RawMessage {

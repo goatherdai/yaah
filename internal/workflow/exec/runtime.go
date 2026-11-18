@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // Handle names one started attempt at the door. The scheduler mints the

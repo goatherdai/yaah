@@ -15,8 +15,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/buchenberg/yaah/internal/instructions"
-	"github.com/buchenberg/yaah/internal/skills"
+	"github.com/goatherdai/yaah/internal/instructions"
+	"github.com/goatherdai/yaah/internal/skills"
 )
 
 // IdentityPrompt is the default system identity shipped with the yaah

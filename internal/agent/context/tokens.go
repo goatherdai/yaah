@@ -8,8 +8,8 @@ import (
 	"math"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/prompts"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // DefaultEstimateFactor is the default multiplier applied to char/4 token

@@ -3,7 +3,7 @@ package llm
 import (
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 func TestSwapToFallbackSwapsIdentity(t *testing.T) {

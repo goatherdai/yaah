@@ -3,7 +3,7 @@ package yaah
 import (
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/goatherdai/yaah/internal/agent"
 )
 
 type captureView struct {

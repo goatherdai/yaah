@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"runtime"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
-	sandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+	sandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 )
 
 // defaultBusBuffer is the per-subscriber effect bus buffer size used when

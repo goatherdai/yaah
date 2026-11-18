@@ -17,7 +17,7 @@ package control
 import (
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/todo"
+	"github.com/goatherdai/yaah/internal/todo"
 )
 
 // Msg is the sealed interface for control-plane messages sent from

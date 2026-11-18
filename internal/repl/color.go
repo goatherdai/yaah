@@ -3,7 +3,7 @@ package repl
 import (
 	"os"
 
-	"github.com/buchenberg/yaah/internal/banner"
+	"github.com/goatherdai/yaah/internal/banner"
 )
 
 const (

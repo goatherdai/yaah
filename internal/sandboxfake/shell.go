@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 )
 
 // This file interprets the `sh -c` subset that sandboxWorkspace emits over the

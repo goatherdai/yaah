@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/dispatch"
+	"github.com/goatherdai/yaah/internal/dispatch"
 )
 
 // decodeProposalEnvelope parses a proposal result into its envelope.

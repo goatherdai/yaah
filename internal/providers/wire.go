@@ -1,6 +1,6 @@
 package providers
 
-import "github.com/buchenberg/yaah/internal/types"
+import "github.com/goatherdai/yaah/internal/types"
 
 // wireToolCall is the provider-facing tool call shape. It omits the Index
 // field which is a stream-assembly artifact that must never be serialized

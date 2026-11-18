@@ -1,8 +1,8 @@
 package dispatch
 
 import (
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/tools/substrate"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/tools/substrate"
 )
 
 // Seam aliases: the workspace port lives in internal/tools/substrate and the

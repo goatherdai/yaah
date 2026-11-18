@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"regexp"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // Seed modes for SubAgentParams.SeedMode (retained-result threading).

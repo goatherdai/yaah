@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // settleChain builds a two-step document: a proposal-lane delegate and a

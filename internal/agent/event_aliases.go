@@ -3,7 +3,7 @@
 // agent.Event / agent.SubAgentStartEvent etc. are unchanged.
 package agent
 
-import "github.com/buchenberg/yaah/internal/agent/events"
+import "github.com/goatherdai/yaah/internal/agent/events"
 
 // Event types
 type Event = events.Event

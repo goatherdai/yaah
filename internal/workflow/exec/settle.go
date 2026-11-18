@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // Settlement (yaah-0u0v.13). A settle node is an ADAPTER over the proposal

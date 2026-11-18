@@ -7,7 +7,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 
-	"github.com/buchenberg/yaah/internal/tui/components/command"
+	"github.com/goatherdai/yaah/internal/tui/components/command"
 )
 
 // newColonUI builds a test App whose UI event queue is drained, so colon

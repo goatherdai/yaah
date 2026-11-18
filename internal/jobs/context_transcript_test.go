@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // TestSubAgentTranscriptRoundTrip: a dispatch body installs a sink, the runner

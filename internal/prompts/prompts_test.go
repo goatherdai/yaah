@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
 
-	"github.com/buchenberg/yaah/internal/skills"
+	"github.com/goatherdai/yaah/internal/skills"
 )
 
 func TestTruncateSkillDesc_ShortUnchanged(t *testing.T) {

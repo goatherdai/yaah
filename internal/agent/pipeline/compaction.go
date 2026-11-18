@@ -3,7 +3,7 @@ package pipeline
 import (
 	"context"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // CompactionMiddleware triggers context compaction when token limits are approached.

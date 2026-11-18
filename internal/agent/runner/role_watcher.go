@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // RoleWatcher polls the role search paths and reloads the default role

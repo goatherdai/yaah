@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/workflow/trace"
+	"github.com/goatherdai/yaah/internal/workflow/trace"
 )
 
 // abortChain builds a two-step document: a proposal-lane producer that seals

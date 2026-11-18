@@ -9,8 +9,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/workflow/exec"
-	"github.com/buchenberg/yaah/internal/workflow/host"
+	"github.com/goatherdai/yaah/internal/workflow/exec"
+	"github.com/goatherdai/yaah/internal/workflow/host"
 	"github.com/spf13/cobra"
 )
 

@@ -3,7 +3,7 @@ package tui
 import (
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/tui/components/command"
+	"github.com/goatherdai/yaah/internal/tui/components/command"
 )
 
 // suggestionMaxRows caps how tall the typeahead strip may grow.

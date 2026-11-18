@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
 
-	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
+	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 )
 
 // toInt reads a payload number whichever way it survived the round trip.

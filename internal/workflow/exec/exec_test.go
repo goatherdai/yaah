@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
-	"github.com/buchenberg/yaah/internal/workflow/spec"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/spec"
 )
 
 // Deterministic scheduler tests (bead yaah-0u0v.11). Every test drives the

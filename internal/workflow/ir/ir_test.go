@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/workflow/spec"
+	"github.com/goatherdai/yaah/internal/workflow/spec"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")

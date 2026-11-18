@@ -1,12 +1,12 @@
 package tui
 
 import (
-	"github.com/buchenberg/yaah/internal/tui/components/agentpicker"
-	"github.com/buchenberg/yaah/internal/tui/components/approval"
-	"github.com/buchenberg/yaah/internal/tui/components/errdialog"
-	"github.com/buchenberg/yaah/internal/tui/components/help"
-	"github.com/buchenberg/yaah/internal/tui/components/modelpicker"
-	"github.com/buchenberg/yaah/internal/tui/components/question"
+	"github.com/goatherdai/yaah/internal/tui/components/agentpicker"
+	"github.com/goatherdai/yaah/internal/tui/components/approval"
+	"github.com/goatherdai/yaah/internal/tui/components/errdialog"
+	"github.com/goatherdai/yaah/internal/tui/components/help"
+	"github.com/goatherdai/yaah/internal/tui/components/modelpicker"
+	"github.com/goatherdai/yaah/internal/tui/components/question"
 )
 
 // Modals — modal dialog wrappers.

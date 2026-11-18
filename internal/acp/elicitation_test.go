@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // questionSession wires a fake session whose prompt asks one question through

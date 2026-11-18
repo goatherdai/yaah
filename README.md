@@ -94,19 +94,19 @@ full design and guardrails.
 macOS / Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/buchenberg/yaah/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/goatherdai/yaah/main/install.sh | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-iwr -useb https://raw.githubusercontent.com/buchenberg/yaah/main/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/goatherdai/yaah/main/install.ps1 | iex
 ```
 
 From source (Go 1.26.3+):
 
 ```bash
-go install github.com/buchenberg/yaah@latest
+go install github.com/goatherdai/yaah@latest
 ```
 
 `yaah update` replaces the binary in place. On Windows the swap runs after

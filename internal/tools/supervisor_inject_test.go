@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
 
-	"github.com/buchenberg/yaah/internal/agent/supervision"
+	"github.com/goatherdai/yaah/internal/agent/supervision"
 )
 
 // TestSupervisorTool_InjectBridgesToRun pins the A2 supervisor-tool side:

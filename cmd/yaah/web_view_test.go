@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/control"
-	"github.com/buchenberg/yaah/internal/todo"
-	"github.com/buchenberg/yaah/internal/worldinfo"
+	"github.com/goatherdai/yaah/internal/agent"
+	"github.com/goatherdai/yaah/internal/control"
+	"github.com/goatherdai/yaah/internal/todo"
+	"github.com/goatherdai/yaah/internal/worldinfo"
 )
 
 // syncBuffer is a mutex-guarded ResponseWriter so a test can read the SSE

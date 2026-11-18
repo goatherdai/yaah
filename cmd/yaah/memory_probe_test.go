@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 // probeLogBuf is a goroutine-safe sink for the startup probe's warnings.

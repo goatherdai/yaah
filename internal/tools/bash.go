@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // BashTool runs a shell command and returns its stdout.

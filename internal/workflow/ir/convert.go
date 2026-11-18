@@ -1,6 +1,6 @@
 package ir
 
-import "github.com/buchenberg/yaah/internal/workflow/spec"
+import "github.com/goatherdai/yaah/internal/workflow/spec"
 
 // Converters from the spec (authoring) enums to the ir (resolved) enums.
 // The spec decoder already rejects values outside these sets, so the

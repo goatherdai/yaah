@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/process"
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/process"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // BackgroundProcessTool manages long-running background processes.

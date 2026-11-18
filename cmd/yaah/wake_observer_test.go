@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent/events"
-	"github.com/buchenberg/yaah/internal/wake"
+	"github.com/goatherdai/yaah/internal/agent/events"
+	"github.com/goatherdai/yaah/internal/wake"
 )
 
 func TestWakeObserverEmitsHookEventsWithoutTargets(t *testing.T) {

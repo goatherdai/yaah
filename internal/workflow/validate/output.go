@@ -3,7 +3,7 @@ package validate
 import (
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // outputSpecs checks WF005: every declared output binds a usable name, no

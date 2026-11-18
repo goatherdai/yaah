@@ -28,9 +28,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
-	"github.com/buchenberg/yaah/internal/workflow/spec"
-	"github.com/buchenberg/yaah/internal/workflow/validate"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/spec"
+	"github.com/goatherdai/yaah/internal/workflow/validate"
 )
 
 // Load errors. They name which side of the lookup failed, because the caller

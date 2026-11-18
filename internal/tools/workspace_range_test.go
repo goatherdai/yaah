@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
-	"github.com/buchenberg/yaah/internal/sandboxfake"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
+	"github.com/goatherdai/yaah/internal/sandboxfake"
 )
 
 func TestLocalWorkspaceAppendAndReadRange(t *testing.T) {

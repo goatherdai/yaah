@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/workflow/trace"
+	"github.com/goatherdai/yaah/internal/workflow/trace"
 )
 
 func TestTraceRecordsEmittedForChain(t *testing.T) {

@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
 
-	"github.com/buchenberg/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/config"
 
-	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
+	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 )
 
 type sessionFixtures struct {

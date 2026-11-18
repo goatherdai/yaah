@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // ScopeSnapshot is the immutable view of run state one attempt is dispatched

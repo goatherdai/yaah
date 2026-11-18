@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/jobs"
-	"github.com/buchenberg/yaah/internal/workflow/trace"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/workflow/trace"
 )
 
 // workflow_bench_spec_test.go is the CI gate for the spec-driven bench

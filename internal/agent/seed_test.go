@@ -3,8 +3,8 @@ package agent
 import (
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // TestNewSubAgentLoop_SeedsConversation: a continuation pre-populates the

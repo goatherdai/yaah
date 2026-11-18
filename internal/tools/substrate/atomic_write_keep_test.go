@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/atomicfile"
+	"github.com/goatherdai/yaah/internal/atomicfile"
 )
 
 // requireReplaceFailure drives a replace failure the same way on every

@@ -28,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // runJoin executes g on a fake whose attempts for the named paths stay in flight,

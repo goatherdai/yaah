@@ -4,8 +4,8 @@ import (
 	"strconv"
 	"strings"
 
-	wfassert "github.com/buchenberg/yaah/internal/workflow/assert"
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	wfassert "github.com/goatherdai/yaah/internal/workflow/assert"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // Terminal reasons. The scheduler states a cause for every node it ends in a

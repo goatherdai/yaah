@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/permissions"
-	"github.com/buchenberg/yaah/internal/rolefile"
+	"github.com/goatherdai/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/rolefile"
 )
 
 func TestParseRoleFile(t *testing.T) {

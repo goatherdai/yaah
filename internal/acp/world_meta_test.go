@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/worldinfo"
+	"github.com/goatherdai/yaah/internal/worldinfo"
 )
 
 // TestServer_sessionNewAndLoadCarryWorldMeta pins the `_meta` extension: the

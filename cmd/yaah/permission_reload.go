@@ -33,8 +33,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/permissions"
 )
 
 // permissionRulesCache holds the session's live view of the global

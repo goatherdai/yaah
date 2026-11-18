@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/goatherd-runtime"
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/goatherd-runtime"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 
-	"github.com/buchenberg/yaah/internal/sandboxfake"
+	"github.com/goatherdai/yaah/internal/sandboxfake"
 )
 
 // newReaperFixture builds a real ScopeManager over a temp SQLite trace

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 func TestCapAssistantContent(t *testing.T) {

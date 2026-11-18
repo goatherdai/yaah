@@ -8,7 +8,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/permissions"
 )
 
 // TestSchemaJSONValid parses the published schema as JSON — a malformed

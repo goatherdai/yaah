@@ -6,9 +6,9 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
-	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
-	"github.com/buchenberg/goatherd-runtime/sandbox/seatbelt"
+	"github.com/goatherdai/goatherd-runtime/sandbox/containment"
+	"github.com/goatherdai/goatherd-runtime/sandbox/landlock"
+	"github.com/goatherdai/goatherd-runtime/sandbox/seatbelt"
 )
 
 type fakeBackend struct {

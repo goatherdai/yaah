@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/permissions"
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // toolExecResult holds the outcome of a single tool execution.

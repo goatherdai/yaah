@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/permissions"
 )
 
 // clientResponse is the routed outcome of one server-initiated request.

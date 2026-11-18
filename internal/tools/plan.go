@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/buchenberg/yaah/internal/plans"
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/plans"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // PlanTool creates, lists, shows, approves, edits, and deletes plans stored

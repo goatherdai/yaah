@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/yaah/internal/types"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 func newTestTraceMiddleware(t *testing.T) *ShepherdTraceMiddleware {

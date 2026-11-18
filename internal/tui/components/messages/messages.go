@@ -4,9 +4,9 @@ package messages
 import (
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/tui/colors"
-	"github.com/buchenberg/yaah/internal/tui/components/reasoning"
-	"github.com/buchenberg/yaah/internal/tui/components/toolblock"
+	"github.com/goatherdai/yaah/internal/tui/colors"
+	"github.com/goatherdai/yaah/internal/tui/components/reasoning"
+	"github.com/goatherdai/yaah/internal/tui/components/toolblock"
 	"github.com/rivo/tview"
 )
 

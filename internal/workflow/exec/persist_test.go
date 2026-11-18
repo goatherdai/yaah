@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // errProcessKilled is the simulated hard stop: the store refuses the write and

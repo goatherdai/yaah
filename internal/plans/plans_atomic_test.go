@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/atomicfile"
+	"github.com/goatherdai/yaah/internal/atomicfile"
 )
 
 // TestCreateIsExclusive pins yaah-34b: Create used to Stat and then Write, so
@@ -155,7 +155,7 @@ func TestEditPreservesUnmodelledFrontmatter(t *testing.T) {
 		"# managed by the issue tracker\n" +
 		"owner: greg\n" +
 		"depends_on:\n  - yaah-34b\n" +
-		"issue: https://github.com/buchenberg/yaah/issues/530\n" +
+		"issue: https://github.com/goatherdai/yaah/issues/530\n" +
 		"---\n\nBody text.\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
@@ -177,7 +177,7 @@ func TestEditPreservesUnmodelledFrontmatter(t *testing.T) {
 		"owner: greg",                    // unknown scalar survived
 		"depends_on:",                    // unknown nested key survived
 		"  - yaah-34b",                   // and its sequence item
-		"issue: https://github.com/buchenberg/yaah/issues/530",
+		"issue: https://github.com/goatherdai/yaah/issues/530",
 		"Body text.", // body untouched
 	} {
 		if !strings.Contains(got, want) {

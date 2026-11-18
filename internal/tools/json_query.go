@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // JSONQueryTool reads, writes, and deletes values in JSON files using dot-notation paths.

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
-	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
-	"github.com/buchenberg/yaah/internal/config"
+	"github.com/goatherdai/goatherd-runtime/sandbox/containment"
+	"github.com/goatherdai/goatherd-runtime/sandbox/landlock"
+	"github.com/goatherdai/yaah/internal/config"
 )
 
 func TestResolveGrants(t *testing.T) {

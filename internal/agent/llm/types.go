@@ -3,7 +3,7 @@ package llm
 import (
 	"context"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // Provider is the interface for synchronous model backends.

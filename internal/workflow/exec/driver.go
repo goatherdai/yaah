@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
 )
 
 // Execute drives the run to a terminal state and returns its result. It is the

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/memory"
 )
 
 // memoryIDPattern matches a full entry ID (mem- + 32 hex) — the form

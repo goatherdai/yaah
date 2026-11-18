@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // fakeSurface is the transport double: it records the prompts it is handed and

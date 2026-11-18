@@ -8,7 +8,7 @@ package question
 import (
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/tui/components/modal"
+	"github.com/goatherdai/yaah/internal/tui/components/modal"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )

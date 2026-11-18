@@ -3,7 +3,7 @@ package runner
 import (
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/permissions"
 )
 
 // TestWithInheritedCeiling pins the merge precedence (parity W5.7): the

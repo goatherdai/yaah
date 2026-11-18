@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
 
-	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
-	"github.com/buchenberg/yaah/internal/tools"
+	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // degradedWorkspace reports a recorded downgrade, standing in for a lane whose

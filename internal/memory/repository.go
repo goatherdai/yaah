@@ -1,6 +1,6 @@
 package memory
 
-import "github.com/buchenberg/yaah/internal/todo"
+import "github.com/goatherdai/yaah/internal/todo"
 
 // SessionRepository manages conversation sessions.
 type SessionRepository interface {

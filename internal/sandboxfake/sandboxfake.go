@@ -26,8 +26,8 @@ import (
 	"sync"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 )
 
 // Lifecycle state errors. They are values: tests assert with errors.Is.

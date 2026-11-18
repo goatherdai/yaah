@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // SubAgentInfo describes a single sub-agent role for the list_subagents tool.

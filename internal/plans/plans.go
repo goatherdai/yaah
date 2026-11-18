@@ -14,7 +14,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/buchenberg/yaah/internal/atomicfile"
+	"github.com/goatherdai/yaah/internal/atomicfile"
 )
 
 // Plan represents a discovered plan with its metadata and body.

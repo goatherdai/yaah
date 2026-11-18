@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/providers/catalog"
+	"github.com/goatherdai/yaah/internal/providers/catalog"
 )
 
 func TestResolveWindow(t *testing.T) {

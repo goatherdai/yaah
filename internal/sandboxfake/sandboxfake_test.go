@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	"github.com/buchenberg/goatherd-runtime/effect"
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/goatherd-runtime/effect"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 )
 
 func newCreated(t *testing.T) *Sandbox {

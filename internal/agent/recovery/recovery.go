@@ -20,10 +20,10 @@ import (
 	"runtime"
 	"strings"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
-	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
+	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 )
 
 // SchemaWorktreeProvisioned is yaah's pre-kernel-v0.14 worktree record,

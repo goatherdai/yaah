@@ -8,14 +8,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/agent/runner"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/workflow/ir"
-	"github.com/buchenberg/yaah/internal/workflow/registry"
-	"github.com/buchenberg/yaah/internal/workflow/spec"
-	"github.com/buchenberg/yaah/internal/workflow/validate"
-	"github.com/buchenberg/yaah/internal/worldinfo"
+	"github.com/goatherdai/yaah/internal/agent/runner"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/registry"
+	"github.com/goatherdai/yaah/internal/workflow/spec"
+	"github.com/goatherdai/yaah/internal/workflow/validate"
+	"github.com/goatherdai/yaah/internal/worldinfo"
 )
 
 // workflow_analysis.go is the loading and calling half of `yaah workflow

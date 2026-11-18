@@ -3,7 +3,7 @@ package dispatch
 import (
 	"context"
 	"errors"
-	"github.com/buchenberg/yaah/internal/tools/substrate"
+	"github.com/goatherdai/yaah/internal/tools/substrate"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,12 +12,12 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
-	"github.com/buchenberg/goatherd-runtime/effect"
-	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
-	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/sandboxfake"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+	"github.com/goatherdai/goatherd-runtime/effect"
+	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/sandboxfake"
 )
 
 // git_delta_test.go covers the container settlement artifact without a

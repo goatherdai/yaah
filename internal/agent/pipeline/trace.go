@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"sync/atomic"
 
-	shepherdtrace "github.com/buchenberg/goatherd-kernel"
-	goatherd "github.com/buchenberg/goatherd-runtime"
-	"github.com/buchenberg/yaah/internal/types"
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // ShepherdTraceMiddleware records every tool call as a declaration (intent)

@@ -3,7 +3,7 @@ package providers
 import (
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 func TestOpenAIClientDefaultMaxTokens(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	goatherd "github.com/buchenberg/goatherd-runtime"
+	goatherd "github.com/goatherdai/goatherd-runtime"
 )
 
 // proposal_conflict.go implements the typed, content-aware conflict model for

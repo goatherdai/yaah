@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/prompts"
 )
 
 // BulkFilesTool applies one copy/move/delete action to every workspace file

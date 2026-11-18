@@ -22,7 +22,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // IntentLoopError halts a run that keeps re-announcing the same plan with
