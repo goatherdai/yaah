@@ -4,14 +4,15 @@ go 1.26.3
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.81.0
-	github.com/goatherdai/goatherd-kernel v0.21.0
-	github.com/goatherdai/goatherd-runtime v0.24.0
-	github.com/goatherdai/goatherd-runtime/sandbox/landlock v0.1.2
-	github.com/goatherdai/goatherd-runtime/sandbox/seatbelt v0.1.0
-	github.com/goatherdai/goatherd-runtime/sandbox/winacl v0.1.1
 	github.com/buchenberg/tviewmd v0.3.1
 	github.com/ebitengine/purego v0.10.0
 	github.com/gdamore/tcell/v2 v2.13.10
+	github.com/goatherdai/goatherd-kernel v0.21.1-0.20261118191751-ffd4deddeb22
+	github.com/goatherdai/goatherd-runtime v0.24.1-0.20261118192512-b4d03a8d225a
+	github.com/goatherdai/goatherd-runtime/sandbox/croft v0.2.1-0.20261118192512-b4d03a8d225a
+	github.com/goatherdai/goatherd-runtime/sandbox/landlock v0.1.3-0.20261118192512-b4d03a8d225a
+	github.com/goatherdai/goatherd-runtime/sandbox/seatbelt v0.1.1-0.20261118192512-b4d03a8d225a
+	github.com/goatherdai/goatherd-runtime/sandbox/winacl v0.1.2-0.20261118192512-b4d03a8d225a
 	github.com/hybridgroup/yzma v1.31.0
 	github.com/lsferreira42/figlet-go v0.0.2-beta
 	github.com/navidys/tvxwidgets v0.14.0
@@ -32,7 +33,7 @@ require (
 )
 
 require (
-	github.com/goatherdai/croft v0.9.2-0.20261031191238-a6d5f72a9b04 // indirect
+	github.com/goatherdai/croft v0.9.3-0.20261118191751-716dbb80a6dd // indirect
 	github.com/jupiterrider/ffi v0.8.0 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 )
@@ -42,7 +43,6 @@ require (
 	github.com/Microsoft/go-winio v0.6.3-0.20251027160822-ad3df93bed29 // indirect
 	github.com/Microsoft/hcsshim v0.15.0-rc.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/goatherdai/goatherd-runtime/sandbox/croft v0.2.1-0.20261031192038-da4e06c59318
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
