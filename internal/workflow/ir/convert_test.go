@@ -1,6 +1,11 @@
 package ir
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/goatherdai/yaah/internal/workflow/spec"
@@ -148,18 +153,60 @@ func TestPolicySplitMirrorsSpecRegistry(t *testing.T) {
 	}
 }
 
+// declaredOnAbortValues parses graph.go for typed OnAbort constants, so the
+// resolved side of the parity check enumerates the actual declarations rather
+// than a second hand-typed list that could drift from them.
+func declaredOnAbortValues(t *testing.T) []string {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "graph.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse graph.go: %v", err)
+	}
+	var out []string
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		for _, s := range gd.Specs {
+			vs, ok := s.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			typ, ok := vs.Type.(*ast.Ident)
+			if !ok || typ.Name != "OnAbort" {
+				continue
+			}
+			for _, v := range vs.Values {
+				lit, ok := v.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					continue
+				}
+				value, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					t.Fatalf("unquote %s: %v", lit.Value, err)
+				}
+				out = append(out, value)
+			}
+		}
+	}
+	return out
+}
+
 // TestAbortPolicyMirrorsSpecRegistry covers the enum that resolution casts
-// directly rather than routing through a converter: the value strings must
-// still agree, or a checkpoint would name a disposition the decoder rejects.
+// directly rather than routing through a converter: the authoring values and
+// the resolved declarations must name the same set in both directions.
 func TestAbortPolicyMirrorsSpecRegistry(t *testing.T) {
 	values := spec.EnumValues(spec.OnAbortPolicy(""))
-	resolved := map[string]bool{string(AbortHalt): true, string(AbortReleaseAll): true, string(AbortDiscardAll): true}
-	if len(values) != len(resolved) {
-		t.Fatalf("spec has %d abort policies, resolved graph has %d", len(values), len(resolved))
+	resolved := declaredOnAbortValues(t)
+	if len(values) == 0 || len(resolved) == 0 {
+		t.Fatalf("empty enum: spec=%v resolved=%v", values, resolved)
 	}
-	for _, v := range values {
-		if !resolved[v] {
-			t.Errorf("authoring abort policy %q has no resolved counterpart", v)
-		}
+	a := append([]string(nil), values...)
+	b := append([]string(nil), resolved...)
+	slices.Sort(a)
+	slices.Sort(b)
+	if !slices.Equal(a, b) {
+		t.Errorf("abort policies disagree: spec=%v resolved=%v", values, resolved)
 	}
 }
