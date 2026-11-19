@@ -223,6 +223,12 @@ func resolveNode(in *spec.Node, path string, lex *lexscope, topIDs map[string]bo
 			return nil, resolveErrf(path+".on_timeout", "%v", err)
 		}
 	}
+	// Every field this resolver sets is owned by the kind it set it on. The
+	// assertion catches a future resolver bug that writes a foreign field,
+	// and documents the closed vocabulary Node's flat struct cannot type.
+	if problem := n.PayloadProblem(); problem != "" {
+		return nil, resolveErrf(path, "%s", problem)
+	}
 	return n, nil
 }
 
