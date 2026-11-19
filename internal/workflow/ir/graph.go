@@ -8,111 +8,113 @@
 // The graph is immutable once resolved; run state lives elsewhere.
 package ir
 
+import "github.com/goatherdai/yaah/internal/workflow/spec"
+
 // Kind enumerates the resolved node kinds. The string values mirror the
 // spec surface so node paths and goldens read identically.
-type Kind string
+type Kind = spec.NodeKind
 
 // Node kinds.
 const (
-	KindDelegate  Kind = "delegate"
-	KindFanout    Kind = "fanout"
-	KindBranch    Kind = "branch"
-	KindLoop      Kind = "loop"
-	KindGate      Kind = "gate"
-	KindSettle    Kind = "settle"
-	KindSelect    Kind = "select"
-	KindAggregate Kind = "aggregate"
-	KindCall      Kind = "call"
-	KindEmit      Kind = "emit"
-	KindHuman     Kind = "human"
+	KindDelegate  = spec.KindDelegate
+	KindFanout    = spec.KindFanout
+	KindBranch    = spec.KindBranch
+	KindLoop      = spec.KindLoop
+	KindGate      = spec.KindGate
+	KindSettle    = spec.KindSettle
+	KindSelect    = spec.KindSelect
+	KindAggregate = spec.KindAggregate
+	KindCall      = spec.KindCall
+	KindEmit      = spec.KindEmit
+	KindHuman     = spec.KindHuman
 )
 
 // Lane enumerates dispatch lanes.
-type Lane string
+type Lane = spec.Lane
 
 // Dispatch lanes.
 const (
-	LaneReport   Lane = "report"
-	LaneProposal Lane = "proposal"
+	LaneReport   = spec.LaneReport
+	LaneProposal = spec.LaneProposal
 )
 
 // NetworkMode enumerates network policies for dispatches.
-type NetworkMode string
+type NetworkMode = spec.NetworkMode
 
 // Network modes.
 const (
-	NetworkAllowAll NetworkMode = "allow_all"
-	NetworkDenyAll  NetworkMode = "deny_all"
-	NetworkBroker   NetworkMode = "broker"
+	NetworkAllowAll = spec.NetworkAllowAll
+	NetworkDenyAll  = spec.NetworkDenyAll
+	NetworkBroker   = spec.NetworkBroker
 )
 
 // FailurePolicy is the per-node failure disposition.
-type FailurePolicy string
+type FailurePolicy = spec.FailurePolicy
 
 // Failure policies.
 const (
-	OnFailureAbort    FailurePolicy = "abort"
-	OnFailureContinue FailurePolicy = "continue"
-	OnFailureSkip     FailurePolicy = "skip"
+	OnFailureAbort    = spec.OnFailureAbort
+	OnFailureContinue = spec.OnFailureContinue
+	OnFailureSkip     = spec.OnFailureSkip
 )
 
 // ItemFailure is the per-fanout-item failure disposition.
-type ItemFailure string
+type ItemFailure = spec.ItemFailure
 
 // Item failure policies.
 const (
-	OnItemAbort           ItemFailure = "abort"
-	OnItemContinue        ItemFailure = "continue"
-	OnItemCollectFailures ItemFailure = "collect_failures"
+	OnItemAbort           = spec.OnItemAbort
+	OnItemContinue        = spec.OnItemContinue
+	OnItemCollectFailures = spec.OnItemCollectFailures
 )
 
 // Join enumerates fan-out join semantics.
-type Join string
+type Join = spec.Join
 
 // Join kinds.
 const (
-	JoinAll    Join = "all"
-	JoinAny    Join = "any"
-	JoinQuorum Join = "quorum"
+	JoinAll    = spec.JoinAll
+	JoinAny    = spec.JoinAny
+	JoinQuorum = spec.JoinQuorum
 )
 
 // SettleAction enumerates the four settlement verbs.
-type SettleAction string
+type SettleAction = spec.SettleAction
 
 // Settlement verbs.
 const (
-	SettleSelect  SettleAction = "select"
-	SettleApply   SettleAction = "apply"
-	SettleRelease SettleAction = "release"
-	SettleDiscard SettleAction = "discard"
+	SettleSelect  = spec.SettleSelect
+	SettleApply   = spec.SettleApply
+	SettleRelease = spec.SettleRelease
+	SettleDiscard = spec.SettleDiscard
 )
 
 // ConflictPolicy decides what a settle does on a settlement conflict.
-type ConflictPolicy string
+type ConflictPolicy = spec.ConflictPolicy
 
 // Conflict policies.
 const (
-	OnConflictStop     ConflictPolicy = "stop"
-	OnConflictSkip     ConflictPolicy = "skip"
-	OnConflictEscalate ConflictPolicy = "escalate"
+	OnConflictStop     = spec.OnConflictStop
+	OnConflictSkip     = spec.OnConflictSkip
+	OnConflictEscalate = spec.OnConflictEscalate
 )
 
 // EmptyPolicy decides what a settle does when where selects nothing.
-type EmptyPolicy string
+type EmptyPolicy = spec.EmptyPolicy
 
 // Empty policies.
 const (
-	OnEmptyPass EmptyPolicy = "pass"
-	OnEmptyFail EmptyPolicy = "fail"
-	OnEmptySkip EmptyPolicy = "skip"
+	OnEmptyPass = spec.OnEmptyPass
+	OnEmptyFail = spec.OnEmptyFail
+	OnEmptySkip = spec.OnEmptySkip
 )
 
 // SettleOrder enumerates settle processing orders.
-type SettleOrder string
+type SettleOrder = spec.SettleOrder
 
 // Settle orders.
 const (
-	OrderSmallestDiffFirst SettleOrder = "smallest_diff_first"
+	OrderSmallestDiffFirst = spec.OrderSmallestDiffFirst
 )
 
 // SelectPolicy enumerates candidate-selection policies.
@@ -139,48 +141,48 @@ const (
 )
 
 // AggregateStrategy enumerates combine strategies.
-type AggregateStrategy string
+type AggregateStrategy = spec.AggregateStrategy
 
 // Aggregate strategies.
 const (
-	AggregateConcat    AggregateStrategy = "concat"
-	AggregateSummarize AggregateStrategy = "summarize"
-	AggregateJSONMerge AggregateStrategy = "json_merge"
+	AggregateConcat    = spec.AggregateConcat
+	AggregateSummarize = spec.AggregateSummarize
+	AggregateJSONMerge = spec.AggregateJSONMerge
 )
 
 // OutputType enumerates the value types a node output may declare.
-type OutputType string
+type OutputType = spec.OutputType
 
 // Output value types.
 const (
-	OutputReport   OutputType = "Report"
-	OutputProposal OutputType = "Proposal"
-	OutputSettled  OutputType = "Settled"
-	OutputVerdict  OutputType = "Verdict"
-	OutputPlan     OutputType = "Plan"
-	OutputArtifact OutputType = "Artifact"
+	OutputReport   = spec.OutputReport
+	OutputProposal = spec.OutputProposal
+	OutputSettled  = spec.OutputSettled
+	OutputVerdict  = spec.OutputVerdict
+	OutputPlan     = spec.OutputPlan
+	OutputArtifact = spec.OutputArtifact
 )
 
 // ParamType enumerates declared workflow parameter types.
-type ParamType string
+type ParamType = spec.ParamType
 
 // Parameter types.
 const (
-	ParamString  ParamType = "string"
-	ParamInteger ParamType = "integer"
-	ParamNumber  ParamType = "number"
-	ParamBoolean ParamType = "boolean"
-	ParamList    ParamType = "list"
-	ParamMap     ParamType = "map"
+	ParamString  = spec.ParamString
+	ParamInteger = spec.ParamInteger
+	ParamNumber  = spec.ParamNumber
+	ParamBoolean = spec.ParamBoolean
+	ParamList    = spec.ParamList
+	ParamMap     = spec.ParamMap
 )
 
 // GrantAccess enumerates grant access levels.
-type GrantAccess string
+type GrantAccess = spec.GrantAccess
 
 // Grant access levels.
 const (
-	AccessReadOnly  GrantAccess = "readonly"
-	AccessReadWrite GrantAccess = "readwrite"
+	AccessReadOnly  = spec.AccessReadOnly
+	AccessReadWrite = spec.AccessReadWrite
 )
 
 // Grant scopes filesystem access for a dispatch to a world-relative path.
@@ -237,18 +239,18 @@ type Graph struct {
 
 // OnAbort is the resolved abort-time disposition: what a run that ends
 // without succeeding does with the proposals it has not disposed of.
-type OnAbort string
+type OnAbort = spec.OnAbortPolicy
 
 // Abort-time dispositions, in the spec's declaration order.
 const (
 	// AbortHalt leaves the open proposals open and reports them.
-	AbortHalt OnAbort = "halt"
+	AbortHalt = spec.OnAbortHalt
 	// AbortReleaseAll releases every open proposal through the settlement
 	// door.
-	AbortReleaseAll OnAbort = "release_all"
+	AbortReleaseAll = spec.OnAbortReleaseAll
 	// AbortDiscardAll discards every open proposal through the settlement
 	// door.
-	AbortDiscardAll OnAbort = "discard_all"
+	AbortDiscardAll = spec.OnAbortDiscardAll
 )
 
 // Node is one resolved workflow node. Payload fields belong to their kind;

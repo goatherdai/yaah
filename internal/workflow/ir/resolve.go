@@ -72,10 +72,10 @@ func Resolve(doc *spec.Document) (*Graph, error) {
 
 	g.Params = make(map[string]Param, len(doc.Spec.Params))
 	for name, p := range doc.Spec.Params {
-		pt, err := convertParamType(p.Type)
-		if err != nil {
-			return nil, resolveErrf("params."+name, "%v", err)
+		if err := checkEnum("params."+name, "type", p.Type, false); err != nil {
+			return nil, err
 		}
+		pt := ParamType(p.Type)
 		g.Params[name] = Param{
 			Name:       name,
 			Type:       pt,
@@ -133,10 +133,11 @@ func Resolve(doc *spec.Document) (*Graph, error) {
 
 // resolveNode resolves one authoring node into a graph node at path.
 func resolveNode(in *spec.Node, path string, lex *lexscope, topIDs map[string]bool, defaults *spec.Defaults) (*Node, error) {
-	kind, err := convertKind(in.Kind)
-	if err != nil {
-		return nil, resolveErrf(path, "%v", err)
+	if err := checkEnum(path, "kind", in.Kind, false); err != nil {
+		return nil, err
 	}
+	kind := Kind(in.Kind)
+	var err error
 	n := &Node{
 		Path:           path,
 		ID:             in.ID,
@@ -160,15 +161,15 @@ func resolveNode(in *spec.Node, path string, lex *lexscope, topIDs map[string]bo
 	if in.Retry != nil {
 		n.Retry = &Retry{MaxAttempts: in.Retry.MaxAttempts, BackoffSeconds: in.Retry.BackoffSeconds}
 	}
-	n.OnFailure, err = convertFailurePolicy(in.OnFailure)
-	if err != nil {
-		return nil, resolveErrf(path+".on_failure", "%v", err)
+	if err := checkEnum(path, "on_failure", in.OnFailure, true); err != nil {
+		return nil, err
 	}
+	n.OnFailure = FailurePolicy(in.OnFailure)
 	if in.Output != nil {
-		ot, err := convertOutputType(in.Output.Type)
-		if err != nil {
-			return nil, resolveErrf(path+".output.type", "%v", err)
+		if err := checkEnum(path+".output", "type", in.Output.Type, true); err != nil {
+			return nil, err
 		}
+		ot := OutputType(in.Output.Type)
 		n.Output = &OutputSpec{Name: in.Output.Name, Type: ot, Schema: in.Output.Schema}
 	}
 
@@ -218,10 +219,10 @@ func resolveNode(in *spec.Node, path string, lex *lexscope, topIDs map[string]bo
 		if n.Prompt, err = compileTemplate(path+".prompt", in.Prompt, lex); err != nil {
 			return nil, err
 		}
-		n.OnTimeout, err = convertFailurePolicy(in.OnTimeout)
-		if err != nil {
-			return nil, resolveErrf(path+".on_timeout", "%v", err)
+		if err := checkEnum(path, "on_timeout", in.OnTimeout, true); err != nil {
+			return nil, err
 		}
+		n.OnTimeout = FailurePolicy(in.OnTimeout)
 	}
 	// Every field this resolver sets is owned by the kind it set it on. The
 	// assertion catches a future resolver bug that writes a foreign field,
@@ -242,13 +243,15 @@ func resolveDelegate(n *Node, in *spec.Node, path string, lex *lexscope, default
 	}
 	switch {
 	case in.Lane != "":
-		if n.Lane, err = convertLane(in.Lane); err != nil {
-			return resolveErrf(path+".lane", "%v", err)
+		if err := checkEnum(path, "lane", in.Lane, false); err != nil {
+			return err
 		}
+		n.Lane = Lane(in.Lane)
 	case defaults != nil && defaults.Lane != "":
-		if n.Lane, err = convertLane(defaults.Lane); err != nil {
-			return resolveErrf(path+".lane", "%v", err)
+		if err := checkEnum(path, "lane", defaults.Lane, false); err != nil {
+			return err
 		}
+		n.Lane = Lane(defaults.Lane)
 	}
 	if n.SeedFrom, err = compileTemplate(path+".seed_from", in.SeedFrom, lex); err != nil {
 		return err
@@ -264,23 +267,25 @@ func resolveDelegate(n *Node, in *spec.Node, path string, lex *lexscope, default
 	n.MaxTurns = in.MaxTurns
 	switch {
 	case in.Grants != nil:
-		if n.Grants, err = convertGrants(in.Grants); err != nil {
+		if n.Grants, err = convertGrants(path, in.Grants); err != nil {
 			return resolveErrf(path+".grants", "%v", err)
 		}
 	case defaults != nil && defaults.Grants != nil:
-		if n.Grants, err = convertGrants(defaults.Grants); err != nil {
+		if n.Grants, err = convertGrants(path, defaults.Grants); err != nil {
 			return resolveErrf(path+".grants", "%v", err)
 		}
 	}
 	switch {
 	case in.Network != "":
-		if n.Network, err = convertNetwork(in.Network); err != nil {
-			return resolveErrf(path+".network", "%v", err)
+		if err := checkEnum(path, "network", in.Network, false); err != nil {
+			return err
 		}
+		n.Network = NetworkMode(in.Network)
 	case defaults != nil && defaults.Network != "":
-		if n.Network, err = convertNetwork(defaults.Network); err != nil {
-			return resolveErrf(path+".network", "%v", err)
+		if err := checkEnum(path, "network", defaults.Network, false); err != nil {
+			return err
 		}
+		n.Network = NetworkMode(defaults.Network)
 	}
 	n.World = in.World
 	return nil
@@ -302,13 +307,15 @@ func resolveFanout(n *Node, in *spec.Node, path string, lex *lexscope, topIDs ma
 	n.As = in.As
 	n.MaxParallel = in.MaxParallel
 	n.Collect = in.Collect
-	if n.Join, err = convertJoin(in.Join); err != nil {
-		return resolveErrf(path+".join", "%v", err)
+	if err := checkEnum(path, "join", in.Join, true); err != nil {
+		return err
 	}
+	n.Join = Join(in.Join)
 	n.Quorum = in.Quorum
-	if n.OnItemFailure, err = convertItemFailure(in.OnItemFailure); err != nil {
-		return resolveErrf(path+".on_item_failure", "%v", err)
+	if err := checkEnum(path, "on_item_failure", in.OnItemFailure, true); err != nil {
+		return err
 	}
+	n.OnItemFailure = ItemFailure(in.OnItemFailure)
 	if n.Body, err = resolveBody(in.Body, path, lex, topIDs, defaults, n.As, true); err != nil {
 		return err
 	}
@@ -381,9 +388,10 @@ func resolveSettle(n *Node, in *spec.Node, path string, lex *lexscope) error {
 	if n.Where, err = compileSelector(path+".where", in.Where, lex); err != nil {
 		return err
 	}
-	if n.Action, err = convertSettleAction(in.Action); err != nil {
-		return resolveErrf(path+".action", "%v", err)
+	if err := checkEnum(path, "action", in.Action, false); err != nil {
+		return err
 	}
+	n.Action = SettleAction(in.Action)
 	// The authoring `policy` key is shared by select and settle (see
 	// spec.Policy). A settle writes it into SettlePolicy, and a value from
 	// the selection half of the vocabulary is rejected rather than dropped.
@@ -392,15 +400,18 @@ func resolveSettle(n *Node, in *spec.Node, path string, lex *lexscope) error {
 			return resolveErrf(path+".policy", "%v", err)
 		}
 	}
-	if n.Order, err = convertSettleOrder(in.Order); err != nil {
-		return resolveErrf(path+".order", "%v", err)
+	if err := checkEnum(path, "order", in.Order, true); err != nil {
+		return err
 	}
-	if n.OnConflict, err = convertConflictPolicy(in.OnConflict); err != nil {
-		return resolveErrf(path+".on_conflict", "%v", err)
+	n.Order = SettleOrder(in.Order)
+	if err := checkEnum(path, "on_conflict", in.OnConflict, true); err != nil {
+		return err
 	}
-	if n.OnEmpty, err = convertEmptyPolicy(in.OnEmpty); err != nil {
-		return resolveErrf(path+".on_empty", "%v", err)
+	n.OnConflict = ConflictPolicy(in.OnConflict)
+	if err := checkEnum(path, "on_empty", in.OnEmpty, true); err != nil {
+		return err
 	}
+	n.OnEmpty = EmptyPolicy(in.OnEmpty)
 	return nil
 }
 
@@ -433,9 +444,10 @@ func resolveAggregate(n *Node, in *spec.Node, path string, lex *lexscope, topIDs
 		}
 		n.Inputs = append(n.Inputs, sel)
 	}
-	if n.Strategy, err = convertAggregateStrategy(in.Strategy); err != nil {
-		return resolveErrf(path+".strategy", "%v", err)
+	if err := checkEnum(path, "strategy", in.Strategy, true); err != nil {
+		return err
 	}
+	n.Strategy = AggregateStrategy(in.Strategy)
 	// An aggregate combines its inputs; there is no iteration to number.
 	if n.Body, err = resolveBody(in.Body, path, lex, topIDs, defaults, "", false); err != nil {
 		return err
