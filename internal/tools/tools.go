@@ -73,11 +73,12 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"runtime"
 	"sort"
 	"strings"
+
+	"github.com/goatherdai/yaah/internal/toolcontract"
 )
 
 // ToolTimeoutError is returned when a tool's context deadline expires before
@@ -141,31 +142,16 @@ func (e ToolNotMountedError) Is(target error) bool {
 }
 
 // Tool is the interface that all tools (built-in and MCP) must satisfy.
-type Tool interface {
-	// Name returns the tool name as it appears in the function call.
-	Name() string
-
-	// Description returns a short description of what the tool does.
-	Description() string
-
-	// Schema returns the JSON Schema for the tool's parameters.
-	Schema() json.RawMessage
-
-	// Execute runs the tool with the given JSON-encoded arguments.
-	// The context is used for cancellation and timeouts.
-	// A nil error means the operation succeeded; failures — including a
-	// partially applied multi-step operation — must return a non-nil error.
-	Execute(ctx context.Context, args string) (string, error)
-}
+// The contract lives in internal/toolcontract so the engine can name the
+// same type without importing this package.
+type Tool = toolcontract.Tool
 
 // DangerClassifier is an optional interface that tools implement to provide
 // argument-level danger classification. When a tool implements this,
 // IsDangerous(argsJSON) is called to decide whether the specific action
 // requires user approval. Tools that are never dangerous simply don't
 // implement this interface.
-type DangerClassifier interface {
-	IsDangerous(argsJSON string) bool
-}
+type DangerClassifier = toolcontract.DangerClassifier
 
 // --- Tool Registry ---
 

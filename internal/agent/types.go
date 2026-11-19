@@ -85,7 +85,7 @@ type Loop struct {
 	State  LoopState
 
 	Provider Provider
-	Registry *tools.Registry
+	Registry ToolRegistry
 	// View receives agent events (tokens, thinking, flush, tool starts/ends,
 	// sub-agent starts/ends, done). When set, the loop internally creates a
 	// pubsub.Broker and BrokerView adapter; callers should NOT set Broker.
