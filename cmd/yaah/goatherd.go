@@ -26,10 +26,9 @@ import (
 // user-invoked (D5: an orphaned worktree may hold the only copy of
 // unmerged agent work, so nothing else may ever delete it).
 var goatherdCmd = &cobra.Command{
-	Use:     "goatherd",
-	Aliases: []string{"shepherd"}, // pre-rename spelling; deprecated
-	Short:   "List and prune orphaned supervision worktrees and containers",
-	Args:    cobra.NoArgs,
+	Use:   "goatherd",
+	Short: "List and prune orphaned supervision worktrees and containers",
+	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		report, cleanup, err := goatherdScan()
 		if cleanup != nil {

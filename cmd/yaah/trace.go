@@ -23,9 +23,8 @@ func init() {
 
 func newGoatherdTraceCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "goatherd-trace",
-		Aliases: []string{"shepherd-trace"}, // pre-rename spelling; deprecated
-		Short:   "Inspect and manage Goatherd execution traces",
+		Use:   "goatherd-trace",
+		Short: "Inspect and manage Goatherd execution traces",
 	}
 
 	cmd.AddCommand(newGoatherdTraceListCmd())

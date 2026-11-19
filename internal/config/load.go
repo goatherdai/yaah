@@ -726,40 +726,6 @@ func Load() (*Config, error) {
 	// the config.
 	cfg.ExplicitDefaultBudget = captureExplicitDefaultBudget(data)
 
-	// The trace keys were renamed `shepherd_trace{,_path}` to
-	// `goatherd_trace{,_path}` in the goatherd naming pass. The old keys
-	// stay accepted so an upgraded config keeps resolving its trace
-	// store; the new spelling wins whenever it carries a value.
-	var legacyTraceKeys struct {
-		Agents struct {
-			Default struct {
-				Path  string `yaml:"shepherd_trace_path"`
-				Trace struct {
-					Backend string `yaml:"backend"`
-					DSN     string `yaml:"dsn"`
-				} `yaml:"shepherd_trace"`
-			} `yaml:"default"`
-		} `yaml:"agents"`
-	}
-	if err := yaml.Unmarshal(data, &legacyTraceKeys); err == nil {
-		legacy := legacyTraceKeys.Agents.Default
-		if legacy.Path != "" {
-			fmt.Fprintf(os.Stderr, "warning: config key `agents.default.shepherd_trace_path` was renamed to `goatherd_trace_path`; the old spelling still resolves this release\n")
-			if cfg.Agent.Default.GoatherdTracePath == "" {
-				cfg.Agent.Default.GoatherdTracePath = legacy.Path
-			}
-		}
-		if legacy.Trace.Backend != "" || legacy.Trace.DSN != "" {
-			fmt.Fprintf(os.Stderr, "warning: config key `agents.default.shepherd_trace` was renamed to `goatherd_trace`; the old spelling still resolves this release\n")
-			if cfg.Agent.Default.GoatherdTrace.Backend == "" {
-				cfg.Agent.Default.GoatherdTrace.Backend = legacy.Trace.Backend
-			}
-			if cfg.Agent.Default.GoatherdTrace.DSN == "" {
-				cfg.Agent.Default.GoatherdTrace.DSN = legacy.Trace.DSN
-			}
-		}
-	}
-
 	// The `tui:` stanza was removed with the bubbletea TUI (2026-08-21);
 	// warn once so upgraded configs know the key is dead.
 	var rawKeys map[string]yaml.Node
@@ -767,23 +733,6 @@ func Load() (*Config, error) {
 		if _, ok := rawKeys["tui"]; ok {
 			fmt.Fprintf(os.Stderr, "warning: config key `tui:` is no longer used; toggle verbosity inside the TUI with :verbose\n")
 		}
-	}
-
-	// `goatherd_trace_dir` was renamed to `goatherd_trace_path` and
-	// retyped from directory to file path; warn once so an upgraded
-	// config knows the old key is ignored and the store resolves to the
-	// default path. The supervised_task keys and the per-role
-	// `supervised` flag are past their deprecation window and now die
-	// silently like any unknown key.
-	var legacyRenamed struct {
-		Agents struct {
-			Default struct {
-				GoatherdTraceDir *string `yaml:"goatherd_trace_dir"`
-			} `yaml:"default"`
-		} `yaml:"agents"`
-	}
-	if err := yaml.Unmarshal(data, &legacyRenamed); err == nil && legacyRenamed.Agents.Default.GoatherdTraceDir != nil {
-		fmt.Fprintf(os.Stderr, "warning: config key `agents.default.goatherd_trace_dir` was renamed to `goatherd_trace_path` and now names the trace store file, not its directory; the old key is ignored and the store resolves to the default path\n")
 	}
 
 	if cfg.Hooks.Dir != "" {
