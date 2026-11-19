@@ -14,7 +14,6 @@ import (
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
 	"github.com/goatherdai/yaah/internal/jobs"
 	"github.com/goatherdai/yaah/internal/observability"
-	"github.com/goatherdai/yaah/internal/tools"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -509,7 +508,7 @@ func (l *Loop) wireBackgroundHooks() {
 		return
 	}
 	l.BackgroundJobs.SetLoopHooks(
-		func(id, role, model, prompt string, world tools.SubAgentWorld) {
+		func(id, role, model, prompt string, world jobs.SubAgentWorld) {
 			evt := &SubAgentStartEvent{
 				SubAgentID: id, Role: role, Model: model, Prompt: prompt,
 				World: world.Resolved, WorldDegraded: world.Degraded, WorldReason: world.Reason,
@@ -519,7 +518,7 @@ func (l *Loop) wireBackgroundHooks() {
 			}
 			l.BackgroundJobs.NotifySessionStart(id, role, model, prompt, world)
 		},
-		func(id, role, model, prompt, result string, dur time.Duration, err string, world tools.SubAgentWorld) {
+		func(id, role, model, prompt, result string, dur time.Duration, err string, world jobs.SubAgentWorld) {
 			evt := &SubAgentEndEvent{
 				SubAgentID: id, Role: role, Model: model, Prompt: prompt,
 				Duration: dur, Error: err, Result: result,

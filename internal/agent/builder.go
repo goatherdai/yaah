@@ -22,7 +22,7 @@ type LoopBuilder struct {
 	// Provider is the primary LLM provider.
 	Provider Provider
 	// Registry is the tool registry.
-	Registry *tools.Registry
+	Registry ToolRegistry
 	// ToolsLevel narrows the advertised tool set for this run. Zero means
 	// FullTools.
 	ToolsLevel ToolsLevel

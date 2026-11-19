@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/goatherdai/yaah/internal/agent/events"
+	"github.com/goatherdai/yaah/internal/jobs"
 	"github.com/goatherdai/yaah/internal/observability"
 	"github.com/goatherdai/yaah/internal/permissions"
 	"github.com/goatherdai/yaah/internal/tools"
@@ -40,7 +41,7 @@ type toolDispatch struct {
 	// world is the resolved dispatch world, written by the retained runtime
 	// (or seeded as "shared" by the direct lane) through the context pointer
 	// installed in setupSubAgent.
-	world      tools.SubAgentWorld
+	world      jobs.SubAgentWorld
 	subUsage   types.Usage
 	startOnce  sync.Once
 	finishOnce sync.Once
@@ -177,9 +178,9 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	// Parse structured escalation from raw sub-agent output before the
 	// result is truncated for display. Background dispatch returns a
 	// {"status":"running"} placeholder with no payload to parse.
-	var escalation *tools.Escalation
+	var escalation *jobs.Escalation
 	if allowed && d.isDelegate && !d.isBackground && l.broker != nil {
-		if output := tools.ParseSubAgentOutput(res, err); output.Escalation != nil {
+		if output := jobs.ParseSubAgentOutput(res, err); output.Escalation != nil {
 			escalation = output.Escalation
 		}
 	}
@@ -337,14 +338,14 @@ type watchdogState struct {
 	ready   bool
 	fired   bool
 	beats   int
-	world   tools.SubAgentWorld
+	world   jobs.SubAgentWorld
 	timeout time.Duration
 }
 
 // markReady records that the dispatch world exists and the child's run is
 // about to begin, capturing the world so a startup verdict can name what was
 // stood up when the child never beat.
-func (w *watchdogState) markReady(world tools.SubAgentWorld) {
+func (w *watchdogState) markReady(world jobs.SubAgentWorld) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.ready = true
@@ -367,7 +368,7 @@ func (w *watchdogState) markFired() {
 }
 
 // snapshot returns the recorded state. Callers must hold no lock.
-func (w *watchdogState) snapshot() (ready, fired bool, beats int, world tools.SubAgentWorld, timeout time.Duration) {
+func (w *watchdogState) snapshot() (ready, fired bool, beats int, world jobs.SubAgentWorld, timeout time.Duration) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.ready, w.fired, w.beats, w.world, w.timeout
@@ -380,12 +381,12 @@ func (d *toolDispatch) setupSubAgent(runCtx context.Context) context.Context {
 	l := d.loop
 	publishStart := d.publishStartFn()
 
-	runCtx = tools.WithSubAgentModelPtr(runCtx, &d.subAgentModel)
-	runCtx = tools.WithSubAgentWorldPtr(runCtx, &d.world)
-	runCtx = tools.WithSubAgentStartNotifier(runCtx, func(model string) {
+	runCtx = jobs.WithSubAgentModelPtr(runCtx, &d.subAgentModel)
+	runCtx = jobs.WithSubAgentWorldPtr(runCtx, &d.world)
+	runCtx = jobs.WithSubAgentStartNotifier(runCtx, func(model string) {
 		d.startOnce.Do(func() { publishStart(model) })
 	})
-	runCtx = tools.WithSubAgentUsage(runCtx, &d.subUsage)
+	runCtx = jobs.WithSubAgentUsage(runCtx, &d.subUsage)
 
 	childTimeout := l.Config.StuckChildTimeout
 	if l.Config.StuckChildTimeouts != nil {
@@ -402,12 +403,12 @@ func (d *toolDispatch) setupSubAgent(runCtx context.Context) context.Context {
 		hb := make(chan struct{}, 1)
 		ready := make(chan struct{})
 		d.watchDone = make(chan struct{})
-		runCtx = tools.WithSubAgentHeartbeat(runCtx, hb)
+		runCtx = jobs.WithSubAgentHeartbeat(runCtx, hb)
 		// The dispatch body reports its world ready once provisioning is
 		// done; that — not arming — is when the stuck-child deadline starts
 		// counting (yaah-95ri.2).
 		var readyOnce sync.Once
-		runCtx = tools.WithSubAgentReadyNotifier(runCtx, func() {
+		runCtx = jobs.WithSubAgentReadyNotifier(runCtx, func() {
 			readyOnce.Do(func() {
 				d.watch.markReady(d.world)
 				close(ready)
@@ -488,7 +489,7 @@ func (d *toolDispatch) armStuckChildWatchdog(ctx context.Context, cancel context
 func (d *toolDispatch) killVerdict() error {
 	_, fired, beats, world, timeout := d.watch.snapshot()
 	if !fired || beats > 0 {
-		return tools.ErrStuckChild
+		return jobs.ErrStuckChild
 	}
 	detail := fmt.Sprintf("no heartbeat within %s of world readiness", timeout)
 	if world.Resolved != "" {
@@ -501,7 +502,7 @@ func (d *toolDispatch) killVerdict() error {
 			detail += " (degraded)"
 		}
 	}
-	return fmt.Errorf("%w — %s", tools.ErrDispatchStartup, detail)
+	return fmt.Errorf("%w — %s", jobs.ErrDispatchStartup, detail)
 }
 
 // finishSubAgent delivers usage captured from the child back to the

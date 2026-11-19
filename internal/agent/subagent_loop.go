@@ -7,7 +7,6 @@ import (
 	shepherdtrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
 	"github.com/goatherdai/yaah/internal/permissions"
-	"github.com/goatherdai/yaah/internal/tools"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -132,7 +131,7 @@ type SubAgentConfig struct {
 // Sub-agents are ephemeral workers with limited turn budgets — they
 // skip persistence, compaction, sub-agent spawning, quality gates,
 // approval dialogs, and hook emission.
-func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemPrompt string, cfg SubAgentConfig) *Loop {
+func NewSubAgentLoop(provider Provider, registry ToolRegistry, model, systemPrompt string, cfg SubAgentConfig) *Loop {
 	if cfg.MaxLoopCycles <= 0 {
 		cfg.MaxLoopCycles = 50
 	}

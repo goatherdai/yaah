@@ -16,7 +16,7 @@ type Option func(*Loop)
 // applying any optional configuration. This replaces the 30+ field
 // struct literal previously duplicated across the CLI entrypoints
 // (wiring.go, serve.go, tui.go).
-func NewLoop(provider Provider, registry *tools.Registry, opts ...Option) *Loop {
+func NewLoop(provider Provider, registry ToolRegistry, opts ...Option) *Loop {
 	l := &Loop{
 		Provider: provider,
 		Registry: registry,

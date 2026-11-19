@@ -3,18 +3,18 @@ package agent
 import (
 	"encoding/json"
 
-	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/toolargs"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
 // advertisedSchema closes a built-in tool's schema with
 // additionalProperties:false. A tool that declares AllowAdditionalProperties
 // (the MCP wrapper does) keeps the server-published schema unchanged.
-func advertisedSchema(t tools.Tool) json.RawMessage {
+func advertisedSchema(t Tool) json.RawMessage {
 	if keep, ok := t.(interface{ AllowAdditionalProperties() bool }); ok && keep.AllowAdditionalProperties() {
 		return t.Schema()
 	}
-	return tools.CloseSchema(t.Schema())
+	return toolargs.CloseSchema(t.Schema())
 }
 
 // buildToolDefs builds the OpenAI-format tool definitions from the registry.
