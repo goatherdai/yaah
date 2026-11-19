@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.195.5](https://github.com/goatherdai/yaah/compare/v0.195.4...v0.195.5) (2026-11-19)
+
+
+### Bug Fixes
+
+* **tools:** harden typed-nil service and pin role filter contract ([9ba47eb](https://github.com/goatherdai/yaah/commit/9ba47eba3f3f1e4f3dea6f2eff6ee24f64f20785))
+
+
+### Code Refactoring
+
+* **tools:** break the reverse import into the agent family ([e06b848](https://github.com/goatherdai/yaah/commit/e06b84820766ad4ccd5ab76c39101055c2b4e7a9))
+
 ## [0.195.4](https://github.com/goatherdai/yaah/compare/v0.195.3...v0.195.4) (2026-11-19)
 
 
