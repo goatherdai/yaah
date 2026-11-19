@@ -865,21 +865,26 @@ func writeArtifacts(root string, res exec.Result) ([]Artifact, []string, error) 
 }
 
 // resolveArtifact turns a declared world-relative path into a host path under
-// root, refusing absolute paths, an empty path, and anything that resolves
-// outside root. Symlinks are not followed to an outside target by name here:
-// the run writes at the cleaned path it was given, and the artifact vocabulary
-// is a document-authoring surface, not a sandbox.
+// root. filepath.IsLocal rejects absolute paths, parent traversals, and (on
+// Windows) drive and UNC forms in one portable call; the Rel check is defense
+// in depth against a future change to the join. Containment is deliberately
+// lexical: an artifact path is an authoring declaration, not a sandbox
+// boundary, so symlinks are not resolved here.
 func resolveArtifact(root, declared string) (string, error) {
 	if declared == "" {
 		return "", errors.New("artifact path is empty")
 	}
-	if filepath.IsAbs(declared) || strings.HasPrefix(declared, "/") || len(declared) > 1 && declared[1] == ':' {
+	local := filepath.FromSlash(declared)
+	if filepath.IsAbs(local) {
 		return "", fmt.Errorf("artifact path %q is absolute; a workflow declares world-relative paths", declared)
 	}
+	if !filepath.IsLocal(local) {
+		return "", fmt.Errorf("artifact path %q escapes the artifact root %s", declared, root)
+	}
 	base := filepath.Clean(root)
-	target := filepath.Join(base, filepath.FromSlash(declared))
+	target := filepath.Join(base, local)
 	rel, err := filepath.Rel(base, target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err != nil || !filepath.IsLocal(rel) {
 		return "", fmt.Errorf("artifact path %q escapes the artifact root %s", declared, root)
 	}
 	return target, nil
