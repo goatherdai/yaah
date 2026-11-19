@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.195.4](https://github.com/goatherdai/yaah/compare/v0.195.3...v0.195.4) (2026-11-19)
+
+
+### Bug Fixes
+
+* **workflow:** an oversized prompt interpolation is a refusal, not a preview ([a1fd799](https://github.com/goatherdai/yaah/commit/a1fd79906c1801ed9aef2ee4b58d3b9f023e27de))
+* **workflow:** the door's prompt render carries the report budget ([6ece59f](https://github.com/goatherdai/yaah/commit/6ece59fec46c6a4e1124304adb236950cc5e3330))
+
 ## [0.195.3](https://github.com/goatherdai/yaah/compare/v0.195.2...v0.195.3) (2026-11-19)
 
 
