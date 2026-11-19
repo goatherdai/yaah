@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.195.6](https://github.com/goatherdai/yaah/compare/v0.195.5...v0.195.6) (2026-11-19)
+
+
+### Bug Fixes
+
+* **tools:** share context keys with the engine across the move ([4c28243](https://github.com/goatherdai/yaah/commit/4c28243945548b4aceda3d9d5cbcd8b7309fb48f))
+
+
+### Code Refactoring
+
+* **agent:** decouple the loop and pipeline from built-in tools ([e927533](https://github.com/goatherdai/yaah/commit/e927533129510fdc5015fffe3e212b9fed131c2a))
+* **agent:** decouple the loop and pipeline from built-in tools ([0c178d3](https://github.com/goatherdai/yaah/commit/0c178d3647adefd79882eb7184da3676acb49439))
+
 ## [0.195.5](https://github.com/goatherdai/yaah/compare/v0.195.4...v0.195.5) (2026-11-19)
 
 
