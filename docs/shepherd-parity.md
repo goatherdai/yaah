@@ -35,7 +35,7 @@ not claim it wholesale.
 
 | Layer | Shepherd (Python) | yaah | Status |
 |---|---|---|---|
-| Kernel / record | `shepherd2` `abi.v0` | `goatherd-kernel v0.21.1-0.20261119143955-b455b1622853`, golden vectors | **Shipped, exact** |
+| Kernel / record | `shepherd2` `abi.v0` | `goatherd-kernel v0.22.0`, golden vectors | **Shipped, exact** |
 | Retained runs / settlement | `workspace.run` + four settlement verbs | `delegate` + `proposal` verbs | **Shipped** |
 | Context continuation | not shipped (paper's fork/revert vision) | `proposal continue` / `proposal fork` over retained proposals | **Shipped, beyond reference**; `yaah-hxk3.6` |
 | Retained-result threading | not shipped (roadmap row) | `delegate(seed_from)` over retained proposals; worktree proposals survive restart | **Shipped, beyond reference**; `yaah-hxk3.7` |
@@ -595,7 +595,7 @@ Pinned inputs (drift guard: `internal/parity`):
 |---|---|
 | reference | Shepherd (Python) `v0.3.1` |
 | trace ABI | `shepherd2` abi.v0, golden vectors |
-| kernel | `goatherd-kernel v0.21.1-0.20261119143955-b455b1622853` (adds the storage-backend seam; trace ABI unchanged — record and context ids are backend-independent) |
+| kernel | `goatherd-kernel v0.22.0` (the storage-backend seam, tagged; trace ABI unchanged — record and context ids are backend-independent) |
 | runtime | `goatherd-runtime v0.24.1-0.20261118192512-b4d03a8d225a` |
 | container world | `goatherd-runtime/sandbox/croft v0.2.1-0.20261118192512-b4d03a8d225a` / `goatherd-croft v0.9.3-0.20261118191751-716dbb80a6dd` |
 | containment | landlock v0.1.3-0.20261118192512-b4d03a8d225a, winacl v0.1.2-0.20261118192512-b4d03a8d225a, seatbelt v0.1.1-0.20261118192512-b4d03a8d225a |

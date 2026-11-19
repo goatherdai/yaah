@@ -118,8 +118,8 @@ github.com/go-task/slim-sprig/v3 v3.0.0 h1:sUs3vkvUymDpBKi3qH1YSqBQk9+9D/8M2mN1v
 github.com/go-task/slim-sprig/v3 v3.0.0/go.mod h1:W848ghGpv3Qj3dhTPRyJypKRiqCdHZiAzKg9hl15HA8=
 github.com/goatherdai/croft v0.9.3-0.20261118191751-716dbb80a6dd h1:eRtFPA5tCUek9lQ11dHfDQl4QaIOt6+jOxlMPRMSlP0=
 github.com/goatherdai/croft v0.9.3-0.20261118191751-716dbb80a6dd/go.mod h1:Kb/gefSfqv0i9foqYumDDmHdegTX2g+uy4hbR/R/6e0=
-github.com/goatherdai/goatherd-kernel v0.21.1-0.20261119143955-b455b1622853 h1:4jMnbA4i6dNbDZ/tzbIH2z/zp+YabwD5oroPAKb8zLQ=
-github.com/goatherdai/goatherd-kernel v0.21.1-0.20261119143955-b455b1622853/go.mod h1:PM4X3c307K1s8xWHxms0fFsC93edBkZmlLIrDlr4L3s=
+github.com/goatherdai/goatherd-kernel v0.22.0 h1:Q++ltY59nP/8vf1c/02lT/os3cPz3AEj6wPFLhvxxFI=
+github.com/goatherdai/goatherd-kernel v0.22.0/go.mod h1:PM4X3c307K1s8xWHxms0fFsC93edBkZmlLIrDlr4L3s=
 github.com/goatherdai/goatherd-runtime v0.24.1-0.20261118192512-b4d03a8d225a h1:jHqfO3UTnN+phcSos394EssE485LUycMpSSuulLbKhg=
 github.com/goatherdai/goatherd-runtime v0.24.1-0.20261118192512-b4d03a8d225a/go.mod h1:vbKSBy5yv8SAllIoU4Xie+ESJlQGkrRy/Vj6Rd7nL4Q=
 github.com/goatherdai/goatherd-runtime/sandbox/croft v0.2.1-0.20261118192512-b4d03a8d225a h1:SqfozrjGdPktDXdzBlzqKnO/WYRyqC9zE4NZXhNhhvI=
