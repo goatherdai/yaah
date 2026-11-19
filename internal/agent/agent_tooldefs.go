@@ -22,7 +22,7 @@ func advertisedSchema(t Tool) json.RawMessage {
 // generation changes (i.e. a tool is registered), so the per-turn cost drops
 // from a full schema re-read and re-allocation to a single integer compare.
 func (l *Loop) buildToolDefs() []types.ToolDef {
-	if l.Registry == nil {
+	if registryNil(l.Registry) {
 		return nil
 	}
 	gen := l.Registry.Generation()

@@ -100,7 +100,7 @@ func InspectionSetNames() []string {
 }
 
 func (l *Loop) readOnlyTools() []types.ToolDef {
-	if l.Registry == nil {
+	if registryNil(l.Registry) {
 		return nil
 	}
 	var defs []types.ToolDef

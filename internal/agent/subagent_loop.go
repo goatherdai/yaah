@@ -150,7 +150,7 @@ func NewSubAgentLoop(provider Provider, registry ToolRegistry, model, systemProm
 
 	l := &Loop{
 		Provider: provider,
-		Registry: registry,
+		Registry: normalizeRegistry(registry),
 		View:     NoopView{},
 		Config: LoopConfig{
 			Model:                  model,

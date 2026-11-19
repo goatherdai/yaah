@@ -70,7 +70,7 @@ var alwaysDangerous = map[string]bool{
 // approval layer and the required dispatch gate cannot disagree about
 // what is dangerous.
 func (l *Loop) dangerousCall(name, args string) bool {
-	if l.Registry != nil {
+	if !registryNil(l.Registry) {
 		if t := l.Registry.Get(name); t != nil {
 			dc, ok := t.(DangerClassifier)
 			return ok && dc.IsDangerous(args)

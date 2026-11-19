@@ -19,7 +19,7 @@ type Option func(*Loop)
 func NewLoop(provider Provider, registry ToolRegistry, opts ...Option) *Loop {
 	l := &Loop{
 		Provider: provider,
-		Registry: registry,
+		Registry: normalizeRegistry(registry),
 	}
 	for _, opt := range opts {
 		opt(l)

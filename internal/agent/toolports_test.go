@@ -91,3 +91,37 @@ func TestLoopRunsAgainstFakeRegistry(t *testing.T) {
 		t.Error("NewSubAgentLoop did not accept the ToolRegistry port")
 	}
 }
+
+// TestTypedNilRegistryBehavesAsAbsent pins the regression the port introduced:
+// a nil *tools.Registry stored in an interface is non-nil, so plain == nil
+// guards would pass and the listing paths would panic. Constructors normalize
+// it and the direct-field path checks it with registryNil.
+func TestTypedNilRegistryBehavesAsAbsent(t *testing.T) {
+	var nilConcrete *tools.Registry
+	loop := NewLoop(nil, nilConcrete)
+	if !registryNil(loop.Registry) {
+		t.Fatal("constructor kept a typed-nil registry as a non-nil port")
+	}
+	if defs := loop.buildToolDefs(); defs != nil {
+		t.Errorf("tool defs with no registry = %v, want nil", defs)
+	}
+	if got := loop.readOnlyTools(); got != nil {
+		t.Errorf("read-only tools with no registry = %v, want nil", got)
+	}
+	if loop.dangerousCall("echo", `{}`) {
+		t.Error("a missing registry must not classify an unknown tool as dangerous")
+	}
+
+	sub := NewSubAgentLoop(nil, nilConcrete, "model", "prompt", SubAgentConfig{})
+	if !registryNil(sub.Registry) {
+		t.Error("NewSubAgentLoop kept a typed-nil registry")
+	}
+
+	direct := &Loop{Registry: nilConcrete}
+	if defs := direct.buildToolDefs(); defs != nil {
+		t.Errorf("direct field: tool defs = %v, want nil", defs)
+	}
+	if got := direct.readOnlyTools(); got != nil {
+		t.Errorf("direct field: read-only tools = %v, want nil", got)
+	}
+}
