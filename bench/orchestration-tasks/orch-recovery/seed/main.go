@@ -32,7 +32,7 @@ func main() {
 	if err := os.MkdirAll(filepath.Dir(*worktree), 0o755); err != nil {
 		fail("worktree parent: %v", err)
 	}
-	store, err := shepherdtrace.NewSQLiteTraceStore(*tracePath)
+	store, err := shepherdtrace.OpenSQLite(shepherdtrace.StoreConfig{DSN: *tracePath})
 	if err != nil {
 		fail("open trace: %v", err)
 	}
