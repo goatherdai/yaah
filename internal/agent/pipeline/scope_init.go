@@ -10,6 +10,7 @@ import (
 	shepherdtrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	sandbox "github.com/goatherdai/goatherd-runtime/sandbox"
+	"github.com/goatherdai/yaah/internal/tracestore"
 )
 
 // defaultBusBuffer is the per-subscriber effect bus buffer size used when
@@ -145,33 +146,40 @@ func SinkIsNil(sink TraceSink) bool {
 // InitShepherdInfrastructure creates the session-wide Shepherd trace store,
 // effect bus, and scope manager. Called once from wiring — tracing is
 // integral, so this always runs — and both the orchestrator and sub-agent
-// pipelines host shepherd_trace through this shared store. tracePath is
-// the store file itself, not its parent directory.
-func InitShepherdInfrastructure(tracePath string, busBuffer int) (*shepherdtrace.SQLiteTraceStore, *shepherdtrace.EffectBus, *goatherd.ScopeManager, error) {
-	traceDir := filepath.Dir(tracePath)
-	// Only tighten the directory we create. tracePath may be relative, in
-	// which case traceDir is "." — chmod'ing an existing cwd to 0700 would
-	// lock the user out of their own directory.
-	_, statErr := os.Stat(traceDir)
-	createdDir := os.IsNotExist(statErr)
-	if err := os.MkdirAll(traceDir, 0o700); err != nil {
-		return nil, nil, nil, fmt.Errorf("shepherd: mkdir %s: %w", traceDir, err)
-	}
-	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("shepherd: open store: %w", err)
-	}
-	// Trace data carries prompts and tool-call details. Restrict access to
-	// the session owner on POSIX platforms (Windows uses ACLs and ignores
-	// POSIX modes; os.Chmod there only toggles the read-only bit).
-	if runtime.GOOS != "windows" {
-		if createdDir {
+// pipelines host shepherd_trace through this shared store. cfg names the
+// backend and its data source (file path for SQLite, connection URL for
+// PostgreSQL); file-only side effects (mkdir, chmod) are skipped for
+// server backends.
+func InitShepherdInfrastructure(cfg tracestore.Config, busBuffer int) (*shepherdtrace.SQLiteTraceStore, *shepherdtrace.EffectBus, *goatherd.ScopeManager, error) {
+	if cfg.IsSQLite() {
+		traceDir := filepath.Dir(cfg.DSN)
+		// Only tighten the directory we create. The DSN may be relative,
+		// in which case traceDir is "." — chmod'ing an existing cwd to
+		// 0700 would lock the user out of their own directory.
+		_, statErr := os.Stat(traceDir)
+		createdDir := os.IsNotExist(statErr)
+		if err := os.MkdirAll(traceDir, 0o700); err != nil {
+			return nil, nil, nil, fmt.Errorf("shepherd: mkdir %s: %w", traceDir, err)
+		}
+		// Trace data carries prompts and tool-call details. Restrict access to
+		// the session owner on POSIX platforms (Windows uses ACLs and ignores
+		// POSIX modes; os.Chmod there only toggles the read-only bit).
+		if runtime.GOOS != "windows" && createdDir {
 			if err := os.Chmod(traceDir, 0o700); err != nil {
 				return nil, nil, nil, fmt.Errorf("shepherd: chmod dir %s: %w", traceDir, err)
 			}
 		}
-		if err := os.Chmod(tracePath, 0o600); err != nil {
-			return nil, nil, nil, fmt.Errorf("shepherd: chmod store %s: %w", tracePath, err)
+	}
+	store, err := tracestore.Open(cfg)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("shepherd: open store (%s): %w", cfg.Describe(), err)
+	}
+	// Tighten the store file itself (SQLite only) the same way: the trace
+	// carries prompts and tool-call details, so restrict it to the session
+	// owner, POSIX modes only.
+	if cfg.IsSQLite() && runtime.GOOS != "windows" {
+		if err := os.Chmod(cfg.DSN, 0o600); err != nil {
+			return nil, nil, nil, fmt.Errorf("shepherd: chmod store %s: %w", cfg.DSN, err)
 		}
 	}
 	if busBuffer <= 0 {

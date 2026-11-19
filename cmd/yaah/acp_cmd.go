@@ -270,7 +270,7 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 	defer reg.Close()
 	// Kernel-first deletion: session/delete evicts the session's trace
 	// paths before the state cascade (docs/retention-gc.md §5).
-	reg.WithEvictor(retention.NewEvictor(cfg.Agent.Default.TracePath()))
+	reg.WithEvictor(retention.NewEvictor(cfg.Agent.Default.TraceStoreConfig()))
 
 	srv := acp.NewServer(
 		newACPAgentSession,

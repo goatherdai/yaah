@@ -92,6 +92,7 @@ yaah/
 │   ├── supervisionapi/          # neutral supervision errors and Firing shared by agent and tools
 │   ├── todo/                    # todo-list model shared by the views
 │   ├── toolargs/                # strict tool-argument decoding, unknown-key errors
+│   ├── tracestore/              # trace store open seam: backend + DSN from config → kernel StoreConfig
 │   ├── toolcontract/            # neutral Tool/DangerClassifier contracts shared by agent and tools
 │   ├── toolfmt/                 # shared tool result formatting
 │   ├── tools/                   # built-in tools (dispatch lane is internal/dispatch)

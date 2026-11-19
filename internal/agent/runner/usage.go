@@ -9,6 +9,7 @@ import (
 
 	shepherdtrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/tracestore"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -47,14 +48,17 @@ func recordSubAgentUsage(ctx context.Context, store pipeline.TraceSink, sessionI
 	}
 }
 
-func subagentTraceProfile(ctx context.Context, tracePath, sessionID string) string {
-	// Do not open the store unless it already exists: NewSQLiteTraceStore
-	// creates the file, so probing speculatively would conjure an empty
-	// store at the default path as a side effect of a failed dispatch.
-	if _, err := os.Stat(tracePath); err != nil {
-		return ""
+func subagentTraceProfile(ctx context.Context, traceCfg tracestore.Config, sessionID string) string {
+	// Do not open the store unless it already exists: creating the SQLite
+	// file speculatively would conjure an empty store at the default path
+	// as a side effect of a failed dispatch. A server backend has no file
+	// to conjure, so the existence probe is SQLite-only.
+	if traceCfg.IsSQLite() {
+		if _, err := os.Stat(traceCfg.DSN); err != nil {
+			return ""
+		}
 	}
-	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
+	store, err := tracestore.Open(traceCfg)
 	if err != nil {
 		return ""
 	}

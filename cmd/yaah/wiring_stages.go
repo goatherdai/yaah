@@ -1016,7 +1016,7 @@ func buildShepherdInfra(st *loopInfraStage, cfg *config.Config, ws *workspaceSta
 	// store-open failure is the runtime safety net, not a config switch —
 	// warn and continue without a root scope.
 	{
-		store, bus, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.TracePath(), 0)
+		store, bus, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.TraceStoreConfig(), 0)
 		if serr != nil {
 			fmt.Fprintf(os.Stderr, "warning: shepherd trace store unavailable, continuing without a root scope: %v\n", serr)
 		}

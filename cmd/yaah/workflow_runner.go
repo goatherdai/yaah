@@ -180,7 +180,7 @@ func standaloneRetained(cfg *config.Config, ws *workspaceStage, run jobs.TaskRun
 	// door refuses by name when a proposal-lane node meets a nil runtime.
 	// Composing unconditionally also keeps the resume path honest: resume
 	// reads the runtime this process composed for the run it continues.
-	traceStore, traceBus, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.TracePath(), 0)
+	traceStore, traceBus, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.TraceStoreConfig(), 0)
 	if serr != nil {
 		return nil, nil, fmt.Errorf("workflow: retained lane unavailable: %w", serr)
 	}
