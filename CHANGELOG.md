@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.195.2](https://github.com/goatherdai/yaah/compare/v0.195.1...v0.195.2) (2026-11-19)
+
+
+### Bug Fixes
+
+* **agent:** preserve no-registry behavior for typed-nil ports ([54c66b4](https://github.com/goatherdai/yaah/commit/54c66b46e433b5f1ea2998cd7fcd77e6ad7101ba))
+
+
+### Code Refactoring
+
+* **agent:** make the tool registry a consumer-side port ([2bc33b0](https://github.com/goatherdai/yaah/commit/2bc33b0b7a3a652277e40faa5e61e3e7118a4d03))
+* **agent:** make the tool registry a consumer-side port ([48b51f2](https://github.com/goatherdai/yaah/commit/48b51f2fb5d1e4874b41582e90125229b78f88f4))
+
 ## [0.195.1](https://github.com/goatherdai/yaah/compare/v0.195.0...v0.195.1) (2026-11-19)
 
 
