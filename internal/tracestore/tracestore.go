@@ -62,18 +62,59 @@ func (c Config) IsSQLite() bool {
 	return c.Backend == "" || c.Backend == BackendSQLite
 }
 
+// secretParams are credential-bearing PostgreSQL URL query parameters and
+// keyword/value DSN fields: Describe renders their values redacted.
+// sslkey names a file, not a secret value, but the path can carry
+// identity, so it is treated the same.
+var secretParams = map[string]bool{
+	"password":    true,
+	"sslpassword": true,
+	"sslkey":      true,
+}
+
 // Describe renders the config for diagnostics without leaking
-// credentials: a PostgreSQL URL keeps its scheme, host, and database but
-// drops the userinfo.
+// credentials. A PostgreSQL URL DSN keeps its scheme, host, and database
+// but drops userinfo, credential-bearing query parameters, and the
+// fragment. A PostgreSQL keyword/value DSN keeps its fields with
+// credential values redacted. SQLite DSNs are file paths with no
+// credential surface and pass through under the backend tag.
 func (c Config) Describe() string {
 	if !strings.Contains(c.DSN, "://") {
-		return fmt.Sprintf("%s://%s", c.Backend, c.DSN)
+		if c.IsSQLite() {
+			return fmt.Sprintf("%s://%s", c.Backend, c.DSN)
+		}
+		// PostgreSQL keyword/value form, e.g.
+		// "host=db.internal user=app password=secret". The values of
+		// fields in secretParams are the leak surface: render those
+		// as <redacted> and keep everything else verbatim.
+		if c.DSN == "" {
+			return fmt.Sprintf("%s://<unconfigured DSN>", c.Backend)
+		}
+		fields := strings.Fields(c.DSN)
+		rendered := make([]string, 0, len(fields))
+		for _, field := range fields {
+			key, _, found := strings.Cut(field, "=")
+			if found && secretParams[strings.ToLower(key)] {
+				rendered = append(rendered, key+"=<redacted>")
+				continue
+			}
+			rendered = append(rendered, field)
+		}
+		return strings.Join(rendered, " ")
 	}
 	u, err := url.Parse(c.DSN)
 	if err != nil {
 		return fmt.Sprintf("%s://<unparseable DSN>", c.Backend)
 	}
 	u.User = nil
+	u.Fragment = ""
+	q := u.Query()
+	for key := range q {
+		if secretParams[strings.ToLower(key)] {
+			q.Set(key, "<redacted>")
+		}
+	}
+	u.RawQuery = q.Encode()
 	return u.String()
 }
 

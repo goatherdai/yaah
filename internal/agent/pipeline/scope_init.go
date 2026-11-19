@@ -174,9 +174,9 @@ func InitShepherdInfrastructure(cfg tracestore.Config, busBuffer int) (*shepherd
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("shepherd: open store (%s): %w", cfg.Describe(), err)
 	}
-	// Trace data carries prompts and tool-call details. Restrict access to
-	// the session owner on POSIX platforms (Windows uses ACLs and ignores
-	// POSIX modes; os.Chmod there only toggles the read-only bit).
+	// Tighten the store file itself (SQLite only) the same way: the trace
+	// carries prompts and tool-call details, so restrict it to the session
+	// owner, POSIX modes only.
 	if cfg.IsSQLite() && runtime.GOOS != "windows" {
 		if err := os.Chmod(cfg.DSN, 0o600); err != nil {
 			return nil, nil, nil, fmt.Errorf("shepherd: chmod store %s: %w", cfg.DSN, err)

@@ -89,9 +89,10 @@ yaah/
 │   ├── skills/                  # SKILL.md discovery/parsing
 │   ├── spinner/                 # terminal spinner primitives
 │   ├── todo/                    # todo-list model shared by the views
-│   ├── tracestore/              # trace store open seam: backend + DSN from config → kernel StoreConfig
 │   ├── toolargs/                # strict tool-argument decoding, unknown-key errors
-│   ├── toolcontract/            # neutral Tool/DangerClassifier contracts shared by agent and tools│   ├── toolfmt/                 # shared tool result formatting
+│   ├── tracestore/              # trace store open seam: backend + DSN from config → kernel StoreConfig
+│   ├── toolcontract/            # neutral Tool/DangerClassifier contracts shared by agent and tools
+│   ├── toolfmt/                 # shared tool result formatting
 │   ├── tools/                   # built-in tools (dispatch lane is internal/dispatch)
 │   │   └── substrate/           #   session sandbox, workspace bootstrap, apply-out
 │   ├── tui/                     # tview UI components

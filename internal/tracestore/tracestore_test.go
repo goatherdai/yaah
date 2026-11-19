@@ -59,6 +59,49 @@ func TestDescribeHidesCredentials(t *testing.T) {
 	}
 }
 
+func TestDescribeRedactsCredentialParams(t *testing.T) {
+	t.Run("URL query parameters", func(t *testing.T) {
+		cfg := Config{Backend: BackendPostgres, DSN: "postgres://app@db.internal:5432/traces?sslmode=disable&password=hunter2&sslpassword=sp2&connect_timeout=5#frag"}
+		got := cfg.Describe()
+		for _, secret := range []string{"hunter2", "sp2"} {
+			if strings.Contains(got, secret) {
+				t.Errorf("Describe() leaked %q in %q", secret, got)
+			}
+		}
+		for _, want := range []string{"db.internal:5432", "sslmode=disable", "connect_timeout=5", "password=%3Credacted%3E"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("Describe() = %q, missing %q", got, want)
+			}
+		}
+		if strings.Contains(got, "frag") {
+			t.Errorf("Describe() leaked the URL fragment: %q", got)
+		}
+	})
+
+	t.Run("keyword/value DSN", func(t *testing.T) {
+		cfg := Config{Backend: BackendPostgres, DSN: "host=db.internal user=app password=hunter2 sslmode=disable sslpassword=sp2"}
+		got := cfg.Describe()
+		for _, secret := range []string{"hunter2", "sp2"} {
+			if strings.Contains(got, secret) {
+				t.Errorf("Describe() leaked %q in %q", secret, got)
+			}
+		}
+		for _, want := range []string{"host=db.internal", "user=app", "sslmode=disable", "password=<redacted>", "sslpassword=<redacted>"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("Describe() = %q, missing %q", got, want)
+			}
+		}
+	})
+
+	t.Run("keyword/value DSN with quoted values", func(t *testing.T) {
+		cfg := Config{Backend: BackendPostgres, DSN: `host=db.internal user=app password='hunter 2'`}
+		got := cfg.Describe()
+		if strings.Contains(got, "hunter 2") {
+			t.Errorf("Describe() leaked the quoted password: %q", got)
+		}
+	})
+}
+
 func TestOpenSQLiteRoundTrip(t *testing.T) {
 	cfg := Config{DSN: filepath.Join(t.TempDir(), "trace.sqlite")}
 	store, err := Open(cfg)
