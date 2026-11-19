@@ -588,8 +588,14 @@ func TestExampleArchitectureReviewRestrictedExecutionFromTheDocument(t *testing.
 	if rerr != nil {
 		t.Fatalf("the final artifact never landed: %v\n%s", rerr, rep)
 	}
-	if !strings.Contains(string(landed), "architecture review") {
-		t.Errorf("artifact head = %q, want the synthesized report", headOf(string(landed)))
+	// The report renders as a readable markdown document: the synthesized
+	// verdict as a heading, and the machine-readable payload as a JSON
+	// block — not the bare synthesis blob the earlier shape wrote.
+	body := string(landed)
+	for _, want := range []string{"# Architecture review", "## Verdict"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("artifact missing %q; head = %q", want, headOf(body))
+		}
 	}
 }
 

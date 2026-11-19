@@ -132,5 +132,15 @@ spec:
       kind: emit
       needs: [synthesize]
       value: |
-        architecture review: {{ steps.synthesize.output }}
+        # Architecture review
+
+        ## Verdict
+
+        {{ steps.synthesize.output.headline }}
+
+        ## Findings
+
+        ```json
+        {{ steps.synthesize.output }}
+        ```
       path: artifacts/architecture-review.md
