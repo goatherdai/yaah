@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.195.1](https://github.com/goatherdai/yaah/compare/v0.195.0...v0.195.1) (2026-11-19)
+
+
+### Code Refactoring
+
+* **workflow:** assert node payload matches its kind at resolve time ([68e5233](https://github.com/goatherdai/yaah/commit/68e52330f5759ecf225dd212405f6dde62ac1736))
+* **workflow:** assert node payload matches its kind at resolve time ([f65cbbc](https://github.com/goatherdai/yaah/commit/f65cbbcc4ecf630b2cf1bdad20ae2451fc4f9cda))
+
+
+### Tests
+
+* **cmd:** architecture-review example drives a restricted end-to-end run ([e09fdb9](https://github.com/goatherdai/yaah/commit/e09fdb914d2fb977d207a7d278b37f8b44615be0))
+* **cmd:** architecture-review example end-to-end restriction run ([c32f81e](https://github.com/goatherdai/yaah/commit/c32f81e5b6b3399306b353aab0ec356792a22961))
+* **cmd:** pin the example's unenforced report-lane posture by name ([5b2fc51](https://github.com/goatherdai/yaah/commit/5b2fc510ecb27e3b811a9ecd21e025bfb413d8e6))
+
 ## [0.195.0](https://github.com/goatherdai/yaah/compare/v0.194.0...v0.195.0) (2026-11-19)
 
 
