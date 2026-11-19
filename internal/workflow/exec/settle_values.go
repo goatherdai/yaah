@@ -61,16 +61,6 @@ func (r *Run) selectorValue(sel *ir.Selector) (any, error) {
 //
 // A node that never succeeded has no value: callers get the empty result text
 // and the reference that asked for it fails as it always has.
-
-// stepValue is the recorded value of one node — the fenced per-binding value
-// extraction (yaah-0u0v.13). A report delegate's value is its delivered text,
-// unchanged. A proposal-lane delegate's value is a mapping that carries the
-// typed handle, so `steps.<id>.output.proposal_id` resolves and a whole-output
-// read renders the handle rather than pretending a proposal is a report. A
-// settle's value is its settled record.
-//
-// A node that never succeeded has no value: callers get the empty result text
-// and the reference that asked for it fails as it always has.
 func (r *Run) stepValue(n *ir.Node, st *NodeState) any {
 	if n == nil || st == nil {
 		return ""
@@ -154,12 +144,6 @@ func (r *Run) stepValue(n *ir.Node, st *NodeState) any {
 // ir.template's walkPath applies to a rendered reference: a delivered result is
 // model text, so the object may be wrapped in prose or a fence, and the first
 // decodable object in the text is the payload a field is asked of.
-
-// walkValue walks a dotted access path into a recorded value, decoding a JSON
-// object body on demand. It is the Scope-side half of the same rule
-// ir.template's walkPath applies to a rendered reference: a delivered result is
-// model text, so the object may be wrapped in prose or a fence, and the first
-// decodable object in the text is the payload a field is asked of.
 func walkValue(v any, path []string) (any, error) {
 	for _, seg := range path {
 		m, ok := v.(map[string]any)
@@ -188,13 +172,6 @@ func walkValue(v any, path []string) (any, error) {
 // asked of. The scan is bounded (first 128 '{' positions) so a large
 // malformed text cannot make it quadratic; text with no object at all is a
 // refusal, not a payload.
-
-// decodeJSONObject reads the first JSON object in a string. A delivered
-// result is model text, and a model returning JSON often wraps it in prose or
-// a markdown fence; the object is still the structured payload a field is
-// asked of. The scan is bounded (first 128 '{' positions) so a large
-// malformed text cannot make it quadratic; text with no object at all is a
-// refusal, not a payload.
 func decodeJSONObject(s string) (map[string]any, bool) {
 	attempts := 0
 	for i := 0; i < len(s); i++ {
@@ -212,11 +189,6 @@ func decodeJSONObject(s string) (map[string]any, bool) {
 	}
 	return nil, false
 }
-
-// refsFromValue turns a resolved selector value into proposal refs. A ref is a
-// proposal id spelled either as the string itself or as the proposal_id (or
-// id) field of a handle mapping — the two shapes the proposal runtime and the
-// value family both use.
 
 // refsFromValue turns a resolved selector value into proposal refs. A ref is a
 // proposal id spelled either as the string itself or as the proposal_id (or
@@ -289,12 +261,6 @@ func handleID(m map[string]any) string {
 // the handle's own. A field no handle carries is refused rather than compared
 // as absent — a filter that matched nothing because a name was mistyped is
 // exactly the quiet outcome on_empty exists to prevent.
-
-// applyFilter evaluates the settle's where predicate against each resolved
-// element. Elements are proposal handles, so the fields a filter can read are
-// the handle's own. A field no handle carries is refused rather than compared
-// as absent — a filter that matched nothing because a name was mistyped is
-// exactly the quiet outcome on_empty exists to prevent.
 func applyFilter(refs []ProposalRef, sel *ir.Selector) ([]ProposalRef, string) {
 	if sel.Predicate.Op == ir.PredNone && sel.Predicate.Field == "" {
 		return refs, ""
@@ -315,10 +281,6 @@ func applyFilter(refs []ProposalRef, sel *ir.Selector) ([]ProposalRef, string) {
 	}
 	return out, ""
 }
-
-// elementFields keeps the source element's bindings other than the handle
-// identity, so a same-source where can read what the element said about the
-// proposal it named (yaah-0u0v.27).
 
 // elementFields keeps the source element's bindings other than the handle
 // identity, so a same-source where can read what the element said about the
@@ -456,18 +418,6 @@ func dedupeRefs(refs []ProposalRef) []ProposalRef {
 // once in Result.Warnings, rather than silently redefining the author's order
 // or refusing a legal declaration. The size fact is fan-out and registry-read
 // plumbing (yaah-0u0v.14).
-
-// sortRefs fixes the plan's order. Canonical order is producer path then
-// proposal id, which is a function of the graph and the recorded handles and
-// nothing else.
-//
-// smallest_diff_first is the one declared order that is not that order, and
-// the scheduler holds no diff-size fact: the size lives in the proposal
-// runtime's change metadata, which the settlement envelope reports only after
-// the disposition. So the plan is taken in canonical order and the run says so
-// once in Result.Warnings, rather than silently redefining the author's order
-// or refusing a legal declaration. The size fact is fan-out and registry-read
-// plumbing (yaah-0u0v.14).
 func sortRefs(refs []ProposalRef, order ir.SettleOrder) {
 	if order == ir.OrderSmallestDiffFirst {
 		sort.SliceStable(refs, func(i, j int) bool {
@@ -482,10 +432,6 @@ func sortRefs(refs []ProposalRef, order ir.SettleOrder) {
 		return refs[i].ProposalID < refs[j].ProposalID
 	})
 }
-
-// flatten renders a multi-line fact as one log field. The event log is a
-// byte-stable one-line-per-event artifact, so no settlement prose — an error
-// body or a conflict note — may put a newline into it.
 
 // flatten renders a multi-line fact as one log field. The event log is a
 // byte-stable one-line-per-event artifact, so no settlement prose — an error

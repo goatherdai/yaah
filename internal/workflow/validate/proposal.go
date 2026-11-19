@@ -64,8 +64,6 @@ type linearityState struct {
 }
 
 // Disposition counts held by one token at one boundary.
-
-// Disposition counts held by one token at one boundary.
 const (
 	countNone = 1 << iota
 	countOnce
@@ -76,14 +74,7 @@ const (
 // analysis must count: a continue_from supersedes its source, which disposes
 // of it in exactly the sense WF021 means — the harness closes the parent when
 // it starts the continuation.
-
-// disposition names a settlement verb, plus the one lifecycle verb the
-// analysis must count: a continue_from supersedes its source, which disposes
-// of it in exactly the sense WF021 means — the harness closes the parent when
-// it starts the continuation.
 type disposition uint8
-
-// Disposition verbs.
 
 // Disposition verbs.
 const (
@@ -117,8 +108,6 @@ func (d disposition) String() string {
 }
 
 // actionOf maps a settlement verb onto its disposition bit.
-
-// actionOf maps a settlement verb onto its disposition bit.
 func actionOf(a ir.SettleAction) disposition {
 	switch a {
 	case ir.SettleApply:
@@ -134,14 +123,9 @@ func actionOf(a ir.SettleAction) disposition {
 }
 
 // freshState is a token that exists and has no disposition yet.
-
-// freshState is a token that exists and has no disposition yet.
 func freshState() linearityState {
 	return linearityState{counts: countNone}
 }
-
-// mergeState unions two boundary states: a run reaching the boundary came
-// either way, so counts, verbs, and disposer names all join by union.
 
 // mergeState unions two boundary states: a run reaching the boundary came
 // either way, so counts, verbs, and disposer names all join by union.
@@ -150,17 +134,6 @@ func mergeState(a, b linearityState) linearityState {
 	out.by = unionNames(a.by, b.by)
 	return out
 }
-
-// namedBy returns the state after one step disposes of the token. The shift
-// is the whole of the exactly-once bookkeeping: an undisposed token becomes
-// disposed-once, and a token already disposed on some path becomes disposed
-// twice on that path — which is the finding WF021 reports at the second
-// disposer, because that is the step the author has to narrow or delete.
-//
-// Re-applying the same node's disposition is a no-op. Kleene rounds re-run a
-// transfer on a grown entry, and without the guard a settle inside a loop
-// body would shift its own token from once to twice on the second round and
-// report a double settlement no run performs.
 
 // namedBy returns the state after one step disposes of the token. The shift
 // is the whole of the exactly-once bookkeeping: an undisposed token becomes
@@ -220,15 +193,6 @@ func unionNames(a, b []string) []string {
 // winner, and that winner is a proposal with a disposition still owed to it,
 // under a fresh identity because the selection itself decides the candidates
 // it rejected.
-
-// produces reports whether a node yields a proposal token. A proposal-lane
-// dispatch is the obvious case, and a lane the author left unset counts too:
-// resolve folds defaults, and an unset lane is the runtime's default lane —
-// the same reading WF020 takes, and the one that keeps an unlabeled workstream
-// a proposal. A select is the other producer: it hands on one candidate as the
-// winner, and that winner is a proposal with a disposition still owed to it,
-// under a fresh identity because the selection itself decides the candidates
-// it rejected.
 func produces(n *ir.Node) bool {
 	switch n.Kind {
 	case ir.KindDelegate:
@@ -238,9 +202,6 @@ func produces(n *ir.Node) bool {
 	}
 	return false
 }
-
-// proposalSet is what a `settle.proposals` or `select.candidates` selector
-// denotes, as far as one graph can say.
 
 // proposalSet is what a `settle.proposals` or `select.candidates` selector
 // denotes, as far as one graph can say.
@@ -268,8 +229,6 @@ type proposalSet struct {
 }
 
 // producers is the subset of the referents that yield a proposal.
-
-// producers is the subset of the referents that yield a proposal.
 func (p proposalSet) producers() []*ir.Node {
 	var out []*ir.Node
 	for _, n := range p.referents {
@@ -279,10 +238,6 @@ func (p proposalSet) producers() []*ir.Node {
 	}
 	return out
 }
-
-// reports is the subset that provably cannot carry a proposal: a dispatch the
-// author labeled report lane. An unlabeled lane is the default lane and is not
-// evidence of anything, which is why this is narrower than "not a producer".
 
 // reports is the subset that provably cannot carry a proposal: a dispatch the
 // author labeled report lane. An unlabeled lane is the default lane and is not
@@ -298,8 +253,6 @@ func (p proposalSet) reports() []*ir.Node {
 }
 
 // ids are the token paths the handle denotes.
-
-// ids are the token paths the handle denotes.
 func (p proposalSet) ids() []string {
 	var out []string
 	for _, n := range p.producers() {
@@ -307,9 +260,6 @@ func (p proposalSet) ids() []string {
 	}
 	return out
 }
-
-// String renders the handle's referents for a message, bounded so a wide
-// collect cannot bury the finding.
 
 // String renders the handle's referents for a message, bounded so a wide
 // collect cannot bury the finding.
@@ -326,10 +276,6 @@ func (p proposalSet) String() string {
 	}
 	return strings.Join(names, ", ")
 }
-
-// linearity is one analysis of one graph: the flow relation, the boundary
-// states, and the residue the exit rules read. Nothing here survives the call
-// — a validator holds no state between graphs.
 
 // linearity is one analysis of one graph: the flow relation, the boundary
 // states, and the residue the exit rules read. Nothing here survives the call
@@ -381,8 +327,6 @@ type linearity struct {
 }
 
 // analyze builds the flow relation and runs the dataflow to a fixed point.
-
-// analyze builds the flow relation and runs the dataflow to a fixed point.
 func analyze(g *ir.Graph) *linearity {
 	l := &linearity{
 		g:          g,
@@ -406,7 +350,3 @@ func analyze(g *ir.Graph) *linearity {
 	l.claimScope()
 	return l
 }
-
-// ---------------------------------------------------------------- the graph
-
-// build lays out the external flow edges.

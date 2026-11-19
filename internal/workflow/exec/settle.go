@@ -56,19 +56,11 @@ const (
 
 // Settlement statuses, verbatim from the proposal runtime's one settlement
 // envelope. The scheduler never synthesizes one.
-
-// Settlement statuses, verbatim from the proposal runtime's one settlement
-// envelope. The scheduler never synthesizes one.
 const (
 	SettlementStatusSettled  = "settled"
 	SettlementStatusConflict = "conflict"
 	SettlementStatusError    = "error"
 )
-
-// ProposalHandle is the typed record of a proposal an attempt sealed. The
-// envelope's proposal_id is the whole fact; the rest is what a settle node and
-// a later trace need in order to name where it came from without re-deriving
-// it from per-lane plumbing.
 
 // ProposalHandle is the typed record of a proposal an attempt sealed. The
 // envelope's proposal_id is the whole fact; the rest is what a settle node and
@@ -82,8 +74,6 @@ type ProposalHandle struct {
 	Lane       string `json:"lane,omitempty"`
 	DispatchID string `json:"dispatch_id,omitempty"`
 }
-
-// ProposalRef is one element of a settle node's resolved handle set.
 
 // ProposalRef is one element of a settle node's resolved handle set.
 type ProposalRef struct {
@@ -102,10 +92,6 @@ type ProposalRef struct {
 // SettlePlan is one settle node's resolved work: the handles to dispose of, in
 // the order the door is asked to take them, plus the dispositions the author
 // declared for what the door reports back.
-
-// SettlePlan is one settle node's resolved work: the handles to dispose of, in
-// the order the door is asked to take them, plus the dispositions the author
-// declared for what the door reports back.
 type SettlePlan struct {
 	Refs       []ProposalRef     `json:"refs"`
 	Action     ir.SettleAction   `json:"action"`
@@ -114,11 +100,6 @@ type SettlePlan struct {
 	OnConflict ir.ConflictPolicy `json:"on_conflict,omitempty"`
 	Empty      ir.EmptyPolicy    `json:"on_empty,omitempty"`
 }
-
-// Settled is the scheduler's view of one settlement. It mirrors the proposal
-// runtime's settlement envelope the way Completion mirrors the dispatch
-// envelope — same facts, separate type, because this package may not import
-// internal/dispatch. internal/workflow/host is the producer that bridges them.
 
 // Settled is the scheduler's view of one settlement. It mirrors the proposal
 // runtime's settlement envelope the way Completion mirrors the dispatch
@@ -147,10 +128,6 @@ type Settled struct {
 // settlementVerb maps a resolved settle action onto the door's verb. The
 // vocabulary is exactly four and the default arm refuses everything else —
 // which is where continue and fork are turned away.
-
-// settlementVerb maps a resolved settle action onto the door's verb. The
-// vocabulary is exactly four and the default arm refuses everything else —
-// which is where continue and fork are turned away.
 func settlementVerb(a ir.SettleAction) (string, bool) {
 	switch a {
 	case ir.SettleSelect:
@@ -164,10 +141,6 @@ func settlementVerb(a ir.SettleAction) (string, bool) {
 	}
 	return "", false
 }
-
-// nextSettlePath returns the first ready settle node the driver may work on.
-// The ready queue is kept in canonical path order, so a graph with two settle
-// nodes plans and settles them in the same order every run.
 
 // nextSettlePath returns the first ready settle node the driver may work on.
 // The ready queue is kept in canonical path order, so a graph with two settle
@@ -188,10 +161,6 @@ func (r *Run) nextSettlePath() (string, bool) {
 	}
 	return "", false
 }
-
-// settleStep performs one settlement — or one plan report — for one ready
-// settle node, and submits the resulting event. It mutates nothing itself:
-// both the plan and each disposition are decided inside Apply.
 
 // settleStep performs one settlement — or one plan report — for one ready
 // settle node, and submits the resulting event. It mutates nothing itself:
@@ -275,14 +244,6 @@ func (r *Run) settleStep(ctx context.Context, path string) (bool, error) {
 // The guard is checked before the first settlement is asked for, so a node
 // that names one already-disposed proposal settles nothing — not even the
 // other elements of its own set.
-
-// onSettlementPlanned records a settle node's resolved handle set and applies
-// the two rules that decide whether the node may work at all: on_empty on an
-// empty set, and the linearity guard on a proposal this run already owns.
-//
-// The guard is checked before the first settlement is asked for, so a node
-// that names one already-disposed proposal settles nothing — not even the
-// other elements of its own set.
 func (r *Run) onSettlementPlanned(e SettlementPlannedEvent) error {
 	st := r.state[e.NodePath]
 	if st == nil {
@@ -349,12 +310,6 @@ func (r *Run) onSettlementPlanned(e SettlementPlannedEvent) error {
 // this BEFORE Runtime.Settle, so the checkpoint says "asked" before the world
 // effect can happen, and a resumed run can tell an unknown outcome from a
 // settlement that never started.
-
-// onSettlementAsked records the disposition the run is about to ask the door
-// for. It is the settlement write-ahead record (yaah-0u0v.16): the driver emits
-// this BEFORE Runtime.Settle, so the checkpoint says "asked" before the world
-// effect can happen, and a resumed run can tell an unknown outcome from a
-// settlement that never started.
 func (r *Run) onSettlementAsked(e SettlementAskedEvent) error {
 	st := r.state[e.NodePath]
 	if st == nil {
@@ -385,10 +340,6 @@ func (r *Run) onSettlementAsked(e SettlementAskedEvent) error {
 	st.Asked = e.ProposalID
 	return nil
 }
-
-// onProposalSettled folds one disposition into the node's record and decides
-// what it means for the node: an error ends it, a conflict ends it unless the
-// author declared skip, and the last element of the plan closes it succeeded.
 
 // onProposalSettled folds one disposition into the node's record and decides
 // what it means for the node: an error ends it, a conflict ends it unless the
@@ -463,11 +414,6 @@ func (r *Run) onProposalSettled(e ProposalSettledEvent) error {
 // the structured record a later emit reads through `steps.<id>.output.settled`,
 // and the same record the run's output list carries, so the two can never
 // disagree.
-
-// closeSettlement records the node's settled value and closes it. The value is
-// the structured record a later emit reads through `steps.<id>.output.settled`,
-// and the same record the run's output list carries, so the two can never
-// disagree.
 func (r *Run) closeSettlement(n *ir.Node, st *NodeState) error {
 	encoded, err := json.Marshal(st.settledValue())
 	if err != nil {
@@ -489,10 +435,6 @@ func (r *Run) closeSettlement(n *ir.Node, st *NodeState) error {
 // settleBindingName is the name a settle's value is bound under: its declared
 // output name, else its step id, else its path — the same rule emit follows,
 // so `steps.<id>.output` and the named binding read one value.
-
-// settleBindingName is the name a settle's value is bound under: its declared
-// output name, else its step id, else its path — the same rule emit follows,
-// so `steps.<id>.output` and the named binding read one value.
 func settleBindingName(n *ir.Node) string {
 	if n.Output != nil && n.Output.Name != "" {
 		return n.Output.Name
@@ -502,11 +444,6 @@ func settleBindingName(n *ir.Node) string {
 	}
 	return n.Path
 }
-
-// settledValue is the structured value a settled node reports: the counts an
-// author interpolates into a report, plus the per-proposal record a trace
-// reads. Maps are built from ordered slices and encoded by encoding/json, so
-// the text is a function of the dispositions and nothing else.
 
 // settledValue is the structured value a settled node reports: the counts an
 // author interpolates into a report, plus the per-proposal record a trace
@@ -559,10 +496,6 @@ func (st *NodeState) settledValue() map[string]any {
 // openProposals lists the proposal ids this run holds without a disposition,
 // sorted, so the reason a run refuses to end succeeded names the same list
 // every time.
-
-// openProposals lists the proposal ids this run holds without a disposition,
-// sorted, so the reason a run refuses to end succeeded names the same list
-// every time.
 func (r *Run) openProposals() []string {
 	out := make([]string, 0, len(r.open))
 	for id := range r.open {
@@ -571,8 +504,6 @@ func (r *Run) openProposals() []string {
 	sort.Strings(out)
 	return out
 }
-
-// openProposalDetail renders the residue for the run's reason line.
 
 // openProposalDetail renders the residue for the run's reason line.
 func (r *Run) openProposalDetail() string {
@@ -587,11 +518,6 @@ func (r *Run) openProposalDetail() string {
 	}
 	return strings.Join(parts, ", ")
 }
-
-// releaseClaims drops the claims a node holds on proposals it will not settle
-// after all. It runs when a settle node terminates, so a node that failed
-// halfway through its plan leaves the rest of its set settle-able instead of
-// walled off, and it never touches a proposal already disposed of.
 
 // releaseClaims drops the claims a node holds on proposals it will not settle
 // after all. It runs when a settle node terminates, so a node that failed
@@ -612,9 +538,3 @@ func (r *Run) releaseClaims(path string) {
 		}
 	}
 }
-
-// resolveHandles turns a settle node's proposals and where selectors into the
-// refs it disposes of, and answers three things at once: whether the node may
-// be planned yet (a producer that has not terminated is a wait, not an empty
-// set), what the set is, and whether the declaration is something this bead
-// can execute at all.

@@ -51,9 +51,6 @@ func (r *Run) resolveHandles(n *ir.Node) (refs []ProposalRef, deferred bool, ref
 
 // awaitingProducer returns the path of a step the selector reads that has not
 // terminated yet, or "" when there is nothing to wait for.
-
-// awaitingProducer returns the path of a step the selector reads that has not
-// terminated yet, or "" when there is nothing to wait for.
 func (r *Run) awaitingProducer(sel *ir.Selector) string {
 	if sel == nil || sel.From == nil {
 		return ""
@@ -70,8 +67,6 @@ func (r *Run) awaitingProducer(sel *ir.Selector) string {
 	}
 	return dep.Path
 }
-
-// handleRefs resolves a proposals selector into proposal refs.
 
 // handleRefs resolves a proposals selector into proposal refs.
 func (r *Run) handleRefs(sel *ir.Selector) ([]ProposalRef, string) {
@@ -109,9 +104,3 @@ func (r *Run) handleRefs(sel *ir.Selector) ([]ProposalRef, string) {
 	// settling it, and the author wrote it in one expression.
 	return dedupeRefs(refs), ""
 }
-
-// selectorValue walks a compiled selector source against recorded run state.
-// Steps read through the same value extraction a template reads, so
-// `proposals: {from: steps.work.output.proposal_id}` and the template
-// `{{ steps.work.output.proposal_id }}` answer from one place — and a fan-out's
-// `steps.<id>.collect` is the joined list that same template would render.

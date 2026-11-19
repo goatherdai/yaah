@@ -25,8 +25,6 @@ func (l *linearity) consumed(n *ir.Node) string {
 }
 
 // indexDispositions records which steps name each token.
-
-// indexDispositions records which steps name each token.
 func (l *linearity) indexDispositions() {
 	for _, n := range l.order {
 		switch n.Kind {
@@ -45,25 +43,6 @@ func (l *linearity) indexDispositions() {
 		}
 	}
 }
-
-// claimScope decides which tokens the leak rules may call a proposal. The
-// linearity family's subject is a document's settlement plan, so a token is
-// in plan when the author put it there one of four ways: a handle names it
-// (a settle, a selection, or a continuation already reaches for it, which is
-// the strongest statement available), the dispatch declares the proposal lane
-// outright, the dispatch types its output as a Proposal, or the token is the
-// winner of a select whose candidates are themselves in plan.
-//
-// The gate is what keeps this family honest about the graphs it is handed.
-// A delegate whose lane nobody wrote down is a dispatch on the runtime default
-// lane, and the default lane is not a retention claim this package can read as
-// one — WF011 is the rule that refuses a producer whose *declared* type
-// contradicts a settle. So a workflow that never mentions settlement, which is
-// most of the corpus and every fixture written for another family's rule, is
-// not a workflow with a leak: it is a workflow with no settlement plan, and
-// there is nothing here to prove. Without this gate WF021 reports a leak for
-// every dispatch in the graph, which is a finding no author can act on and a
-// rule that cannot be wired into Validate at all.
 
 // claimScope decides which tokens the leak rules may call a proposal. The
 // linearity family's subject is a document's settlement plan, so a token is
@@ -115,9 +94,6 @@ func (l *linearity) claimScope() {
 
 // tokensEverywhere lists every token the analysis met, in document order of
 // the node that produces it, so a rule and the proof artifact agree on order.
-
-// tokensEverywhere lists every token the analysis met, in document order of
-// the node that produces it, so a rule and the proof artifact agree on order.
 func (l *linearity) tokensEverywhere() []string {
 	var out []string
 	for _, n := range l.order {
@@ -139,8 +115,6 @@ func (l *linearity) tokensEverywhere() []string {
 }
 
 // byPath finds a node by its resolved path; token ids are node paths.
-
-// byPath finds a node by its resolved path; token ids are node paths.
 func (l *linearity) byPath(path string) *ir.Node {
 	for _, n := range l.order {
 		if n.Path == path {
@@ -151,8 +125,6 @@ func (l *linearity) byPath(path string) *ir.Node {
 }
 
 // inside reports whether a node sits in container's body, at any depth.
-
-// inside reports whether a node sits in container's body, at any depth.
 func (l *linearity) inside(node, container *ir.Node) bool {
 	for up := l.parent[node]; up != nil; up = l.parent[up] {
 		if up == container {
@@ -161,15 +133,6 @@ func (l *linearity) inside(node, container *ir.Node) bool {
 	}
 	return false
 }
-
-// reachable reports whether a run can get from one node to another. The
-// pairwise rules ask it of two settlement steps: with no path either way they
-// may both execute, which is what makes their path intent a question (WF023),
-// and with a path from a skip-prone settle on to another settle, the skipped
-// set has somewhere to be caught (WF024). The answer is about top-level steps,
-// so a settle inside a body is reached through its container, which is also
-// how the sibling order inside that body reads: two settlements in one body
-// are ordered, because the body is a sequence.
 
 // reachable reports whether a run can get from one node to another. The
 // pairwise rules ask it of two settlement steps: with no path either way they
@@ -206,20 +169,6 @@ func (l *linearity) reachable(from, to *ir.Node) bool {
 }
 
 // ------------------------------------------------------------ the handle set
-
-// handleFor resolves a selector that should denote a set of proposals, as
-// written by reader. Three things are decided here and each is a rule's whole
-// premise:
-//
-//   - which dispatch nodes the handle names, which is WF020's lane evidence
-//     and WF021's bookkeeping;
-//   - whether it can denote nothing at all, which is WF026's: a filter, a
-//     run-time-sized fan-out, an empty literal list, and a value the graph
-//     cannot trace are all possibly empty, and `on_empty` is the author's
-//     answer for each;
-//   - whether it denotes one proposal, which is WF024's exemption: a set of
-//     one has no two elements to conflict, so `on_conflict: skip` on it owes
-//     no catch.
 
 // handleFor resolves a selector that should denote a set of proposals, as
 // written by reader. Three things are decided here and each is a rule's whole
@@ -303,9 +252,6 @@ func (l *linearity) handleFor(reader *ir.Node, sel *ir.Selector) proposalSet {
 
 // emptyDefault reports a parameter whose declared default is a list with no
 // elements — the only set size a `params:` source can state.
-
-// emptyDefault reports a parameter whose declared default is a list with no
-// elements — the only set size a `params:` source can state.
 func emptyDefault(g *ir.Graph, src *ir.Source) bool {
 	if g == nil || src == nil || src.Kind != ir.SourceParams || len(src.Path) > 0 {
 		return false
@@ -317,11 +263,6 @@ func emptyDefault(g *ir.Graph, src *ir.Source) bool {
 	list, isList := p.Default.([]any)
 	return ok && isList && len(list) == 0
 }
-
-// collectReferents lists the dispatch nodes a container's collect denotes:
-// its body's dispatches, reaching through a nested container only when that
-// container publishes a collect of its own — which is the only way an outer
-// step can read a nested value back.
 
 // collectReferents lists the dispatch nodes a container's collect denotes:
 // its body's dispatches, reaching through a nested container only when that
@@ -348,12 +289,6 @@ func (l *linearity) collectReferents(container *ir.Node) []*ir.Node {
 	walk(container.Body)
 	return out
 }
-
-// templateSource is the single step a seed/continue/fork template reads a
-// proposal id from. The template renders text, so what matters for linearity
-// is the step it names, and interpolating around the reference does not change
-// which proposal that is. A template with no step reference or with two
-// different ones denotes no single proposal, and the caller reports it.
 
 // templateSource is the single step a seed/continue/fork template reads a
 // proposal id from. The template renders text, so what matters for linearity
@@ -388,11 +323,6 @@ func templateSource(t *ir.Template) *ir.Source {
 	}
 	return found
 }
-
-// selectorOfSource wraps a compiled source as the one-field selector
-// handleFor reads, so a template reference and a `proposals:` selector go
-// through the same resolution. The wrapper is a fresh value; the graph is not
-// touched.
 
 // selectorOfSource wraps a compiled source as the one-field selector
 // handleFor reads, so a template reference and a `proposals:` selector go
