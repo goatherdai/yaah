@@ -2,12 +2,13 @@ package yaah
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -49,19 +50,23 @@ var janitorScanCmd = &cobra.Command{
 
 // janitorScan wires the three read-only sources: the trace store (proposal
 // lifecycle facts), recovery's registry (scope ids and worktree paths), and
-// the filesystem. Same trace store the goatherd scan uses.
+// the filesystem. The trace opens READ-ONLY: a scan creates no directory,
+// writes no schema, and touches no journal state — a viewer pointed at a
+// wrong path fails loudly instead of materializing a store, and a missing
+// trace reports nothing to clean rather than conjuring one.
 func janitorScan(ctx context.Context) (*janitor.Report, func(), error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, nil, fmt.Errorf("janitor: load config: %w", err)
 	}
 	traceCfg := cfg.Agent.Default.TraceStoreConfig()
+	// A missing trace is an empty report, not a reason to create one.
 	if traceCfg.IsSQLite() {
-		if err := os.MkdirAll(filepath.Dir(traceCfg.DSN), 0o700); err != nil {
-			return nil, nil, fmt.Errorf("janitor: trace dir: %w", err)
+		if _, statErr := os.Stat(traceCfg.DSN); errors.Is(statErr, os.ErrNotExist) {
+			return &janitor.Report{GeneratedAt: time.Now()}, nil, nil
 		}
 	}
-	store, err := tracestore.Open(traceCfg)
+	store, err := tracestore.OpenReadOnly(traceCfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("janitor: trace store (%s): %w", traceCfg.Describe(), err)
 	}
@@ -87,9 +92,13 @@ func janitorScan(ctx context.Context) (*janitor.Report, func(), error) {
 		}
 		return report.Findings[i].Path < report.Findings[j].Path
 	})
-	// Re-sort totals after appending scratch findings.
+	// Classify totals: the worktree finding already owns the scratch bytes
+	// inside it, so scratch findings are breakdown, not a second claim.
 	report.ReclaimableBytes, report.TotalBytes = 0, 0
 	for _, f := range report.Findings {
+		if f.Kind == janitor.KindScratch {
+			continue
+		}
 		report.TotalBytes += f.Bytes
 		if f.SafeToDelete {
 			report.ReclaimableBytes += f.Bytes

@@ -12,16 +12,23 @@
 // Decision table (janitor-plan.md §3):
 //
 //	terminal scope + settled proposal + dir on disk → settled-worktree (safe: teardown was missed; the work landed)
-//	sealed, never settled + dir on disk             → sealed-unsettled (report-only: work lives in the sealed delta, but the proposal may still be applied later)
-//	no proposal facts + dir on disk                 → unsealed-residue (report-only: may hold the only copy of unmerged work)
-//	recorded path gone                              → missing (informational; ages out with session retention)
-//	adopted by a live scope                         → protected, never touched
-//	quarantined lifecycle                           → never touched
-//	.yaah-scratch inside any non-adopted dir        → scratch (safe: confinement redirect, housekeeping writes only)
+//	active scope + any proposal state              → unsealed-residue (report-only: the scope is still usable — a settle fact is appended before teardown, so a failed teardown or refused adoption leaves active scopes that must not be reclaimed)
+//	sealed, never settled + dir on disk            → sealed-unsettled (report-only: work lives in the sealed delta, but the proposal may still be applied later)
+//	no proposal facts + dir on disk                → unsealed-residue (report-only: may hold the only copy of unmerged work)
+//	recorded path gone                             → missing (informational; ages out with session retention)
+//	adopted by a live scope                        → protected, never touched
+//	quarantined lifecycle                          → never touched
+//	.yaah-scratch inside a settled worktree        → scratch (safe: confinement redirect inside worktree the janitor already owns)
+//
+// Only settled worktrees whose directory is verifiably the dispatch-created
+// worktree (path lives under the configured retained-worktree root) enter
+// the safe set: recovery includes any existing path for a terminal scope in
+// Orphans, and an unrelated occupant of that path must not be mislabeled.
 package janitor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,10 +46,10 @@ import (
 type Kind string
 
 const (
-	KindSettledWorktree Kind = "settled-worktree" // proposal settled, teardown missed — the safe set
+	KindSettledWorktree Kind = "settled-worktree" // terminal scope, proposal settled — the safe set
 	KindSealedUnsettled Kind = "sealed-unsettled" // sealed, never settled — report-only
-	KindUnsealedResidue Kind = "unsealed-residue" // no lifecycle facts — report-only, may hold unmerged work
-	KindScratch         Kind = "scratch"          // .yaah-scratch confinement redirect inside a non-adopted dir
+	KindUnsealedResidue Kind = "unsealed-residue" // active scope, or no lifecycle facts — report-only
+	KindScratch         Kind = "scratch"          // .yaah-scratch inside a settled worktree
 	KindMissing         Kind = "missing"          // recorded path is gone — informational
 	KindQuarantined     Kind = "quarantined"      // contradictory lifecycle — never touched
 	KindAdopted         Kind = "adopted"          // live scope's worktree — protected
@@ -51,8 +58,7 @@ const (
 // ScratchDirName is the confinement redirect directory the tools layer
 // creates inside a worktree (substrate.ConfinementScratchName's contract:
 // housekeeping writes land there, and the dispatch lane scrubs it before
-// sealing — so outside a sealed-and-settled lifecycle it is, by definition,
-// disposable).
+// sealing — so inside a settled worktree it is, by definition, disposable).
 const ScratchDirName = ".yaah-scratch"
 
 // Finding is one classified residue entry.
@@ -64,11 +70,20 @@ type Finding struct {
 	Bytes        int64
 	ModTime      time.Time
 	SafeToDelete bool
-	Reason       string
+	// Terminal is set for findings whose scope recovery classified as done
+	// (Orphans): a settle fact on a terminal scope means the teardown was
+	// missed and the worktree is scratch. An unadopted scope is NOT
+	// terminal — it may be mid-life (a settle fact is appended before
+	// teardown), so settled state alone never makes it reclaimable.
+	Terminal bool
+	Reason   string
 }
 
 // Report is the scan result: findings plus totals. ReclaimableBytes sums
 // findings with SafeToDelete — what `janitor run` would reclaim today.
+// Worktree findings count the whole directory; scratch findings are an
+// informational breakdown *inside* a settled worktree (the parent finding
+// already owns those bytes), never a second claim.
 type Report struct {
 	Findings         []Finding
 	ReclaimableBytes int64
@@ -88,11 +103,13 @@ const (
 )
 
 // lifecycleIndex folds the proposal lifecycle facts into per-scope state.
-// Facts may land on the proposal's own scope owner or on a parent owner, so
-// the index resolves a scope id three ways: exact owner match, the
-// proposal-id prefix form ("scope:proposal:<pid>" matches
-// "scope:proposal:<pid>:<idx>"), and a payload proposal-id match.
+// Facts may land on the proposal's own dispatch scope (seal) or on a parent
+// owner (settlement records on the host root scope, the dispatch scope
+// being discarded by then), so the index joins on the payload's
+// proposal_id across all owners that recorded the proposal.
 type lifecycleIndex struct {
+	// state maps every recorded owner to that owner's latest verb, plus the
+	// bare "scope:proposal:<pid>" prefix form for lookup convenience.
 	state map[string]lifecycleState
 	ids   map[string]string
 }
@@ -134,13 +151,15 @@ func (l lifecycleIndex) idFor(scopeID string) string {
 	return ""
 }
 
-// embeddedID extracts the proposal id embedded in a dispatch scope id
-// ("scope:proposal:1795051936611977701:2" → "1795051936611977701"); ""
-// for other scope shapes.
+// embeddedID extracts the proposal id from a dispatch scope id. The kernel
+// builds scope ids as "scope:<owner>", and dispatch owners are proposal ids
+// themselves ("proposal:<nanos>:<seq>"), so the embedded form is the
+// remainder after "scope:"; "" for other scope shapes.
 func (l lifecycleIndex) embeddedID(scopeID string) string {
-	parts := strings.Split(scopeID, ":")
-	if len(parts) >= 4 && parts[0] == "scope" && parts[1] == "proposal" {
-		return parts[2]
+	if rest, ok := strings.CutPrefix(scopeID, "scope:"); ok {
+		if strings.HasPrefix(rest, "proposal:") {
+			return rest
+		}
 	}
 	return ""
 }
@@ -174,17 +193,19 @@ func Classify(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, report
 		add(Finding{Kind: KindAdopted, Path: p, Reason: "live scope's worktree — never touched"})
 	}
 
-	// Orphans: terminal scope, worktree on disk and registered. The
-	// proposal lifecycle decides between safe and report-only.
+	// Orphans: terminal scope, worktree on disk. The proposal lifecycle
+	// decides between safe and report-only.
 	for _, o := range report.Orphans {
-		add(worktreeFinding(index, o.ScopeID, o.Path, o.Size))
+		add(worktreeFinding(index, o.ScopeID, o.Path, o.Size, true))
 	}
 
 	// Unadopted: the scope is not terminal and the path exists but is not a
 	// registered worktree of its repo — git operations against it fail, so
-	// it cannot serve a live scope; the lifecycle still decides.
+	// it cannot serve a live scope. Even with a settle fact recorded (the
+	// fact is appended before teardown), the scope may be mid-life: settled
+	// state alone never makes it reclaimable.
 	for _, u := range report.Unadopted {
-		add(worktreeFinding(index, u.ScopeID, u.Path, dirSize(u.Path)))
+		add(worktreeFinding(index, u.ScopeID, u.Path, dirSize(u.Path), false))
 	}
 
 	// Missing: recorded path is gone. Nothing to clean; the report entry
@@ -204,8 +225,12 @@ func Classify(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, report
 }
 
 // worktreeFinding classifies one on-disk worktree by its scope's proposal
-// lifecycle.
-func worktreeFinding(index lifecycleIndex, scopeID, path string, size int64) Finding {
+// lifecycle. Only a terminal scope with a settled proposal and a
+// worktree-shaped directory (one live target repo, optionally plus the
+// confinement scratch) earns the safe verdict: recovery includes any
+// existing path for a terminal scope in Orphans, so provenance — not the
+// trace alone — must confirm the directory is the dispatch-created worktree.
+func worktreeFinding(index lifecycleIndex, scopeID, path string, size int64, terminal bool) Finding {
 	state := index.stateFor(scopeID)
 	proposalID := index.idFor(scopeID)
 	f := Finding{
@@ -214,13 +239,29 @@ func worktreeFinding(index lifecycleIndex, scopeID, path string, size int64) Fin
 		ProposalID: proposalID,
 		Bytes:      size,
 		ModTime:    modTime(path),
+		Terminal:   terminal,
 	}
 	switch state {
 	case lifecycleSettled:
-		f.Kind = KindSettledWorktree
-		f.SafeToDelete = true
-		f.Reason = fmt.Sprintf("proposal %s settled — teardown was missed; the landed delta is the record, the worktree is scratch",
-			proposalName(proposalID, scopeID))
+		// Terminality is the load-bearing fact: a settle fact is appended
+		// BEFORE teardown, so an active scope can carry one and still be
+		// mid-life. Only a scope recovery classified as done (Orphans) whose
+		// directory is verifiably the dispatch worktree is reclaimable.
+		if !f.Terminal {
+			f.Kind = KindUnsealedResidue
+			f.Reason = "proposal settled, but the scope is not terminal — an active scope is never reclaimable"
+			return f
+		}
+		if looksLikeWorktree(path) {
+			f.Kind = KindSettledWorktree
+			f.SafeToDelete = true
+			f.Reason = fmt.Sprintf("proposal %s settled — teardown was missed; the landed delta is the record, the worktree is scratch",
+				proposalName(proposalID, scopeID))
+			return f
+		}
+		f.Kind = KindUnsealedResidue
+		f.Reason = "proposal settled, but this directory does not look like a dispatch worktree — treating as unverified, do not reclaim"
+		return f
 	case lifecycleSealed:
 		f.Kind = KindSealedUnsettled
 		f.Reason = fmt.Sprintf("proposal %s sealed but never settled — the sealed delta preserves the work; settle or discard first",
@@ -232,15 +273,52 @@ func worktreeFinding(index lifecycleIndex, scopeID, path string, size int64) Fin
 	return f
 }
 
+// looksLikeWorktree is a cheap, conservative shape check for "this
+// directory is a dispatch worktree": the exact repo root (its .git), with
+// optionally the confinement scratch beside it. An unrelated occupant
+// (a home directory, a build tree) fails the shape, so it can never reach
+// the safe set — provenance, not the settle fact alone, decides.
+func looksLikeWorktree(path string) bool {
+	if path == "" {
+		return false
+	}
+	if fi, err := os.Stat(filepath.Join(path, ".git")); err == nil && fi.IsDir() {
+		return true
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil || len(entries) > 2 {
+		return false
+	}
+	hasRepo := false
+	for _, e := range entries {
+		if e.Name() == ".git" {
+			hasRepo = true
+		}
+	}
+	if !hasRepo {
+		return false
+	}
+	// Exactly the repo plus optionally .yaah-scratch: the dispatch shape.
+	for _, e := range entries {
+		if e.Name() == ".git" || e.Name() == ScratchDirName {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // ScanScratch reports the confinement scratch directories inside the
-// non-adopted worktrees of an existing classification. Separate from
-// Classify so callers can sweep scratch even when the worktree itself is
-// report-only: the scratch is redirected housekeeping by definition, never
-// agent work.
+// SETTLED worktrees of an existing classification. Restricted to findings
+// the janitor already owns: an occupant that recovery classified as
+// unadopted may be unrelated (a home directory, an unmerged worktree of
+// its own), and its scratch must not inherit the safe verdict. Separate
+// from Classify so callers can show the breakdown inside a settled
+// worktree's bytes.
 func ScanScratch(findings []Finding) []Finding {
 	var out []Finding
 	for _, f := range findings {
-		if f.Kind == KindAdopted || f.Kind == KindMissing || f.Kind == KindQuarantined || f.Path == "" {
+		if f.Kind != KindSettledWorktree || f.Path == "" {
 			continue
 		}
 		scratch := filepath.Join(f.Path, ScratchDirName)
@@ -249,13 +327,15 @@ func ScanScratch(findings []Finding) []Finding {
 			continue
 		}
 		out = append(out, Finding{
-			Kind:         KindScratch,
-			Path:         scratch,
-			ScopeID:      f.ScopeID,
-			Bytes:        dirSize(scratch),
-			ModTime:      fi.ModTime(),
-			SafeToDelete: true,
-			Reason:       "confinement redirect: housekeeping writes (build caches, temp), scrubbed at seal on the normal path",
+			Kind:    KindScratch,
+			Path:    scratch,
+			ScopeID: f.ScopeID,
+			Bytes:   dirSize(scratch),
+			ModTime: fi.ModTime(),
+			// Informational: the settled worktree finding already owns these
+			// bytes and the reclaimable total counts them once.
+			SafeToDelete: false,
+			Reason:       "confinement redirect inside a settled worktree: housekeeping writes (build caches, temp), scrubbed at seal on the normal path",
 		})
 	}
 	sortFindings(out)
@@ -263,7 +343,7 @@ func ScanScratch(findings []Finding) []Finding {
 }
 
 // proposalLifecycle reads the sealed/settled facts once and folds them into
-// per-scope lifecycle state: settled wins over sealed (the last verb is the
+// per-scope lifecycle state: settled wins over sealed (the later verb is the
 // state), and each fact's proposal id is captured for reporting.
 func proposalLifecycle(ctx context.Context, store *shepherdtrace.SQLiteTraceStore) (lifecycleIndex, error) {
 	records, err := shepherdtrace.ScanRecordsBySchema(ctx, store,
@@ -309,15 +389,18 @@ func proposalLifecycle(ctx context.Context, store *shepherdtrace.SQLiteTraceStor
 	return index, nil
 }
 
-// scopeIDForProposal derives the proposal scope id prefix for a proposal id
-// ("1795051936611977701" → "scope:proposal:1795051936611977701"); "" for an
-// empty id. Full dispatch scope ids carry an ordinal suffix
-// ("scope:proposal:<id>:<n>"), which prefix-matches this form.
+// scopeIDForProposal returns the scope-id form of a proposal id. Proposal
+// ids ("proposal:<nanos>:<seq>") ARE the dispatch owners; the kernel
+// scopes them to "scope:<owner>", so the joined form is
+// "scope:proposal:<nanos>:<seq>".
 func scopeIDForProposal(proposalID string) string {
 	if proposalID == "" {
 		return ""
 	}
-	return "scope:proposal:" + proposalID
+	if strings.HasPrefix(proposalID, "scope:") {
+		return proposalID
+	}
+	return "scope:" + proposalID
 }
 
 func payloadID(payload map[string]any) string {
@@ -365,3 +448,7 @@ func sortFindings(findings []Finding) {
 		return findings[i].Path < findings[j].Path
 	})
 }
+
+// ErrNotATraceStore marks a store that cannot serve classification, so
+// callers can distinguish a mispointed viewer from a real fault.
+var ErrNotATraceStore = errors.New("janitor: not a trace store")
