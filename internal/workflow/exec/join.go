@@ -242,7 +242,7 @@ func containsInt(idx []int, i int) bool {
 // outcome is the run-level fact rather than the item's.
 func (r *Run) enclosingCancelJoin(path string) (container string, item int, ok bool) {
 	for {
-		in := r.instances[path]
+		in := r.inst.instances[path]
 		if in == nil {
 			return "", 0, false
 		}
@@ -272,7 +272,7 @@ func (r *Run) clearOrphanItems() (bool, error) {
 	cleared := false
 	for _, p := range r.allPaths() {
 		st := r.state[p]
-		if st == nil || st.State.Terminal() || r.instances[p] == nil {
+		if st == nil || st.State.Terminal() || r.inst.instances[p] == nil {
 			continue
 		}
 		if _, _, ok := r.enclosingCancelJoin(p); !ok {
@@ -339,16 +339,16 @@ func (r *Run) clearOrphanItem(path string) error {
 // author never declared one. Discarding it automatically would throw away exactly
 // the work the join selected.
 func (r *Run) pendingDiscard() (nodePath string, ref ProposalRef, ok bool) {
-	for _, id := range r.openProposals() {
-		owner := r.open[id]
-		if r.instances[owner] == nil {
+	for _, id := range r.proposals.openProposals() {
+		owner := r.proposals.open[id]
+		if r.inst.instances[owner] == nil {
 			continue
 		}
 		container, item, under := r.enclosingCancelJoin(owner)
 		if !under {
 			continue
 		}
-		if _, claimed := r.claims[id]; claimed {
+		if _, claimed := r.proposals.claims[id]; claimed {
 			continue
 		}
 		st := r.state[container]
@@ -458,8 +458,8 @@ func (r *Run) onJoinDiscardSettled(path string, st *NodeState, e ProposalSettled
 		return nil
 	}
 	if s.Status == SettlementStatusSettled && !s.LeftOpen {
-		r.settled[s.ProposalID] = path
-		delete(r.open, s.ProposalID)
+		r.proposals.settled[s.ProposalID] = path
+		delete(r.proposals.open, s.ProposalID)
 		return nil
 	}
 	r.warnOnce("join-discard-open:"+path+":"+s.ProposalID, fmt.Sprintf(

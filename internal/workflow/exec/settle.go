@@ -16,7 +16,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/goatherdai/yaah/internal/workflow/ir"
@@ -279,11 +278,11 @@ func (r *Run) onSettlementPlanned(e SettlementPlannedEvent) error {
 		}
 	}
 	for _, ref := range e.Refs {
-		if by, done := r.settled[ref.ProposalID]; done {
+		if by, done := r.proposals.settled[ref.ProposalID]; done {
 			return r.failTerminal(e.NodePath, ReasonProposalAlreadySettled+": proposal "+ref.ProposalID+
 				" is already disposed of by "+by+"; a proposal has exactly one disposition")
 		}
-		if by, held := r.claims[ref.ProposalID]; held && by != e.NodePath {
+		if by, held := r.proposals.claims[ref.ProposalID]; held && by != e.NodePath {
 			return r.failTerminal(e.NodePath, ReasonProposalSettleInFlight+": proposal "+ref.ProposalID+
 				" is being settled by "+by)
 		}
@@ -300,7 +299,7 @@ func (r *Run) onSettlementPlanned(e SettlementPlannedEvent) error {
 	st.Settling = 0
 	st.Settled = nil
 	for _, ref := range plan.Refs {
-		r.claims[ref.ProposalID] = e.NodePath
+		r.proposals.claims[ref.ProposalID] = e.NodePath
 	}
 	return nil
 }
@@ -377,14 +376,14 @@ func (r *Run) onProposalSettled(e ProposalSettledEvent) error {
 	// takes a permanent claim; a conflict or an error leaves it open and
 	// releases the claim, which is what lets the downstream catch settle
 	// WF024 demands for on_conflict: skip.
-	delete(r.claims, s.ProposalID)
+	delete(r.proposals.claims, s.ProposalID)
 	switch {
 	case s.Status == SettlementStatusSettled && !s.LeftOpen:
-		r.settled[s.ProposalID] = e.NodePath
-		delete(r.open, s.ProposalID)
+		r.proposals.settled[s.ProposalID] = e.NodePath
+		delete(r.proposals.open, s.ProposalID)
 	default:
-		if _, seen := r.open[s.ProposalID]; !seen {
-			r.open[s.ProposalID] = s.Producer
+		if _, seen := r.proposals.open[s.ProposalID]; !seen {
+			r.proposals.open[s.ProposalID] = s.Producer
 		}
 	}
 	n := r.byPath[e.NodePath]
@@ -490,51 +489,5 @@ func (st *NodeState) settledValue() map[string]any {
 		"left_open":  leftOpen,
 		"ids":        ids,
 		"results":    results,
-	}
-}
-
-// openProposals lists the proposal ids this run holds without a disposition,
-// sorted, so the reason a run refuses to end succeeded names the same list
-// every time.
-func (r *Run) openProposals() []string {
-	out := make([]string, 0, len(r.open))
-	for id := range r.open {
-		out = append(out, id)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// openProposalDetail renders the residue for the run's reason line.
-func (r *Run) openProposalDetail() string {
-	ids := r.openProposals()
-	parts := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if by := r.open[id]; by != "" {
-			parts = append(parts, id+" ("+by+")")
-			continue
-		}
-		parts = append(parts, id)
-	}
-	return strings.Join(parts, ", ")
-}
-
-// releaseClaims drops the claims a node holds on proposals it will not settle
-// after all. It runs when a settle node terminates, so a node that failed
-// halfway through its plan leaves the rest of its set settle-able instead of
-// walled off, and it never touches a proposal already disposed of.
-func (r *Run) releaseClaims(path string) {
-	st := r.state[path]
-	if st == nil || st.SettlePlan == nil {
-		return
-	}
-	for i := st.Settling; i < len(st.SettlePlan.Refs); i++ {
-		id := st.SettlePlan.Refs[i].ProposalID
-		if _, done := r.settled[id]; done {
-			continue
-		}
-		if holder, ok := r.claims[id]; ok && holder == path {
-			delete(r.claims, id)
-		}
 	}
 }

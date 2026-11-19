@@ -249,7 +249,7 @@ func (r *Run) nodeRecord(kind trace.Kind, path, status string) trace.Record {
 		rec.NodeKind = string(n.Kind)
 		rec.Lane = string(n.Lane)
 	}
-	if inst := r.instances[path]; inst != nil {
+	if inst := r.inst.instances[path]; inst != nil {
 		rec.ScopeID = inst.owner
 	}
 	return rec

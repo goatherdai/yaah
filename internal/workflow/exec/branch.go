@@ -93,53 +93,12 @@ func armIDs(n *ir.Node) []string {
 //
 // An unknown or self-naming arm is skipped here: ir.resolveBranch refuses both in
 // an authored graph, and a hand-built one is refused again when the branch routes.
-func (r *Run) registerArms(n *ir.Node) {
-	if n == nil || (n.Kind != ir.KindBranch && n.Kind != ir.KindGate) {
-		return
-	}
-	for _, id := range armIDs(n) {
-		dep, ok := r.byID[id]
-		if !ok || dep.Path == n.Path {
-			continue
-		}
-		if r.arms[dep.Path] == nil {
-			r.arms[dep.Path] = map[string]bool{}
-		}
-		r.arms[dep.Path][n.Path] = true
-	}
-}
-
-// armRouting answers a node's routing position: whether a branch naming it has
-// selected it, and whether that decision is available at all. A node no branch
-// names is always selected, and undecided is true while any branch that names it
-// has not terminated — which is what the driver holds an arm for.
-//
-// An arm named by two branches runs if EITHER selected it, which is the reading
-// that cannot silently drop work: two branches naming one step are two ways to
-// reach it, exactly as two `when:` guards would be.
-func (r *Run) armRouting(path string) (selected, undecided bool) {
-	owners := r.arms[path]
-	if len(owners) == 0 {
-		return true, false
-	}
-	for b := range owners {
-		st := r.state[b]
-		if st == nil || !st.State.Terminal() {
-			return false, true
-		}
-		if st.State == StateSucceeded && st.Selected == path {
-			return true, false
-		}
-	}
-	return false, false
-}
-
 // armSkipReason renders why one arm was not run, naming the branch that decided
 // and the arm it chose instead. Owner branches are visited in canonical order, so a
 // node two branches could reach names the same one every run.
 func (r *Run) armSkipReason(path string) string {
-	owners := make([]string, 0, len(r.arms[path]))
-	for b := range r.arms[path] {
+	owners := make([]string, 0, len(r.inst.arms[path]))
+	for b := range r.inst.arms[path] {
 		owners = append(owners, b)
 	}
 	sort.Strings(owners)

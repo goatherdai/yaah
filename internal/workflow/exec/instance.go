@@ -60,7 +60,7 @@ type instancePlan struct {
 // declaration the author can fix.
 func (r *Run) instantiateBody(n *ir.Node, plan instancePlan) (paths []string, unresolved string, err error) {
 	locals := map[string]string{}
-	if outer := r.instances[n.Path]; outer != nil {
+	if outer := r.inst.instances[n.Path]; outer != nil {
 		// A container nested in a body chains its scope: the inner body sees its
 		// own bindings first and the outer ones behind it.
 		for k, v := range outer.locals {
@@ -79,7 +79,7 @@ func (r *Run) instantiateBody(n *ir.Node, plan instancePlan) (paths []string, un
 		ic := *b
 		ic.Path = ip
 		r.byPath[ip] = &ic
-		r.instances[ip] = &instance{
+		r.inst.instances[ip] = &instance{
 			owner:  n.Path,
 			item:   plan.item,
 			bound:  plan.bound,
@@ -101,13 +101,13 @@ func (r *Run) instantiateBody(n *ir.Node, plan instancePlan) (paths []string, un
 		}
 		paths = append(paths, ip)
 	}
-	r.instanceOf[n.Path] = append(r.instanceOf[n.Path], paths...)
+	r.inst.of[n.Path] = append(r.inst.of[n.Path], paths...)
 	// A branch instantiated inside a body routes too, and its arms are top-level
 	// steps (ir.resolveBranch validates them against the top-level ids), so the
 	// routing relation is registered here for the same reason it is registered at
 	// New: before any arm can become startable.
 	if n.Kind == ir.KindBranch {
-		r.registerArms(n)
+		r.inst.registerArms(n, r.byID)
 	}
 	// Dependencies are registered only once the whole local map exists: a body
 	// node may need a sibling declared after it, and the row a need resolves

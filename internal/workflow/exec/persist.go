@@ -216,10 +216,10 @@ func (r *Run) Checkpoint() Checkpoint {
 		FinishedAt:   r.finishedAt,
 		Params:       copyAnyMap(r.params),
 		Ledger: Ledger{
-			Open:       copyStringMap(r.open),
-			Claims:     copyStringMap(r.claims),
-			Settled:    copyStringMap(r.settled),
-			AbortAsked: copyStringMap(r.abortAsked),
+			Open:       copyStringMap(r.proposals.open),
+			Claims:     copyStringMap(r.proposals.claims),
+			Settled:    copyStringMap(r.proposals.settled),
+			AbortAsked: copyStringMap(r.proposals.abortAsked),
 		},
 		Seq:      r.seq,
 		Warnings: append([]string(nil), r.warnings...),
@@ -231,7 +231,7 @@ func (r *Run) Checkpoint() Checkpoint {
 	}
 	for _, p := range r.allPaths() {
 		cp.Nodes = append(cp.Nodes, copyNodeState(r.state[p]))
-		if inst := r.instances[p]; inst != nil {
+		if inst := r.inst.instances[p]; inst != nil {
 			cp.Instances = append(cp.Instances, InstanceState{
 				Path:     p,
 				Owner:    inst.owner,
@@ -409,10 +409,10 @@ func (r *Run) install(cp Checkpoint) error {
 	}
 	r.persisted = len(r.events)
 	r.recordsPersisted = len(r.records)
-	r.open = copyStringMap(cp.Ledger.Open)
-	r.claims = copyStringMap(cp.Ledger.Claims)
-	r.settled = copyStringMap(cp.Ledger.Settled)
-	r.abortAsked = copyStringMap(cp.Ledger.AbortAsked)
+	r.proposals.open = copyStringMap(cp.Ledger.Open)
+	r.proposals.claims = copyStringMap(cp.Ledger.Claims)
+	r.proposals.settled = copyStringMap(cp.Ledger.Settled)
+	r.proposals.abortAsked = copyStringMap(cp.Ledger.AbortAsked)
 
 	// Instances first: they are recorded in canonical result order, so a
 	// container instance exists before the body instances it minted.
@@ -467,7 +467,7 @@ func (r *Run) installInstance(in InstanceState) error {
 	ic := *tpl
 	ic.Path = in.Path
 	r.byPath[in.Path] = &ic
-	r.instances[in.Path] = &instance{
+	r.inst.instances[in.Path] = &instance{
 		owner:  in.Owner,
 		item:   in.Item,
 		bound:  in.Bound,
@@ -475,7 +475,7 @@ func (r *Run) installInstance(in InstanceState) error {
 		body:   in.BodyPath,
 		locals: copyStringMap(in.Locals),
 	}
-	r.instanceOf[in.Owner] = append(r.instanceOf[in.Owner], in.Path)
+	r.inst.of[in.Owner] = append(r.inst.of[in.Owner], in.Path)
 	return nil
 }
 
@@ -511,9 +511,9 @@ func (r *Run) rebuildTopology() {
 	for dep := range r.dependents {
 		sort.Strings(r.dependents[dep])
 	}
-	r.arms = map[string]map[string]bool{}
+	r.inst.arms = map[string]map[string]bool{}
 	for _, p := range r.allPaths() {
-		r.registerArms(r.byPath[p])
+		r.inst.registerArms(r.byPath[p], r.byID)
 	}
 }
 
