@@ -3,8 +3,10 @@ package retention
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/tracestore"
@@ -82,20 +84,31 @@ func wantEvictedOwnerPG(t *testing.T, store *kerneltrace.SQLiteTraceStore, owner
 	}
 }
 
+func wantGarbageFreePG(t *testing.T, store *kerneltrace.SQLiteTraceStore, after string) {
+	t.Helper()
+	receipt, err := store.CollectGarbage(context.Background(), kerneltrace.TrustedAppendContext)
+	if err != nil {
+		t.Fatalf("CollectGarbage (%s): %v", after, err)
+	}
+	if receipt.DeletedRecords != 0 || receipt.DeletedContexts != 0 || receipt.DeletedAppendIntents != 0 || len(receipt.ReclaimedWitnessIDs) != 0 {
+		t.Fatalf("no garbage must remain %s: reclaimed %d record(s), %d context(s), %d intent(s), %d witness(es)",
+			after, receipt.DeletedRecords, receipt.DeletedContexts, receipt.DeletedAppendIntents, len(receipt.ReclaimedWitnessIDs))
+	}
+}
+
 // TestPGEvictSweepEndToEnd drives the delete flow through a live PostgreSQL
-// store: append real facts, evict kernel-first, sweep garbage under the
-// single-flight guard, and confirm the paths are actually gone. This is the
-// PG counterpart of the SQLite fixture tests — the same evictor, the same
-// backend|DSN sweep keying, the other dialect.
+// store: append fresh facts (unique per run — a shared server accumulates
+// evicted paths from earlier runs), evict kernel-first, sweep the garbage
+// under the single-flight guard, and confirm the reclaim actually
+// happened. This is the PG counterpart of the SQLite fixture tests — the
+// same evictor, the same backend|DSN sweep keying, the other dialect.
 func TestPGEvictSweepEndToEnd(t *testing.T) {
 	p := newPGE2E(t)
 
-	const (
-		sessionID = "sess-pg-e2e"
-		subOwner  = "sub-researcher-" + sessionID + "-1730000000"
-	)
-	p.appendFacts("intent:pg-e2e-main", sessionID, sessionID)
-	p.appendFacts("intent:pg-e2e-sub", subOwner, sessionID)
+	sessionID := fmt.Sprintf("sess-pg-e2e-%d", time.Now().UnixNano())
+	subOwner := "sub-researcher-" + sessionID
+	p.appendFacts("intent:"+sessionID+"-main", sessionID, sessionID)
+	p.appendFacts("intent:"+sessionID+"-sub", subOwner, sessionID)
 	p.wantReadable(sessionID)
 	p.wantReadable(subOwner)
 
@@ -112,12 +125,38 @@ func TestPGEvictSweepEndToEnd(t *testing.T) {
 	}
 	wantEvictedOwnerPG(t, p.store, subOwner)
 
-	// SweepNow opens its own connection through the seam, under the
-	// single-flight guard keyed backend|DSN — the PG leg of that keying.
+	// The claimed sweep does the real reclaim through its own store
+	// connection.
 	if err := evictor.SweepNow(); err != nil {
 		t.Fatalf("SweepNow: %v", err)
 	}
+	// The tombstones survive the sweep, and a fresh CollectGarbage finds
+	// nothing — proof the sweep reclaimed what the evictions orphaned.
+	wantEvictedOwnerPG(t, p.store, sessionID)
+	wantEvictedOwnerPG(t, p.store, subOwner)
+	wantGarbageFreePG(t, p.store, "after the claimed sweep")
+
+	// The deferred path: with this store's sweep slot already claimed
+	// (keyed backend|DSN), a synchronous sweep must latch the re-run and
+	// start nothing concurrent — the same overlap a slow CLI sweep versus
+	// the armed scheduler timer could otherwise produce.
+	key := evictor.storeKey()
+	sweepMu.Lock()
+	sweepRunning[key] = true
+	sweepMu.Unlock()
+	t.Cleanup(func() {
+		sweepMu.Lock()
+		sweepRunning[key] = false
+		sweepMu.Unlock()
+	})
 	if err := evictor.SweepNow(); err != nil {
-		t.Fatalf("second SweepNow (guarded path): %v", err)
+		t.Fatalf("SweepNow must defer to the in-flight sweep, not fail: %v", err)
 	}
+	sweepMu.Lock()
+	if !sweepRerun[key] {
+		sweepMu.Unlock()
+		t.Fatal("deferred sweep work was not latched onto the in-flight sweep's re-run")
+	}
+	sweepRerun[key] = false
+	sweepMu.Unlock()
 }
