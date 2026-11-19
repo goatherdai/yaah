@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/yaah/internal/tracestore"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -104,7 +105,7 @@ func TestSubAgentTrace_EmptySessionIDIsNoop(t *testing.T) {
 func TestInitShepherdInfrastructure(t *testing.T) {
 	dir := t.TempDir()
 
-	store, bus, mgr, err := InitShepherdInfrastructure(filepath.Join(dir, "trace.db"), 0)
+	store, bus, mgr, err := InitShepherdInfrastructure(tracestore.Config{DSN: filepath.Join(dir, "trace.db")}, 0)
 	if err != nil {
 		t.Fatalf("InitShepherdInfrastructure: %v", err)
 	}
@@ -131,7 +132,7 @@ func TestInitShepherdInfrastructure_UnwritableDir(t *testing.T) {
 		t.Fatalf("write blocker file: %v", err)
 	}
 
-	_, _, _, err := InitShepherdInfrastructure(filepath.Join(blocker, "traces"), 0)
+	_, _, _, err := InitShepherdInfrastructure(tracestore.Config{DSN: filepath.Join(blocker, "traces")}, 0)
 	if err == nil {
 		t.Error("expected an error when the trace directory cannot be created")
 	}

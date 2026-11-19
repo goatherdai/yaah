@@ -118,8 +118,8 @@ github.com/go-task/slim-sprig/v3 v3.0.0 h1:sUs3vkvUymDpBKi3qH1YSqBQk9+9D/8M2mN1v
 github.com/go-task/slim-sprig/v3 v3.0.0/go.mod h1:W848ghGpv3Qj3dhTPRyJypKRiqCdHZiAzKg9hl15HA8=
 github.com/goatherdai/croft v0.9.3-0.20261118191751-716dbb80a6dd h1:eRtFPA5tCUek9lQ11dHfDQl4QaIOt6+jOxlMPRMSlP0=
 github.com/goatherdai/croft v0.9.3-0.20261118191751-716dbb80a6dd/go.mod h1:Kb/gefSfqv0i9foqYumDDmHdegTX2g+uy4hbR/R/6e0=
-github.com/goatherdai/goatherd-kernel v0.21.1-0.20261118191751-ffd4deddeb22 h1:WtxQ/r429zzeiy5u+ZoCoHAPNTtAE4bzKQJiHP1Lkkc=
-github.com/goatherdai/goatherd-kernel v0.21.1-0.20261118191751-ffd4deddeb22/go.mod h1:/cLEQb5OmwGVKJBAAlzvy94OWw6LBBgypKdLLuz8ZlI=
+github.com/goatherdai/goatherd-kernel v0.21.1-0.20261119143955-b455b1622853 h1:4jMnbA4i6dNbDZ/tzbIH2z/zp+YabwD5oroPAKb8zLQ=
+github.com/goatherdai/goatherd-kernel v0.21.1-0.20261119143955-b455b1622853/go.mod h1:PM4X3c307K1s8xWHxms0fFsC93edBkZmlLIrDlr4L3s=
 github.com/goatherdai/goatherd-runtime v0.24.1-0.20261118192512-b4d03a8d225a h1:jHqfO3UTnN+phcSos394EssE485LUycMpSSuulLbKhg=
 github.com/goatherdai/goatherd-runtime v0.24.1-0.20261118192512-b4d03a8d225a/go.mod h1:vbKSBy5yv8SAllIoU4Xie+ESJlQGkrRy/Vj6Rd7nL4Q=
 github.com/goatherdai/goatherd-runtime/sandbox/croft v0.2.1-0.20261118192512-b4d03a8d225a h1:SqfozrjGdPktDXdzBlzqKnO/WYRyqC9zE4NZXhNhhvI=
@@ -179,6 +179,14 @@ github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/invopop/jsonschema v0.14.0 h1:MHQqLhvpNUZfw+hM3AZDYK7jxO8FZoQeQM77g8iyZjg=
 github.com/invopop/jsonschema v0.14.0/go.mod h1:ygm6C2EaVNMBDPpaPlnOA2pFAxBnxGjFlMZABxm9n2I=
+github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
+github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
+github.com/jackc/pgservicefile v0.0.0-20221227161230-091c0ba34f0a h1:bbPeKD0xmW/Y25WS6cokEszi5g+S0QxI/d45PkRi7Nk=
+github.com/jackc/pgservicefile v0.0.0-20221227161230-091c0ba34f0a/go.mod h1:5TJZWKEWniPve33vlWYSoGYefn3gLQRzjfDlhSJ9ZKM=
+github.com/jackc/pgx/v5 v5.6.0 h1:SWJzexBzPL5jb0GEsrPMLIsi/3jOo7RHlzTjcAeDrPY=
+github.com/jackc/pgx/v5 v5.6.0/go.mod h1:DNZ/vlrUnhWCoFGxHAG8U2ljioxukquj7utPDgtQdTw=
+github.com/jackc/puddle/v2 v2.2.1 h1:RhxXJtFG022u4ibrCSMSiu5aOq1i77R3OHKNJj77OAk=
+github.com/jackc/puddle/v2 v2.2.1/go.mod h1:vriiEXHvEE654aYKXXjOvZM39qJ0q+azkZFrfEOc3H4=
 github.com/jupiterrider/ffi v0.8.0 h1:IH6lto8OZaRIulQYObtZibII4tq71hXT6Z+KLBcxCcQ=
 github.com/jupiterrider/ffi v0.8.0/go.mod h1:9dauhpOfNqrqk28fxuu0kkdeFtT9Qr4vbfigiuIXN7c=
 github.com/kisielk/errcheck v1.5.0/go.mod h1:pFxgyoBC7bSaBwPgfKdkLd5X25qrDl4LWUI2bnpBCr8=
@@ -262,7 +270,9 @@ github.com/standard-webhooks/standard-webhooks/libraries v0.0.1/go.mod h1:L1MQhA
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=
 github.com/stretchr/objx v0.5.0/go.mod h1:Yh+to48EsGEfYuaHDzXPcE3xhTkx73EhmCGUpEOglKo=
+github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
 github.com/stretchr/testify v1.4.0/go.mod h1:j7eGeouHqKxXV5pUuKE4zz7dFj8WfuZ+81PSLYec5m4=
+github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.7.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=
 github.com/stretchr/testify v1.8.1/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=

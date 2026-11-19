@@ -18,20 +18,28 @@ import (
 
 	shepherdtrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/tracestore"
 )
 
 // Evictor is the kernel-first half of session deletion, wired on a
 // sessions.Registry via WithEvictor at any entry point that knows the
-// trace store path. A registry without one keeps Delete's plain state
+// trace store backend. A registry without one keeps Delete's plain state
 // cascade — the pre-retention behavior.
 type Evictor struct {
-	tracePath string
+	trace tracestore.Config
 }
 
-// NewEvictor builds the evictor for the trace store at tracePath
-// (<yaah home>/trace.db or the shepherd_trace_path override).
-func NewEvictor(tracePath string) *Evictor {
-	return &Evictor{tracePath: tracePath}
+// NewEvictor builds the evictor for the trace store named by cfg
+// (config.Defaults.TraceStoreConfig: the yaah-home trace file or the
+// shepherd_trace override).
+func NewEvictor(cfg tracestore.Config) *Evictor {
+	return &Evictor{trace: cfg}
+}
+
+// storeKey identifies this evictor's store in the sweep bookkeeping maps:
+// backend and DSN, since a DSN alone cannot disambiguate backends.
+func (e *Evictor) storeKey() string {
+	return e.trace.Backend + "|" + e.trace.DSN
 }
 
 // EvictSession evicts every trace owner path carrying the session's facts,
@@ -50,11 +58,16 @@ func NewEvictor(tracePath string) *Evictor {
 // that crashed after eviction, before the cascade — the safe direction)
 // is skipped, so the retry completes instead of failing forever.
 func (e *Evictor) EvictSession(db *memory.DB, sessionID string) error {
-	if _, err := os.Stat(e.tracePath); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
+	// A missing trace file means this process never traced anything and
+	// evicts nothing. Server backends have no file to miss: the store open
+	// below reports reachability, and the owner probes report emptiness.
+	if e.trace.IsSQLite() {
+		if _, err := os.Stat(e.trace.DSN); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return fmt.Errorf("stat trace store: %w", err)
 		}
-		return fmt.Errorf("stat trace store: %w", err)
 	}
 
 	var owners []string
@@ -76,9 +89,9 @@ func (e *Evictor) EvictSession(db *memory.DB, sessionID string) error {
 	}
 
 	ctx := context.Background()
-	store, err := shepherdtrace.NewSQLiteTraceStore(e.tracePath)
+	store, err := tracestore.Open(e.trace)
 	if err != nil {
-		return fmt.Errorf("open trace store: %w", err)
+		return fmt.Errorf("open trace store (%s): %w", e.trace.Describe(), err)
 	}
 	defer store.Close(ctx)
 
@@ -117,29 +130,31 @@ func (e *Evictor) EvictSession(db *memory.DB, sessionID string) error {
 // It runs after the state cascade committed, so a crash before it only
 // leaves already-unreachable records behind — the next sweep claims them.
 func (e *Evictor) AfterDelete() {
-	scheduleSweep(e.tracePath)
+	scheduleSweep(e.storeKey(), e.trace)
 }
 
 // SweepNow runs one CollectGarbage synchronously, under the same
 // single-flight guard the scheduler uses: if another sweep of this store is
 // in flight, this call defers to it (the guard's re-run latch covers the
 // work) instead of opening a concurrent `CollectGarbage` against the same
-// SQLite file. Exported so a short-lived CLI can reclaim before exit and a
+// store. Exported so a short-lived CLI can reclaim before exit and a
 // future retention-policy janitor can sweep on demand.
 func (e *Evictor) SweepNow() error {
-	claimed, done := markSweepRunning(e.tracePath)
+	claimed, done := markSweepRunning(e.storeKey(), e.trace)
 	if !claimed {
 		// Another sweep is in flight; its re-run latch covers this work.
 		return nil
 	}
 	defer done()
 
-	if _, err := os.Stat(e.tracePath); errors.Is(err, fs.ErrNotExist) {
-		return nil
+	if e.trace.IsSQLite() {
+		if _, err := os.Stat(e.trace.DSN); errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
 	}
-	store, err := shepherdtrace.NewSQLiteTraceStore(e.tracePath)
+	store, err := tracestore.Open(e.trace)
 	if err != nil {
-		return fmt.Errorf("open trace store: %w", err)
+		return fmt.Errorf("open trace store (%s): %w", e.trace.Describe(), err)
 	}
 	defer store.Close(context.Background())
 
@@ -179,50 +194,50 @@ var (
 // already in flight and this request was latched onto its re-run; ok=true
 // comes with a done func that releases the slot and, if requests arrived
 // meanwhile, schedules the follow-up sweep.
-func markSweepRunning(tracePath string) (claimed bool, done func()) {
+func markSweepRunning(key string, cfg tracestore.Config) (claimed bool, done func()) {
 	sweepMu.Lock()
 	defer sweepMu.Unlock()
-	if sweepRunning[tracePath] {
-		sweepRerun[tracePath] = true
+	if sweepRunning[key] {
+		sweepRerun[key] = true
 		return false, func() {}
 	}
-	sweepRunning[tracePath] = true
+	sweepRunning[key] = true
 	return true, func() {
 		sweepMu.Lock()
-		sweepRunning[tracePath] = false
-		reRun := sweepRerun[tracePath]
-		sweepRerun[tracePath] = false
+		sweepRunning[key] = false
+		reRun := sweepRerun[key]
+		sweepRerun[key] = false
 		sweepMu.Unlock()
 		if reRun {
-			scheduleSweep(tracePath)
+			scheduleSweep(key, cfg)
 		}
 	}
 }
 
 // scheduleSweep coalesces deletes into one sweep per trace store: while a
-// sweep for a path is pending or running, more deletes are absorbed (a
+// sweep for a store is pending or running, more deletes are absorbed (a
 // running sweep drains its latch and re-runs at most once). The sweep is
 // global (§6), so per-delete sweeps would waste the store's write lock.
 // Best-effort by design: eviction already made the content unreachable, so
 // a sweep that never runs (a CLI exiting first) only defers reclamation.
-func scheduleSweep(tracePath string) {
+func scheduleSweep(key string, cfg tracestore.Config) {
 	sweepMu.Lock()
 	defer sweepMu.Unlock()
-	if sweepRunning[tracePath] {
-		sweepRerun[tracePath] = true
+	if sweepRunning[key] {
+		sweepRerun[key] = true
 		return
 	}
-	if _, pending := sweepTimers[tracePath]; pending {
+	if _, pending := sweepTimers[key]; pending {
 		return
 	}
-	sweepTimers[tracePath] = time.AfterFunc(sweepDelay, func() {
+	sweepTimers[key] = time.AfterFunc(sweepDelay, func() {
 		sweepMu.Lock()
-		delete(sweepTimers, tracePath)
+		delete(sweepTimers, key)
 		sweepMu.Unlock()
 
-		e := &Evictor{tracePath: tracePath}
+		e := &Evictor{trace: cfg}
 		if err := e.SweepNow(); err != nil {
-			slog.Warn("retention sweep failed; records stay unreachable until the next sweep", "trace", tracePath, "err", err)
+			slog.Warn("retention sweep failed; records stay unreachable until the next sweep", "trace", cfg.Describe(), "err", err)
 		}
 	})
 }

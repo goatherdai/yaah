@@ -17,6 +17,7 @@ import (
 	"github.com/goatherdai/yaah/internal/config"
 	"github.com/goatherdai/yaah/internal/prompts"
 	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/tracestore"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -448,7 +449,7 @@ func TestSubagentTraceProfile(t *testing.T) {
 		})
 	}
 
-	profile := subagentTraceProfile(context.Background(), tracePath, owner)
+	profile := subagentTraceProfile(context.Background(), tracestore.Config{DSN: tracePath}, owner)
 	if profile == "" {
 		t.Fatal("profile should not be empty")
 	}
@@ -478,14 +479,14 @@ func TestSubagentTraceProfile_NonexistentSession(t *testing.T) {
 	}
 	store.Close(context.Background())
 
-	profile := subagentTraceProfile(context.Background(), tracePath, "nonexistent")
+	profile := subagentTraceProfile(context.Background(), tracestore.Config{DSN: tracePath}, "nonexistent")
 	if profile != "" {
 		t.Errorf("profile for nonexistent session should be empty, got %q", profile)
 	}
 }
 
 func TestSubagentTraceProfile_MissingFile(t *testing.T) {
-	profile := subagentTraceProfile(context.Background(), "/nonexistent/path/trace.sqlite", "any")
+	profile := subagentTraceProfile(context.Background(), tracestore.Config{DSN: "/nonexistent/path/trace.sqlite"}, "any")
 	if profile != "" {
 		t.Errorf("profile for missing file should be empty, got %q", profile)
 	}

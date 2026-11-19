@@ -7,7 +7,7 @@ require (
 	github.com/buchenberg/tviewmd v0.3.1
 	github.com/ebitengine/purego v0.10.0
 	github.com/gdamore/tcell/v2 v2.13.10
-	github.com/goatherdai/goatherd-kernel v0.21.1-0.20261118191751-ffd4deddeb22
+	github.com/goatherdai/goatherd-kernel v0.21.1-0.20261119143955-b455b1622853
 	github.com/goatherdai/goatherd-runtime v0.24.1-0.20261118192512-b4d03a8d225a
 	github.com/goatherdai/goatherd-runtime/sandbox/croft v0.2.1-0.20261118192512-b4d03a8d225a
 	github.com/goatherdai/goatherd-runtime/sandbox/landlock v0.1.3-0.20261118192512-b4d03a8d225a
@@ -34,8 +34,13 @@ require (
 
 require (
 	github.com/goatherdai/croft v0.9.3-0.20261118191751-716dbb80a6dd // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20221227161230-091c0ba34f0a // indirect
+	github.com/jackc/pgx/v5 v5.6.0 // indirect
+	github.com/jackc/puddle/v2 v2.2.1 // indirect
 	github.com/jupiterrider/ffi v0.8.0 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
 )
 
 require (

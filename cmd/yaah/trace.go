@@ -13,6 +13,7 @@ import (
 	shepherdtrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
 	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/tracestore"
 	"github.com/spf13/cobra"
 )
 
@@ -517,14 +518,22 @@ func formatNum(n int) string {
 
 func openShepherdTraceStore() (*shepherdtrace.SQLiteTraceStore, error) {
 	cfg, _ := config.Load()
-	path := config.Defaults{}.TracePath()
+	traceCfg := (config.Defaults{}).TraceStoreConfig()
 	if cfg != nil {
-		path = cfg.Agent.Default.TracePath()
+		traceCfg = cfg.Agent.Default.TraceStoreConfig()
 	}
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil, fmt.Errorf("no trace store at %s (it is created on first use)", path)
+	// A missing SQLite file means nothing has traced yet; a server backend
+	// always exists, so only the file backend gets the existence probe.
+	if traceCfg.IsSQLite() {
+		if _, err := os.Stat(traceCfg.DSN); os.IsNotExist(err) {
+			return nil, fmt.Errorf("no trace store at %s (it is created on first use)", traceCfg.DSN)
+		}
 	}
-	return shepherdtrace.NewSQLiteTraceStore(path)
+	store, err := tracestore.Open(traceCfg)
+	if err != nil {
+		return nil, fmt.Errorf("open trace store (%s): %w", traceCfg.Describe(), err)
+	}
+	return store, nil
 }
 
 func captureStatus(fact shepherdtrace.VisibleRecord) string {

@@ -63,6 +63,7 @@ yaah/
 │   ├── spinner/                # terminal spinner primitives
 │   ├── todo/                   # todo-list model shared by views
 │   ├── toolargs/               # strict argument decoding shared by tools and dispatch
+│   ├── tracestore/             # trace store open seam: backend + DSN from config → kernel StoreConfig
 │   ├── toolcontract/           # neutral Tool/DangerClassifier contracts shared by agent and tools
 │   ├── toolfmt/                # shared tool result formatting
 │   ├── tools/                  # built-in tools

@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
 	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 	"github.com/spf13/cobra"
 
 	"github.com/goatherdai/yaah/internal/agent/recovery"
 	"github.com/goatherdai/yaah/internal/config"
 	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/tracestore"
 )
 
 // shepherdCmd surfaces the supervision state's leftovers (adoption
@@ -145,13 +145,17 @@ func shepherdScan() (*recovery.Report, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("shepherd: load config: %w", err)
 	}
-	tracePath := cfg.Agent.Default.TracePath()
-	if err := os.MkdirAll(filepath.Dir(tracePath), 0o700); err != nil {
-		return nil, nil, fmt.Errorf("shepherd: trace dir: %w", err)
+	traceCfg := cfg.Agent.Default.TraceStoreConfig()
+	// The SQLite store's parent directory is runtime-created; a server
+	// backend has nothing to create.
+	if traceCfg.IsSQLite() {
+		if err := os.MkdirAll(filepath.Dir(traceCfg.DSN), 0o700); err != nil {
+			return nil, nil, fmt.Errorf("shepherd: trace dir: %w", err)
+		}
 	}
-	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
+	store, err := tracestore.Open(traceCfg)
 	if err != nil {
-		return nil, nil, fmt.Errorf("shepherd: trace store: %w", err)
+		return nil, nil, fmt.Errorf("shepherd: trace store (%s): %w", traceCfg.Describe(), err)
 	}
 	cleanup := func() { store.Close(context.Background()) }
 	repoPath := cfg.Agent.Default.RetainedRepoPath

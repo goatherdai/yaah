@@ -96,7 +96,10 @@ agents:
     directives:                        # orchestrator prompt policy
       - "always run tests after implementation"
 
-    shepherd_trace_path: ""             # "" = ~/.yaah/trace.db; tracing is always on
+    shepherd_trace_path: ""             # DEPRECATED flat form; "" = ~/.yaah/trace.db; tracing is always on
+    shepherd_trace:                     # where traces live (overrides shepherd_trace_path's DSN role)
+      backend: ""                       # "" or "sqlite" = local file; "postgres" = server ledger
+      dsn: ""                           # sqlite: file path; postgres: connection URL (required for postgres)
 
     retained_repo_path: ""             # "" = cwd
     retained_worktree_root: ""         # "" = ./.yaah/shepherd-worktrees
@@ -313,7 +316,8 @@ rather than retrying a request that cannot succeed.
 | `consolidate_iters_interval` | 0 (off) | Same nudge, counted in tool results |
 | `consolidate_deep_every` | 1 | Run the deep consolidator fork on every Nth nudge (0 or 1 = every nudge); intervening nudges take the light path |
 | `directives` | — | Policy statements injected into the orchestrator prompt only |
-| `shepherd_trace_path` | ~/.yaah/trace.db | Path to the Shepherd trace store **file**. Tracing is always on — this only relocates the store. Facts include the session context (system prompt, cwd, model/config fingerprint), assistant content plus reasoning signature, and tool output bodies capped at 64KiB with truncation markers/spill refs |
+| `shepherd_trace_path` | ~/.yaah/trace.db | DEPRECATED flat form of `shepherd_trace.dsn` (SQLite): path to the Shepherd trace store **file**. Still resolves exactly as before. Tracing is always on — this only relocates the store. Facts include the session context (system prompt, cwd, model/config fingerprint), assistant content plus reasoning signature, and tool output bodies capped at 64KiB with truncation markers/spill refs |
+| `shepherd_trace` | — | Where traces live: `backend` (`""`/`sqlite` = local file, `postgres` = server ledger via [goatherd-kernel](https://github.com/goatherdai/goatherd-kernel)'s backend seam) and `dsn` (SQLite: file path, falling back to `shepherd_trace_path` then the default; PostgreSQL: connection URL, **required** for that backend). Record and context ids are backend-independent, but contents do not migrate automatically — moving an existing ledger between backends needs a deliberate export/import |
 | `retained_repo_path` | cwd | Repository retained worktrees are cut from |
 | `retained_worktree_root` | .yaah/shepherd-worktrees | Parent directory for retained worktrees |
 | `retained_worktree_bootstrap` | — | Command run inside each retained worktree, e.g. `npm ci` |

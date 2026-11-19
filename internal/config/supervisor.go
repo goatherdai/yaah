@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/goatherdai/yaah/internal/tracestore"
 )
 
 // SupervisorConfig configures the supervision rules engine
@@ -149,6 +151,26 @@ func (d Defaults) TracePath() string {
 		return p
 	}
 	return filepath.Join(HomeDir(), "trace.db")
+}
+
+// TraceStoreConfig resolves where traces live — backend and DSN — into the
+// seam the tracestore package opens. Resolution order, per field: the
+// shepherd_trace stanza wins; the deprecated flat shepherd_trace_path
+// remains the SQLite DSN when the stanza carries none; the SQLite default
+// is the yaah-home trace file. The backend is normalized (empty is the
+// SQLite default) so callers can branch on IsSQLite without re-validating.
+// A PostgreSQL backend without a DSN surfaces as an error at Open, not as
+// a silently wrong default.
+func (d Defaults) TraceStoreConfig() tracestore.Config {
+	backend := strings.TrimSpace(d.ShepherdTrace.Backend)
+	if backend == "" {
+		backend = tracestore.BackendSQLite
+	}
+	dsn := strings.TrimSpace(d.ShepherdTrace.DSN)
+	if dsn == "" && backend == tracestore.BackendSQLite {
+		dsn = d.TracePath()
+	}
+	return tracestore.Config{Backend: backend, DSN: dsn}
 }
 
 // HaltRootEnabled resolves the root-halt opt-in. The stanza's explicit

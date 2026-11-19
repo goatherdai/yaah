@@ -242,7 +242,29 @@ type Defaults struct {
 	// supervisor tool is registered, and per-turn checkpointing is
 	// available to roles that opt in (`turn_checkpoints`). Empty resolves to the
 	// default trace store under the yaah home — see TracePath.
+	//
+	// DEPRECATED flat form of ShepherdTrace.DSN for the SQLite backend: it
+	// still resolves exactly as before (TraceStoreConfig falls back to it
+	// when the stanza carries no DSN), but new configuration uses
+	// shepherd_trace.{backend,dsn}. See ShepherdTrace.
 	ShepherdTracePath string `yaml:"shepherd_trace_path"`
+
+	// ShepherdTrace configures where traces live — the storage backend
+	// and its data source. The zero value is the default: an SQLite file
+	// under the yaah home (TracePath). Backend "postgres" moves the trace
+	// ledger to a PostgreSQL server; dsn is then a connection URL and is
+	// required. The record and context id spaces do not depend on the
+	// backend, but a store's contents do not migrate automatically — use
+	// a deliberate export/import to move sessions between backends.
+	ShepherdTrace struct {
+		// Backend is "sqlite" (default) or "postgres".
+		Backend string `yaml:"backend"`
+		// DSN is the backend data source name. For SQLite it is a file
+		// path (empty falls back to shepherd_trace_path, then the yaah
+		// home default); for PostgreSQL it is a connection URL and is
+		// required.
+		DSN string `yaml:"dsn"`
+	} `yaml:"shepherd_trace"`
 
 	// Supervisor configures the advisory supervision rules engine
 	// (adoption plan B1). It is not gated on tracing: tracing is always
@@ -780,6 +802,9 @@ func Load() (*Config, error) {
 
 	if cfg.Agent.Default.ShepherdTracePath != "" {
 		cfg.Agent.Default.ShepherdTracePath = expandHomeDir(cfg.Agent.Default.ShepherdTracePath)
+	}
+	if cfg.Agent.Default.ShepherdTrace.DSN != "" {
+		cfg.Agent.Default.ShepherdTrace.DSN = expandHomeDir(cfg.Agent.Default.ShepherdTrace.DSN)
 	}
 	if cfg.Agent.Default.RetainedRepoPath != "" {
 		cfg.Agent.Default.RetainedRepoPath = expandHomeDir(cfg.Agent.Default.RetainedRepoPath)

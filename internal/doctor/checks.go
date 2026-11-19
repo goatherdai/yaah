@@ -10,14 +10,13 @@ import (
 	"sort"
 	"strings"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
-
 	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
 	"github.com/goatherdai/yaah/internal/agent/recovery"
 	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/config"
 	"github.com/goatherdai/yaah/internal/jail"
+	"github.com/goatherdai/yaah/internal/tracestore"
 	"github.com/goatherdai/yaah/internal/update"
 	"github.com/goatherdai/yaah/internal/worldinfo"
 )
@@ -827,17 +826,20 @@ func CheckShepherd(cfg *config.Config, cfgErr error) Check {
 	if cfgErr != nil || cfg == nil {
 		return Check{Label: label, Status: "WARN", Detail: "config unavailable"}
 	}
-	tracePath := cfg.Agent.Default.TracePath()
-	// Runtime creates the store's parent directory before opening the
-	// store; the diagnostic must not fail a state the next session start
-	// would auto-heal (R2 review).
-	traceDir := filepath.Dir(tracePath)
-	if err := os.MkdirAll(traceDir, 0o700); err != nil {
-		return Check{Label: label, Status: "FAIL", Detail: "trace dir " + traceDir + ": " + err.Error()}
+	traceCfg := cfg.Agent.Default.TraceStoreConfig()
+	// Runtime creates the SQLite store's parent directory before opening
+	// the store; the diagnostic must not fail a state the next session
+	// start would auto-heal (R2 review). Server backends have no directory
+	// to create.
+	if traceCfg.IsSQLite() {
+		traceDir := filepath.Dir(traceCfg.DSN)
+		if err := os.MkdirAll(traceDir, 0o700); err != nil {
+			return Check{Label: label, Status: "FAIL", Detail: "trace dir " + traceDir + ": " + err.Error()}
+		}
 	}
-	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
+	store, err := tracestore.Open(traceCfg)
 	if err != nil {
-		return Check{Label: label, Status: "FAIL", Detail: "trace store " + tracePath + ": " + err.Error()}
+		return Check{Label: label, Status: "FAIL", Detail: "trace store " + traceCfg.Describe() + ": " + err.Error()}
 	}
 	defer store.Close(context.Background())
 	repoPath := cfg.Agent.Default.RetainedRepoPath

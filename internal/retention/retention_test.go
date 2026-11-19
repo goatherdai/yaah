@@ -9,6 +9,7 @@ import (
 
 	shepherdtrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/memory"
+	"github.com/goatherdai/yaah/internal/tracestore"
 )
 
 // throughMax is the ordinal cap the evictor itself probes with: no
@@ -46,7 +47,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	f := &fixture{t: t, db: db, store: store, tracePath: tracePath, evictor: NewEvictor(tracePath)}
+	f := &fixture{t: t, db: db, store: store, tracePath: tracePath, evictor: NewEvictor(tracestore.Config{DSN: tracePath})}
 	f.mainFacts = f.appendFacts("intent:main", "sess-main", "sess-main")
 	f.subOwner = "sub-researcher-sess-main-1730000000"
 	f.subFacts = f.appendFacts("intent:sub", f.subOwner, "sess-main")
@@ -163,22 +164,24 @@ func TestSweepNowDefersToInflightSweep(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
+	cfg := tracestore.Config{DSN: tracePath}
+	key := cfg.Backend + "|" + cfg.DSN
 	sweepMu.Lock()
-	sweepRunning[tracePath] = true
+	sweepRunning[key] = true
 	sweepMu.Unlock()
 	t.Cleanup(func() {
 		sweepMu.Lock()
-		sweepRunning[tracePath] = false
+		sweepRunning[key] = false
 		sweepMu.Unlock()
 	})
 
-	if err := NewEvictor(tracePath).SweepNow(); err != nil {
+	if err := NewEvictor(cfg).SweepNow(); err != nil {
 		t.Fatalf("SweepNow must defer to the in-flight sweep, not fail: %v", err)
 	}
 
 	sweepMu.Lock()
 	defer sweepMu.Unlock()
-	if !sweepRerun[tracePath] {
+	if !sweepRerun[key] {
 		t.Fatal("deferred sweep work was not latched onto the in-flight sweep's re-run")
 	}
 }
@@ -193,7 +196,7 @@ func TestMissingTraceStoreEvictsNothingAndStillDeletes(t *testing.T) {
 
 	// No trace.db was ever created — a configuration with the trace store
 	// elsewhere, or a session that never ran an agent.
-	if err := NewEvictor(filepath.Join(dir, "absent", "trace.db")).EvictSession(db, "sess-none"); err != nil {
+	if err := NewEvictor(tracestore.Config{DSN: filepath.Join(dir, "absent", "trace.db")}).EvictSession(db, "sess-none"); err != nil {
 		t.Fatalf("EvictSession with missing trace store: %v", err)
 	}
 }
