@@ -398,9 +398,32 @@ func renderPrompt(d exec.Dispatch) (string, error) {
 	if prompt == nil {
 		return "", fmt.Errorf("workflow/host: node %s has no prompt to dispatch", d.Node.Path)
 	}
-	res, err := prompt.Render(d.Scope, ir.RenderOptions{})
+	res, err := prompt.Render(d.Scope, ir.RenderOptions{
+		// The node's prompt is the sub-agent's entire instruction here: the
+		// door has no dereference tool, so an oversized interpolation could
+		// not be fetched later and must not ride as a preview. The threshold
+		// is headroom for report-sized collects, not a parking place — a
+		// value that still crosses it is a refusal below.
+		HandleThreshold: 1 << 20,
+		PreviewBytes:    32 << 10,
+	})
 	if err != nil {
 		return "", fmt.Errorf("workflow/host: node %s prompt: %w", d.Node.Path, err)
+	}
+	if len(res.Handles) > 0 {
+		// A handle means the rendered prompt is a preview of the value, and
+		// the door cannot dereference it: dispatching would run the sub-agent
+		// on a silently cut instruction — the failure this door refuses
+		// rather than produces. The names and sizes are in the error so the
+		// author can restructure (aggregate, split the fan-out, raise the
+		// run's own budget) instead of debugging a model that only saw part
+		// of its instruction.
+		detail := make([]string, 0, len(res.Handles))
+		for _, h := range res.Handles {
+			detail = append(detail, fmt.Sprintf("%s (%d bytes)", h.Ref, h.Size))
+		}
+		return "", fmt.Errorf("workflow/host: node %s prompt interpolates value(s) over the %d-byte prompt budget: %s; the door has no dereference, so the instruction would dispatch truncated",
+			d.Node.Path, 1<<20, strings.Join(detail, ", "))
 	}
 	if res.Text == "" {
 		return "", fmt.Errorf("workflow/host: node %s prompt renders empty", d.Node.Path)
