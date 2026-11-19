@@ -70,6 +70,7 @@ yaah/
 │   ├── envelopecheck/           # envelope/doc parity gate shared by tools + dispatch
 │   ├── instructions/            # AGENTS.md/CLAUDE.md discovery
 │   ├── jail/                    # per-platform containment backend selection
+│   ├── janitor/                 # dispatch-residue classifier: trace lifecycle + registry + filesystem
 │   ├── jobs/                    # background jobs + sub-agent I/O contract
 │   ├── mcp/                     # MCP client + server (stdio + HTTP)
 │   ├── memory/                  # SQLite sessions, memory, FTS5, embeddings

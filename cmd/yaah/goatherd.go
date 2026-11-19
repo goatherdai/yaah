@@ -282,4 +282,6 @@ func init() {
 	goatherdCmd.AddCommand(goatherdPruneCmd)
 	goatherdCmd.AddCommand(goatherdPruneContainerCmd)
 	rootCmd.AddCommand(goatherdCmd)
+	rootCmd.AddCommand(janitorCmd)
+	janitorCmd.AddCommand(janitorScanCmd)
 }
