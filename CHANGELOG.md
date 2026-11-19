@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.196.0](https://github.com/goatherdai/yaah/compare/v0.195.6...v0.196.0) (2026-11-19)
+
+
+### Features
+
+* trace backend config — shepherd_trace stanza + tracestore seam (Phase 2) ([71aab8d](https://github.com/goatherdai/yaah/commit/71aab8d155ae6bb8c5884ce18f3caca6c14ca015))
+* trace backend config — shepherd_trace stanza + tracestore seam (Phase 2) ([6a2e849](https://github.com/goatherdai/yaah/commit/6a2e849c792428ea366b0564d192f8144a3d9ae7))
+
+
+### Bug Fixes
+
+* **review:** redact PG DSN credentials in Describe(); PR-316 review fixes ([de8874f](https://github.com/goatherdai/yaah/commit/de8874f8b15a6a0b6bdda03e31eb4f726961d32c))
+
+
+### Code Refactoring
+
+* **workflow:** alias resolved enums to their authoring types ([b7b51c2](https://github.com/goatherdai/yaah/commit/b7b51c2f9dab36429facb047d69fc6f929c8c1d1))
+* **workflow:** alias resolved enums to their authoring types ([235aa17](https://github.com/goatherdai/yaah/commit/235aa17c5c9416597a213140d75a451283e4765d))
+
 ## [0.195.6](https://github.com/goatherdai/yaah/compare/v0.195.5...v0.195.6) (2026-11-19)
 
 
