@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.197.1](https://github.com/goatherdai/yaah/compare/v0.197.0...v0.197.1) (2026-11-19)
+
+
+### Code Refactoring
+
+* drop the legacy CLI spellings and config-key fallbacks ([234466a](https://github.com/goatherdai/yaah/commit/234466a3de8f033c564d0efd73e4e0180ec0cb9a))
+* rename shepherd to goatherd across yaah ([56c4393](https://github.com/goatherdai/yaah/commit/56c4393035229b99466135b8ffb66f334a5364e4))
+* rename shepherd to goatherd across yaah ([e85c6eb](https://github.com/goatherdai/yaah/commit/e85c6eb126130919d0892e033b99ab1eff5ba5c1))
+
+
+### Tests
+
+* address PG e2e review — rerun-safe ids, real deferred path, reclaim proof ([49b00c7](https://github.com/goatherdai/yaah/commit/49b00c7d913061daa36718efad78299da06c8c39))
+* PG end-to-end leg for the retention delete flow ([b19ab56](https://github.com/goatherdai/yaah/commit/b19ab56188341e18ce00e09326d71cec31d62a1a))
+* PG end-to-end leg for the retention delete flow ([5a27f73](https://github.com/goatherdai/yaah/commit/5a27f73e238a70d5c30280349dd3994cc1ef1557))
+
 ## [0.197.0](https://github.com/goatherdai/yaah/compare/v0.196.0...v0.197.0) (2026-11-19)
 
 
