@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.198.0](https://github.com/goatherdai/yaah/compare/v0.197.1...v0.198.0) (2026-11-19)
+
+
+### Features
+
+* **janitor:** residue classifier + `yaah janitor scan` (J1, read-only) ([a90d16e](https://github.com/goatherdai/yaah/commit/a90d16e117f4e789ad6394270a1049e7774d1fea))
+* **janitor:** residue classifier + `yaah janitor scan` (J1, read-only) ([7ff18bd](https://github.com/goatherdai/yaah/commit/7ff18bd93d7843ffc03c92e4e034151e437d1376))
+
+
+### Bug Fixes
+
+* **janitor:** address review — safe set is terminal + worktree-shaped, read-only scan ([143b576](https://github.com/goatherdai/yaah/commit/143b576edc9075202ea0dea20030920f69aeb268))
+* **workflow:** clean up doc comments left by the file split ([bcae8f9](https://github.com/goatherdai/yaah/commit/bcae8f98241aee76d7dee89990f97aa2a73006d1))
+* **workflow:** make the artifact path test portable to Windows ([6440f02](https://github.com/goatherdai/yaah/commit/6440f0278cda4d360b9e13f475203ea76836d31f))
+
+
+### Code Refactoring
+
+* **workflow:** split the two largest files and tidy artifact paths ([b12868a](https://github.com/goatherdai/yaah/commit/b12868a11692c37f4d31cc3b19a0a6c5f37c8afc))
+* **workflow:** split the two largest files and tidy artifact paths ([e56baa3](https://github.com/goatherdai/yaah/commit/e56baa38e9739c2fe3ac33f0c82c76f8a15bceae))
+
 ## [0.197.1](https://github.com/goatherdai/yaah/compare/v0.197.0...v0.197.1) (2026-11-19)
 
 
