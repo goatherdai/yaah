@@ -284,4 +284,7 @@ func init() {
 	rootCmd.AddCommand(goatherdCmd)
 	rootCmd.AddCommand(janitorCmd)
 	janitorCmd.AddCommand(janitorScanCmd)
+	janitorRunCmd.Flags().Bool("dry-run", false, "report what would be reclaimed without deleting anything")
+	janitorRunCmd.Flags().Bool("force", false, "ignore the settled-worktree age threshold (deliberate same-day cleanup)")
+	janitorCmd.AddCommand(janitorRunCmd)
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -48,6 +49,17 @@ var janitorScanCmd = &cobra.Command{
 	},
 }
 
+var janitorRunCmd = &cobra.Command{
+	Use:   "run",
+	Short: "Reclaim the safe residue set: scratch always, settled worktrees past the age threshold",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		force, _ := cmd.Flags().GetBool("force")
+		return janitorRun(cmd.Context(), cmd.OutOrStdout(), dryRun, force)
+	},
+}
+
 // janitorScan wires the three read-only sources: the trace store (proposal
 // lifecycle facts), recovery's registry (scope ids and worktree paths), and
 // the filesystem. The trace opens READ-ONLY: a scan creates no directory,
@@ -60,7 +72,6 @@ func janitorScan(ctx context.Context) (*janitor.Report, func(), error) {
 		return nil, nil, fmt.Errorf("janitor: load config: %w", err)
 	}
 	traceCfg := cfg.Agent.Default.TraceStoreConfig()
-	// A missing trace is an empty report, not a reason to create one.
 	if traceCfg.IsSQLite() {
 		if _, statErr := os.Stat(traceCfg.DSN); errors.Is(statErr, os.ErrNotExist) {
 			return &janitor.Report{GeneratedAt: time.Now()}, nil, nil
@@ -106,6 +117,117 @@ func janitorScan(ctx context.Context) (*janitor.Report, func(), error) {
 	}
 	return report, cleanup, nil
 }
+
+// janitorRun reclaims the safe set: scratch directories always, settled
+// worktrees only past the configured age threshold (a settled worktree is
+// a landed delta's shadow — the age gate is the human-review window). The
+// dry-run flag reports what would go; force lifts the age gate for
+// deliberate same-day cleanup.
+func janitorRun(ctx context.Context, w io.Writer, dryRun, force bool) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("janitor: load config: %w", err)
+	}
+	traceCfg := cfg.Agent.Default.TraceStoreConfig()
+	if traceCfg.IsSQLite() {
+		if _, statErr := os.Stat(traceCfg.DSN); errors.Is(statErr, os.ErrNotExist) {
+			fmt.Fprintln(w, "no trace store — nothing to reclaim.")
+			return nil
+		}
+	}
+	store, err := tracestore.OpenReadOnly(traceCfg)
+	if err != nil {
+		return fmt.Errorf("janitor: trace store (%s): %w", traceCfg.Describe(), err)
+	}
+	defer store.Close(context.Background())
+
+	repoPath := cfg.Agent.Default.RetainedRepoPath
+	if repoPath == "" {
+		repoPath, _ = os.Getwd()
+	}
+	_, registry, rerr := recovery.Recover(ctx, store, repoPath, true, nil)
+	if rerr != nil {
+		return fmt.Errorf("janitor: recovery: %w", rerr)
+	}
+
+	opts := janitor.SweepOptions{SettledWorktreeAge: 0}
+	if !force {
+		if cfg.Agent.Default.Janitor.SettledWorktreeAge != "" {
+			d, derr := time.ParseDuration(cfg.Agent.Default.Janitor.SettledWorktreeAge)
+			if derr != nil {
+				return fmt.Errorf("janitor: settled_worktree_age %q: %w", cfg.Agent.Default.Janitor.SettledWorktreeAge, derr)
+			}
+			opts.SettledWorktreeAge = d
+		}
+	}
+	collector := janitor.NewCollector(store, registry, repoPath, opts)
+
+	targets, err := collector.Targets(ctx)
+	if err != nil {
+		return fmt.Errorf("janitor: classify: %w", err)
+	}
+
+	if dryRun {
+		if len(targets) == 0 {
+			fmt.Fprintln(w, "nothing to reclaim.")
+			return nil
+		}
+		fmt.Fprintln(w, "dry-run: would reclaim:")
+		var bytes int64
+		for _, t := range targets {
+			fmt.Fprintf(w, "  %-12s %10s  %s\n    %s\n", t.Kind, humanBytes(t.Bytes), t.Path, t.Reason)
+			bytes += t.Bytes
+		}
+		fmt.Fprintf(w, "total: %s across %d target(s); nothing was deleted (dry-run).\n", humanBytes(bytes), len(targets))
+		return nil
+	}
+
+	if len(targets) == 0 {
+		fmt.Fprintln(w, "nothing to reclaim.")
+		return nil
+	}
+
+	// Single-flight per backend: a second concurrent run defers to the
+	// first, exactly like the retention sweep's guard.
+	key := traceCfg.Backend + "|" + traceCfg.DSN
+	claimed, done := janitorClaim(key)
+	if !claimed {
+		fmt.Fprintln(w, "another janitor run is in flight; this one defers.")
+		return nil
+	}
+	defer done()
+
+	res := collector.Execute(ctx, targets)
+	janitor.LogResult(res)
+	fmt.Fprintf(w, "reclaimed %s: %d worktree(s), %d scratch dir(s)",
+		humanBytes(res.ReclaimedBytes), res.DeletedWorktrees, res.DeletedScratch)
+	if len(res.Failed) > 0 {
+		fmt.Fprintf(w, "; %d failed (see logs, retried next run)", len(res.Failed))
+	}
+	fmt.Fprintln(w)
+	return nil
+}
+
+// janitorClaim implements the process-wide single-flight guard: the first
+// caller for a store key claims it, later callers defer.
+func janitorClaim(key string) (claimed bool, done func()) {
+	janitorMu.Lock()
+	defer janitorMu.Unlock()
+	if janitorRunning[key] {
+		return false, func() {}
+	}
+	janitorRunning[key] = true
+	return true, func() {
+		janitorMu.Lock()
+		janitorRunning[key] = false
+		janitorMu.Unlock()
+	}
+}
+
+var (
+	janitorMu      sync.Mutex
+	janitorRunning = map[string]bool{}
+)
 
 // printJanitorReport renders the classification, safe set first, with a
 // one-line reason per finding — the evidence, not just the verdict.

@@ -10,12 +10,14 @@ import (
 	"sort"
 	"strings"
 
+	shepherdtrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
 	"github.com/goatherdai/yaah/internal/agent/recovery"
 	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/config"
 	"github.com/goatherdai/yaah/internal/jail"
+	"github.com/goatherdai/yaah/internal/janitor"
 	"github.com/goatherdai/yaah/internal/tracestore"
 	"github.com/goatherdai/yaah/internal/update"
 	"github.com/goatherdai/yaah/internal/worldinfo"
@@ -879,11 +881,68 @@ func CheckGoatherd(cfg *config.Config, cfgErr error) Check {
 		}
 		warns = append(warns, fmt.Sprintf("%d quarantined scope(s): %s — contradictory trace records; not recovered", n, joinPaths(loc, n)))
 	}
+	// The janitor classifies the same recovery report into reclaimable
+	// residue (settled worktrees past teardown, scratch). It is
+	// informational: the doctor never deletes, it just tells the operator
+	// the sweep exists and what it would take.
+	if n, totalBytes := janitorReclaimable(context.Background(), store, report); n > 0 {
+		warns = append(warns, fmt.Sprintf("%d reclaimable residue target(s) (%s): run `yaah janitor scan`", n, humanBytesDoctor(totalBytes)))
+	}
 	if len(warns) > 0 {
 		status = "WARN"
 		detail = detail + " — " + strings.Join(warns, "; ")
 	}
 	return Check{Label: label, Status: status, Detail: detail}
+}
+
+// janitorReclaimable classifies the recovery report into reclaimable
+// residue (settled worktrees past teardown + their scratch). The doctor
+// never deletes: it reports the count and bytes so the operator knows the
+// sweep is pending. Classification failure is non-fatal — the doctor's
+// tracing row is about the store, not the janitor.
+func janitorReclaimable(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, report *recovery.Report) (targets int, totalBytes int64) {
+	defer func() {
+		if r := recover(); r != nil {
+			targets, totalBytes = 0, 0 // classification must never crash the doctor
+		}
+	}()
+	// repoPath is needed for the collector's registry checks; the doctor
+	// resolved it before recovery and passed the report, but not the path.
+	// Re-derive from the orphans themselves: the first orphan's repo is
+	// the target repository for every worktree in the report.
+	repoPath := ""
+	for _, o := range report.Orphans {
+		if o.Repo != "" {
+			repoPath = o.Repo
+			break
+		}
+	}
+	if repoPath == "" {
+		return 0, 0
+	}
+	collector := janitor.NewCollector(store, report, repoPath, janitor.SweepOptions{})
+	found, err := collector.Targets(ctx)
+	if err != nil {
+		return 0, 0
+	}
+	var sum int64
+	for _, t := range found {
+		sum += t.Bytes
+	}
+	return len(found), sum
+}
+
+func humanBytesDoctor(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f KiB", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
 }
 
 // joinPaths names the first path of a warn bucket and, when there are
