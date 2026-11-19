@@ -86,13 +86,6 @@ func armIDs(n *ir.Node) []string {
 	return out
 }
 
-// registerArms records the routing relation of one branch: which node paths it
-// decides about. It is a ROUTING relation and not a dependency — an arm may
-// declare the branch as a need, and then it is both — so it is kept beside the
-// dependency graph rather than inside it.
-//
-// An unknown or self-naming arm is skipped here: ir.resolveBranch refuses both in
-// an authored graph, and a hand-built one is refused again when the branch routes.
 // armSkipReason renders why one arm was not run, naming the branch that decided
 // and the arm it chose instead. Owner branches are visited in canonical order, so a
 // node two branches could reach names the same one every run.

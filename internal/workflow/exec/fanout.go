@@ -230,9 +230,6 @@ func (r *Run) itemBindings(path string) []itemBinding {
 	return chain
 }
 
-// itemMaxParallel is the nested ceiling that governs one instance: its
-// fan-out's declared max_parallel, 0 when unbounded or when the path is not an
-// instance.
 // fanoutStepOnce drives one fan-out cycle: it expands the first ready fan-out
 // whose `over` list can be resolved. A fan-out whose producer has not terminated
 // yet is a WAIT, not an empty list, so the cycle falls through and the run does
