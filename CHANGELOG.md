@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.197.1](https://github.com/goatherdai/yaah/compare/v0.197.0...v0.197.1) (2026-11-19)
+
+
+### Code Refactoring
+
+* drop the legacy CLI spellings and config-key fallbacks ([234466a](https://github.com/goatherdai/yaah/commit/234466a3de8f033c564d0efd73e4e0180ec0cb9a))
+* rename shepherd to goatherd across yaah ([56c4393](https://github.com/goatherdai/yaah/commit/56c4393035229b99466135b8ffb66f334a5364e4))
+* rename shepherd to goatherd across yaah ([e85c6eb](https://github.com/goatherdai/yaah/commit/e85c6eb126130919d0892e033b99ab1eff5ba5c1))
+
 ## [0.197.0](https://github.com/goatherdai/yaah/compare/v0.196.0...v0.197.0) (2026-11-19)
 
 
