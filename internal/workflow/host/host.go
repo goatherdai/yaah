@@ -398,7 +398,16 @@ func renderPrompt(d exec.Dispatch) (string, error) {
 	if prompt == nil {
 		return "", fmt.Errorf("workflow/host: node %s has no prompt to dispatch", d.Node.Path)
 	}
-	res, err := prompt.Render(d.Scope, ir.RenderOptions{})
+	res, err := prompt.Render(d.Scope, ir.RenderOptions{
+		// The node's prompt is the sub-agent's entire instruction here: no
+		// dereference tool exists on the door, so an oversized interpolation
+		// could not be fetched later. The handle threshold is therefore
+		// raised for prompt rendering — within it, full text; beyond it, a
+		// handle the caller must dereference, which is the engine's default
+		// trade for the agent loop, not for a one-shot prompt.
+		HandleThreshold: 1 << 20,
+		PreviewBytes:    32 << 10,
+	})
 	if err != nil {
 		return "", fmt.Errorf("workflow/host: node %s prompt: %w", d.Node.Path, err)
 	}
