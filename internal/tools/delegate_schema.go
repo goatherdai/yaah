@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-
-	"github.com/goatherdai/yaah/internal/agent/subagent"
 )
 
 func (t *DelegateTool) Schema() json.RawMessage {
 	known := t.roleNames()
 	if len(known) > 0 {
-		return BuildDelegateSchema(known, t.RoleDescriptions)
+		return BuildDelegateSchemaFiltered(known, t.RoleDescriptions, t.Delegatable)
 	}
 	return json.RawMessage(`{
 		"type": "object",
@@ -60,19 +58,40 @@ func (t *DelegateTool) roleNames() []string {
 		names = append(names, n)
 	}
 	slices.Sort(names)
-	return subagent.DelegatableRoles(names)
+	return filterDelegatable(names, t.Delegatable)
+}
+
+// filterDelegatable keeps name order and applies the injected vocabulary
+// filter. A nil filter admits every name, which is the behavior of tools
+// built without a composition root (tests, hand-built registries).
+func filterDelegatable(names []string, delegatable func(string) bool) []string {
+	if delegatable == nil {
+		return names
+	}
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if delegatable(name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // BuildDelegateSchema returns a JSON Schema for the delegate tool whose role
 // enum is populated from the given list of role names, so user-defined
-// roles discovered at runtime are visible to the model. Primary-only
-// roles are excluded from the enum and from the rendered description
-// list (yaah-21uk.4) — the orchestrator cannot dispatch them.
+// roles discovered at runtime are visible to the model. Use
+// BuildDelegateSchemaFiltered to exclude primary-only personas.
 func BuildDelegateSchema(roleNames []string, roleDescriptions map[string]string) json.RawMessage {
-	// Filter here too, not just roleNames: BuildDelegateSchema is
-	// exported, so a primary-only name passed directly must not leak
-	// into the enum or the rendered description list.
-	roles := subagent.DelegatableRoles(roleNames)
+	return BuildDelegateSchemaFiltered(roleNames, roleDescriptions, nil)
+}
+
+// BuildDelegateSchemaFiltered is BuildDelegateSchema with an injected
+// delegatable-role filter, supplied by the composition root.
+func BuildDelegateSchemaFiltered(roleNames []string, roleDescriptions map[string]string, delegatable func(string) bool) json.RawMessage {
+	// Filter here too, not just roleNames: this function is exported, so a
+	// primary-only name passed directly must not leak into the enum or the
+	// rendered description list.
+	roles := filterDelegatable(roleNames, delegatable)
 
 	roleDesc := "Sub-agent role selecting its tool set and limits."
 	if len(roleDescriptions) > 0 {

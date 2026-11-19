@@ -75,6 +75,7 @@ func TestDelegateSchemaExcludesPrimaryOnlyRoles(t *testing.T) {
 		RoleNames:        names,
 		RoleResolver:     func() []string { return names },
 		RoleDescriptions: map[string]string{"boss": "runs the session", "work": "does work"},
+		Delegatable:      subagent.DelegatableRole,
 	}
 
 	t.Run("enum drops primary keeps subagent all and default", func(t *testing.T) {

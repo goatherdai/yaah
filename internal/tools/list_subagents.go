@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/prompts"
 )
 
@@ -48,6 +47,11 @@ type SubAgentLister func() []SubAgentInfo
 // decisions.
 type ListSubAgentsTool struct {
 	Lister SubAgentLister
+
+	// Delegatable, when non-nil, filters roles down to dispatch targets.
+	// The composition root supplies subagent.DelegatableRole; nil admits
+	// every role.
+	Delegatable func(string) bool
 }
 
 func (t *ListSubAgentsTool) Name() string { return "list_subagents" }
@@ -71,7 +75,7 @@ func (t *ListSubAgentsTool) Execute(ctx context.Context, args string) (string, e
 	// (yaah-21uk.4). The registry keeps them; only this view filters.
 	roles := make([]SubAgentInfo, 0, len(listed))
 	for _, r := range listed {
-		if subagent.DelegatableRole(r.Role) {
+		if t.Delegatable == nil || t.Delegatable(r.Role) {
 			roles = append(roles, r)
 		}
 	}

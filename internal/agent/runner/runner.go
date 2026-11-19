@@ -27,6 +27,7 @@ import (
 	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
 	"github.com/goatherdai/yaah/internal/agent"
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/agent/supervision"
 	"github.com/goatherdai/yaah/internal/config"
 	"github.com/goatherdai/yaah/internal/dispatch"
@@ -182,6 +183,7 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 	tool := &tools.DelegateTool{
 		Runner:           runnerFn,
 		ResolveTimeout:   subAgentTimeoutResolver(opts.SubCfg),
+		Delegatable:      subagent.DelegatableRole,
 		RoleNames:        opts.RoleNames,
 		RoleDescriptions: RoleDescriptionsFor(opts.RoleNames),
 		Tracker:          opts.Tracker,

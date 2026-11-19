@@ -24,6 +24,7 @@ import (
 	"github.com/goatherdai/goatherd-runtime"
 	shepherdsupervisor "github.com/goatherdai/goatherd-runtime/supervisor"
 
+	"github.com/goatherdai/yaah/internal/supervisionapi"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -61,12 +62,9 @@ func (r AdvisoryRules) Any() bool {
 // B4): the `supervisor status` surface lists these, so the
 // orchestrator can see which rules acted this session without reading
 // logs. Kind is the intervention type as fired (inject, halt, deny).
-type Firing struct {
-	Rule  string
-	Scope string
-	Kind  string
-	Count int
-}
+// The type lives in supervisionapi so the supervisor tool can render it
+// without importing this package.
+type Firing = supervisionapi.Firing
 
 // firingKey aggregates firings per rule, scope, and kind.
 type firingKey struct{ rule, scope, kind string }
