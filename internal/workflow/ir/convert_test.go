@@ -1,119 +1,80 @@
 package ir
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"slices"
-	"strconv"
 	"testing"
 
 	"github.com/goatherdai/yaah/internal/workflow/spec"
 )
 
-// mirror pairs an authoring enum with the converter that maps it onto the
-// resolved graph's parallel enum. The test below drives every converter from
-// the spec registry, so adding an enum value on the authoring side without a
-// mapping on the resolved side fails CI instead of failing at run time.
-type mirror struct {
-	name     string
-	specZero any
-	convert  func(string) (string, error)
-}
+// Compile-time pins: the one-to-one resolved enums are aliases of the
+// authoring types, not parallel declarations. If one is ever split back into
+// a distinct type, these assignments stop compiling.
+var (
+	_ Kind              = spec.KindDelegate
+	_ Lane              = spec.LaneReport
+	_ NetworkMode       = spec.NetworkAllowAll
+	_ FailurePolicy     = spec.OnFailureAbort
+	_ ItemFailure       = spec.OnItemAbort
+	_ Join              = spec.JoinAll
+	_ SettleAction      = spec.SettleSelect
+	_ ConflictPolicy    = spec.OnConflictStop
+	_ EmptyPolicy       = spec.OnEmptyPass
+	_ SettleOrder       = spec.OrderSmallestDiffFirst
+	_ AggregateStrategy = spec.AggregateConcat
+	_ OutputType        = spec.OutputReport
+	_ ParamType         = spec.ParamString
+	_ GrantAccess       = spec.AccessReadOnly
+	_ OnAbort           = spec.OnAbortHalt
+)
 
-func TestConvertersMirrorSpecRegistry(t *testing.T) {
-	mirrors := []mirror{
-		{"node kind", spec.NodeKind(""), func(s string) (string, error) {
-			v, err := convertKind(spec.NodeKind(s))
-			return string(v), err
-		}},
-		{"lane", spec.Lane(""), func(s string) (string, error) {
-			v, err := convertLane(spec.Lane(s))
-			return string(v), err
-		}},
-		{"network mode", spec.NetworkMode(""), func(s string) (string, error) {
-			v, err := convertNetwork(spec.NetworkMode(s))
-			return string(v), err
-		}},
-		{"failure policy", spec.FailurePolicy(""), func(s string) (string, error) {
-			v, err := convertFailurePolicy(spec.FailurePolicy(s))
-			return string(v), err
-		}},
-		{"item failure", spec.ItemFailure(""), func(s string) (string, error) {
-			v, err := convertItemFailure(spec.ItemFailure(s))
-			return string(v), err
-		}},
-		{"join", spec.Join(""), func(s string) (string, error) {
-			v, err := convertJoin(spec.Join(s))
-			return string(v), err
-		}},
-		{"settle action", spec.SettleAction(""), func(s string) (string, error) {
-			v, err := convertSettleAction(spec.SettleAction(s))
-			return string(v), err
-		}},
-		{"conflict policy", spec.ConflictPolicy(""), func(s string) (string, error) {
-			v, err := convertConflictPolicy(spec.ConflictPolicy(s))
-			return string(v), err
-		}},
-		{"empty policy", spec.EmptyPolicy(""), func(s string) (string, error) {
-			v, err := convertEmptyPolicy(spec.EmptyPolicy(s))
-			return string(v), err
-		}},
-		{"settle order", spec.SettleOrder(""), func(s string) (string, error) {
-			v, err := convertSettleOrder(spec.SettleOrder(s))
-			return string(v), err
-		}},
-		{"aggregate strategy", spec.AggregateStrategy(""), func(s string) (string, error) {
-			v, err := convertAggregateStrategy(spec.AggregateStrategy(s))
-			return string(v), err
-		}},
-		{"output type", spec.OutputType(""), func(s string) (string, error) {
-			v, err := convertOutputType(spec.OutputType(s))
-			return string(v), err
-		}},
-		{"param type", spec.ParamType(""), func(s string) (string, error) {
-			v, err := convertParamType(spec.ParamType(s))
-			return string(v), err
-		}},
-		{"grant access", spec.GrantAccess(""), func(s string) (string, error) {
-			v, err := convertGrantAccess(spec.GrantAccess(s))
-			return string(v), err
-		}},
+// TestAliasedEnumsAcceptSpecRegistry pins that every value the decoder
+// accepts is also accepted on the resolved side, and that an unknown value is
+// still rejected for hand-built documents. With aliases there is no
+// conversion table to drift; this checks the single shared validator.
+func TestAliasedEnumsAcceptSpecRegistry(t *testing.T) {
+	cases := []struct {
+		name  string
+		zero  any
+		check func(string) bool
+	}{
+		{"node kind", spec.NodeKind(""), func(s string) bool { return validateEnum(spec.NodeKind(s)) }},
+		{"lane", spec.Lane(""), func(s string) bool { return validateEnum(spec.Lane(s)) }},
+		{"network mode", spec.NetworkMode(""), func(s string) bool { return validateEnum(spec.NetworkMode(s)) }},
+		{"failure policy", spec.FailurePolicy(""), func(s string) bool { return validateEnum(spec.FailurePolicy(s)) }},
+		{"item failure", spec.ItemFailure(""), func(s string) bool { return validateEnum(spec.ItemFailure(s)) }},
+		{"join", spec.Join(""), func(s string) bool { return validateEnum(spec.Join(s)) }},
+		{"settle action", spec.SettleAction(""), func(s string) bool { return validateEnum(spec.SettleAction(s)) }},
+		{"conflict policy", spec.ConflictPolicy(""), func(s string) bool { return validateEnum(spec.ConflictPolicy(s)) }},
+		{"empty policy", spec.EmptyPolicy(""), func(s string) bool { return validateEnum(spec.EmptyPolicy(s)) }},
+		{"settle order", spec.SettleOrder(""), func(s string) bool { return validateEnum(spec.SettleOrder(s)) }},
+		{"aggregate strategy", spec.AggregateStrategy(""), func(s string) bool { return validateEnum(spec.AggregateStrategy(s)) }},
+		{"output type", spec.OutputType(""), func(s string) bool { return validateEnum(spec.OutputType(s)) }},
+		{"param type", spec.ParamType(""), func(s string) bool { return validateEnum(spec.ParamType(s)) }},
+		{"grant access", spec.GrantAccess(""), func(s string) bool { return validateEnum(spec.GrantAccess(s)) }},
+		{"abort policy", spec.OnAbortPolicy(""), func(s string) bool { return validateEnum(spec.OnAbortPolicy(s)) }},
 	}
-
-	for _, m := range mirrors {
-		t.Run(m.name, func(t *testing.T) {
-			values := spec.EnumValues(m.specZero)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			values := spec.EnumValues(c.zero)
 			if len(values) == 0 {
-				t.Fatalf("spec.EnumValues(%T) is empty — wrong type or unregistered enum", m.specZero)
+				t.Fatalf("spec.EnumValues(%T) is empty", c.zero)
 			}
-			seen := make(map[string]bool, len(values))
 			for _, v := range values {
-				got, err := m.convert(v)
-				if err != nil {
-					t.Errorf("authoring value %q has no resolved mapping: %v", v, err)
-					continue
+				if !c.check(v) {
+					t.Errorf("registered authoring value %q rejected on the resolved side", v)
 				}
-				if got != v {
-					t.Errorf("authoring value %q maps to resolved %q; the resolved enum must mirror it", v, got)
-				}
-				seen[got] = true
 			}
-			if len(seen) != len(values) {
-				t.Errorf("%d authoring values mapped to %d distinct resolved values", len(values), len(seen))
-			}
-			if _, err := m.convert("__not_a_declared_value__"); err == nil {
-				t.Error("converter accepted an unknown value")
+			if c.check("__not_a_declared_value__") {
+				t.Error("unknown value accepted")
 			}
 		})
 	}
 }
 
 // TestPolicySplitMirrorsSpecRegistry covers the one enum that is NOT 1:1:
-// spec.Policy is the shared authoring key whose values split into the
-// select and settle halves of the resolved graph. Every authoring value must
-// land in exactly one half, keeping the same string, and neither half may
-// accept a value from the other.
+// spec.Policy is the shared authoring key whose values split into select and
+// settle halves. Every authoring value must land in exactly one half.
 func TestPolicySplitMirrorsSpecRegistry(t *testing.T) {
 	values := spec.EnumValues(spec.Policy(""))
 	if len(values) == 0 {
@@ -153,60 +114,13 @@ func TestPolicySplitMirrorsSpecRegistry(t *testing.T) {
 	}
 }
 
-// declaredOnAbortValues parses graph.go for typed OnAbort constants, so the
-// resolved side of the parity check enumerates the actual declarations rather
-// than a second hand-typed list that could drift from them.
-func declaredOnAbortValues(t *testing.T) []string {
-	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), "graph.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse graph.go: %v", err)
-	}
-	var out []string
-	for _, decl := range f.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.CONST {
-			continue
-		}
-		for _, s := range gd.Specs {
-			vs, ok := s.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-			typ, ok := vs.Type.(*ast.Ident)
-			if !ok || typ.Name != "OnAbort" {
-				continue
-			}
-			for _, v := range vs.Values {
-				lit, ok := v.(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING {
-					continue
-				}
-				value, err := strconv.Unquote(lit.Value)
-				if err != nil {
-					t.Fatalf("unquote %s: %v", lit.Value, err)
-				}
-				out = append(out, value)
-			}
-		}
-	}
-	return out
-}
-
-// TestAbortPolicyMirrorsSpecRegistry covers the enum that resolution casts
-// directly rather than routing through a converter: the authoring values and
-// the resolved declarations must name the same set in both directions.
-func TestAbortPolicyMirrorsSpecRegistry(t *testing.T) {
-	values := spec.EnumValues(spec.OnAbortPolicy(""))
-	resolved := declaredOnAbortValues(t)
-	if len(values) == 0 || len(resolved) == 0 {
-		t.Fatalf("empty enum: spec=%v resolved=%v", values, resolved)
-	}
-	a := append([]string(nil), values...)
-	b := append([]string(nil), resolved...)
-	slices.Sort(a)
-	slices.Sort(b)
-	if !slices.Equal(a, b) {
-		t.Errorf("abort policies disagree: spec=%v resolved=%v", values, resolved)
+// TestAbortConstantsMatchSpec pins the aliased abort constants by value.
+func TestAbortConstantsMatchSpec(t *testing.T) {
+	want := spec.EnumValues(spec.OnAbortPolicy(""))
+	got := []string{string(AbortHalt), string(AbortReleaseAll), string(AbortDiscardAll)}
+	slices.Sort(want)
+	slices.Sort(got)
+	if !slices.Equal(want, got) {
+		t.Errorf("abort constants %v disagree with spec registry %v", got, want)
 	}
 }
