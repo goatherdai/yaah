@@ -556,9 +556,10 @@ func TestExampleArchitectureReviewRestrictedExecutionFromTheDocument(t *testing.
 		t.Fatalf("example run: %v\noutput:\n%s", err, rep)
 	}
 	var parsed struct {
-		OK     bool   `json:"ok"`
-		Status string `json:"status"`
-		Reason string `json:"reason"`
+		OK       bool     `json:"ok"`
+		Status   string   `json:"status"`
+		Reason   string   `json:"reason"`
+		Warnings []string `json:"warnings"`
 	}
 	if jerr := json.Unmarshal([]byte(rep), &parsed); jerr != nil {
 		t.Fatalf("parsing the run report: %v\noutput:\n%s", jerr, rep)
@@ -566,6 +567,22 @@ func TestExampleArchitectureReviewRestrictedExecutionFromTheDocument(t *testing.
 	if !parsed.OK || parsed.Status != "succeeded" {
 		t.Fatalf("run status = %q ok=%v reason=%q\n%s", parsed.Status, parsed.OK, parsed.Reason, rep)
 	}
+	// The declared posture is enforced for proposal-lane dispatches only.
+	// The scope and synthesize delegates run on lane: report, where the
+	// folded grants and the deny_all network posture cannot be applied —
+	// the door reports that gap as a warning the run still succeeds with.
+	// The gate below pins the gap by name: if the door ever starts
+	// enforcing the report-lane posture (or the document moves those
+	// delegates to the proposal lane), the pinned warning disappears and
+	// this gate fails, which is the signal to update both the document and
+	// this test together.
+	joined := joinedWarnings(parsed.Warnings)
+	for _, want := range []string{"steps.scope", "steps.synthesize"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("warnings = %q, want the unenforced report-lane posture named for %s", joined, want)
+		}
+	}
+
 	// The final artifact: the emit's declared path under the artifact root.
 	landed, rerr := os.ReadFile(filepath.Join(artifactRoot, "artifacts", "architecture-review.md"))
 	if rerr != nil {
@@ -574,6 +591,12 @@ func TestExampleArchitectureReviewRestrictedExecutionFromTheDocument(t *testing.
 	if !strings.Contains(string(landed), "architecture review") {
 		t.Errorf("artifact head = %q, want the synthesized report", headOf(string(landed)))
 	}
+}
+
+// joinedWarnings is the one-line form of a run's declared warnings, the shape
+// the restriction gate asserts against.
+func joinedWarnings(warnings []string) string {
+	return strings.Join(warnings, "\n")
 }
 
 // headOf returns the first line of s, the shape the failure output quotes.
