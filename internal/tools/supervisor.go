@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	goatherd "github.com/goatherdai/goatherd-runtime"
@@ -12,6 +13,22 @@ import (
 	"github.com/goatherdai/yaah/internal/prompts"
 	"github.com/goatherdai/yaah/internal/supervisionapi"
 )
+
+// portIsNil reports whether an interface-valued dependency is absent,
+// including a typed-nil pointer stored in it. Wiring may assign a nil
+// *supervision.Service to the Svc interface when tracing is on but advisory
+// rules are off; a plain == nil check would miss it and status would panic.
+func portIsNil(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return rv.IsNil()
+	}
+	return false
+}
 
 // runBridge is the supervisor tool's consumer-side view of the session's
 // supervision registry. The concrete *supervision.Registry satisfies it; the
@@ -122,6 +139,15 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 	if mgr == nil {
 		return "", fmt.Errorf("supervisor: goatherd scope manager unavailable (trace store failed to open)")
 	}
+	// Normalize typed-nil ports once, so inject/halt/status all see a true
+	// nil when wiring supplied a nil concrete pointer.
+	runs, svc := t.Runs, t.Svc
+	if portIsNil(runs) {
+		runs = nil
+	}
+	if portIsNil(svc) {
+		svc = nil
+	}
 
 	switch raw.Action {
 	case "list_scopes":
@@ -130,7 +156,7 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 		if raw.ScopeID == "" || raw.Guidance == "" {
 			return "", fmt.Errorf("supervisor: scope_id and guidance required for inject")
 		}
-		return executeInject(mgr, t.Runs, raw.ScopeID, raw.Guidance)
+		return executeInject(mgr, runs, raw.ScopeID, raw.Guidance)
 	case "halt":
 		if raw.ScopeID == "" {
 			return "", fmt.Errorf("supervisor: scope_id required for halt")
@@ -138,9 +164,9 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 		if raw.ScopeID == t.RootScopeID && !t.HaltRoot {
 			return "", fmt.Errorf("supervisor: halting the session root requires the supervisor_halt_root opt-in (agents.default.supervisor_halt_root); it stops the session's current run and ends scope-tree supervision for this process. Halt a sub-agent scope instead (see list_scopes)")
 		}
-		return executeHalt(mgr, t.Runs, raw.ScopeID)
+		return executeHalt(mgr, runs, raw.ScopeID)
 	case "status":
-		return executeStatus(mgr, t.Runs, t.Svc)
+		return executeStatus(mgr, runs, svc)
 	default:
 		return "", fmt.Errorf("supervisor: unknown action %q (valid: list_scopes, inject, halt, status)", raw.Action)
 	}
