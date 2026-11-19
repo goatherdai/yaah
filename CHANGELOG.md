@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.195.0](https://github.com/goatherdai/yaah/compare/v0.194.0...v0.195.0) (2026-11-19)
+
+
+### Features
+
+* **workflow:** architecture-review example with aspect fan-out and settle ([69afb56](https://github.com/goatherdai/yaah/commit/69afb56b6991676ccb7646a21df0de0db54c5085))
+* **workflow:** architecture-review example with aspect fan-out and settle ([5b4d524](https://github.com/goatherdai/yaah/commit/5b4d524102a5a455017aa92e14bf2bec13fde269))
+
+
+### Bug Fixes
+
+* **host:** refuse a dispatch whose isolation posture cannot be enforced ([c807b76](https://github.com/goatherdai/yaah/commit/c807b76091bc7681fb9b44fb154f2b7dfb6a3527))
+* **workflow:** address review findings on the architecture-review example ([6349fd8](https://github.com/goatherdai/yaah/commit/6349fd818e14c58c3d1cdc6a368f33c9b87b2de0))
+
+
+### Code Refactoring
+
+* **workflow:** record call child outcome as structured fields ([1c565bc](https://github.com/goatherdai/yaah/commit/1c565bcc0a864f84d9b6b9a92bb35fc22db1b721))
+* **workflow:** record call child outcome as structured fields ([25ae70d](https://github.com/goatherdai/yaah/commit/25ae70d70a8759ffa6c5da80e8c67376eebc94d3))
+* **workflow:** share the intrinsic validation family chain ([c4e17b0](https://github.com/goatherdai/yaah/commit/c4e17b03d5dcc3634b802a905603bcf1b1ac28ff))
+
+
+### Documentation
+
+* **workflow:** five bench tasks and docs/workflows.md (yaah-0u0v.27) ([#1681](https://github.com/goatherdai/yaah/issues/1681)) ([4977634](https://github.com/goatherdai/yaah/commit/497763488d460eab28c72acfd4dbf1d927500457))
+
+
+### Tests
+
+* **workflow:** close the two enum-parity drift gaps from review ([0c43622](https://github.com/goatherdai/yaah/commit/0c43622dd3bb3be9b68e0c55247b7e9b2cbcb0ec))
+* **workflow:** cover the store adapter and trace vocabulary ([266594d](https://github.com/goatherdai/yaah/commit/266594dadc3932b6d0c0cbcace6e3a53ed40e20d))
+* **workflow:** guard spec/ir enum drift with registry parity tests ([666635d](https://github.com/goatherdai/yaah/commit/666635d054f7314ee9f9265b9ad8e8990374ef3c))
+* **workflow:** guard spec/ir enum drift with registry parity tests ([a9a2d40](https://github.com/goatherdai/yaah/commit/a9a2d40ce7646a5e83430970933ec1b2abf1c3fb))
+* **workflow:** harden checkpoint persistence and share validation seam ([cf97fe2](https://github.com/goatherdai/yaah/commit/cf97fe2bfa9fa5bee4b6980c0ff63e81410bd1f7))
+
 ## [0.194.0](https://github.com/buchenberg/yaah/compare/v0.193.0...v0.194.0) (2026-11-18)
 
 
