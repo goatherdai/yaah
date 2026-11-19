@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.195.3](https://github.com/goatherdai/yaah/compare/v0.195.2...v0.195.3) (2026-11-19)
+
+
+### Bug Fixes
+
+* **workflow:** emit renders the full report; gate pins the report-lane gap ([0f6fd77](https://github.com/goatherdai/yaah/commit/0f6fd7770fbbc4890ee7caffdb28eba52860977b))
+
 ## [0.195.2](https://github.com/goatherdai/yaah/compare/v0.195.1...v0.195.2) (2026-11-19)
 
 
