@@ -12,10 +12,10 @@ import (
 	"time"
 )
 
-// RecordTraceOwner persists the mapping from a Shepherd trace owner ID
+// RecordTraceOwner persists the mapping from a Goatherd trace owner ID
 // (the session ID for main agents, a synthetic `sub-{role}-{parent}-{ts}`
 // ID for sub-agents) to the parent session that spawned it. This makes
-// Shepherd facts joinable to `sessions` rows even when the owner differs
+// Goatherd facts joinable to `sessions` rows even when the owner differs
 // from the session ID. Idempotent per owner.
 func (d *DB) RecordTraceOwner(ownerID, parentSession, role string) error {
 	_, err := d.sql.Exec(

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 
 	"github.com/goatherdai/yaah/internal/jobs"
@@ -20,7 +20,7 @@ import (
 func seedCrashedDispatchTrace(t *testing.T, children int) (string, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "trace.sqlite")
-	store, err := shepherdtrace.NewSQLiteTraceStore(path)
+	store, err := kerneltrace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -48,7 +48,7 @@ func seedCrashedDispatchTrace(t *testing.T, children int) (string, string) {
 // no git repository.
 func recoverFromTrace(t *testing.T, path string) (*goatherd.ScopeManager, *Report) {
 	t.Helper()
-	store, err := shepherdtrace.NewSQLiteTraceStore(path)
+	store, err := kerneltrace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}

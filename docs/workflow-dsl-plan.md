@@ -4,7 +4,7 @@
 > **Date:** 2026-11-11 (design) · 2026-11-14 (tracked in-repo)
 > **Scope:** a declarative orchestration layer over yaah's existing dispatch,
 > proposal, and settlement primitives.
-> **Related:** `yaah/docs/shepherd-parity.md`, `yaah/docs/sub-agents.md`,
+> **Related:** `yaah/docs/goatherd-parity.md`, `yaah/docs/sub-agents.md`,
 > `yaah-shepherd-gap-report.md`, bead `yaah-hxk3.5`.
 
 **Contents:** [1. Summary](#1-summary) · [2. Goals and non-goals](#2-goals-and-non-goals) ·
@@ -404,7 +404,7 @@ Rules:
    must not fail just because zero passed.
 6. `on_abort` at the workflow level is `halt | release_all | discard_all`
    (default `halt`, which is loud). Orphan worktrees are still covered by
-   `yaah shepherd prune`, but the validator should make leaks rare.
+   `yaah goatherd prune`, but the validator should make leaks rare.
 
 #### Settlement vs. continuation
 
@@ -790,7 +790,7 @@ reproducible from `spec_hash` + params + recorded agent outputs.
 | role files (`.agents/roles/*.md`) | role resolution and per-role limits |
 | `agents.subagent.*` config | concurrency, mode, world, grants, egress defaults |
 | trace store | audit, replay, `explain --from-trace` |
-| `yaah shepherd prune` | orphan cleanup safety net |
+| `yaah goatherd prune` | orphan cleanup safety net |
 | bench harness | acceptance evidence |
 
 ---
@@ -1152,7 +1152,7 @@ is the whole suite being expressible. The third is five tasks passing.
 ## 18. References
 
 - `yaah/docs/sub-agents.md` — dispatch lanes, retention, budgets, roles.
-- `yaah/docs/shepherd-parity.md` — shipped vs. open parity rows.
+- `yaah/docs/goatherd-parity.md` — shipped vs. open parity rows.
 - `yaah/docs/configuration.md` — `agents.subagent.*`, grants, egress, worlds.
 - `yaah/docs/features.md` — orchestration tool surface.
 - `yaah-shepherd-gap-report.md` — Shepherd/Go-port/yaah comparison and

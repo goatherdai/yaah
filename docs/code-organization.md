@@ -47,7 +47,7 @@ yaah/
 │   ├── mcp/                    # MCP client + server (stdio + HTTP)
 │   ├── memory/                 # SQLite sessions, memory, FTS5, embeddings
 │   ├── observability/          # OpenTelemetry tracing + span buffer
-│   ├── parity/                 # Shepherd parity ledger drift guard
+│   ├── parity/                 # Goatherd parity ledger drift guard
 │   ├── plans/                  # PLAN.md discovery/parsing
 │   ├── process/                # background process manager
 │   ├── prompts/                # embedded identity, roles, tool docs

@@ -31,7 +31,7 @@ same prompt. `off` means `evidence_guard_nudge: -1`; `on` means the default
 | on | 3 | 17 | 0 | 201,549 | 7,369 | 176,384 | 53s | 0 | yes |
 
 All six reports covered the requested axes (`--` separator, the `serve`
-family, ACP, and `shepherd-trace`) and gave concrete fixes; none needed a
+family, ACP, and `goatherd-trace`) and gave concrete fixes; none needed a
 correction. The spread in calls and tokens is model variance: each audit made
 mostly distinct calls, so the guard never fired. The on/off arms therefore do
 **not** show a guard effect, and the small three-trial sample is not enough to

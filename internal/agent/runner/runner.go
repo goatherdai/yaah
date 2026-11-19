@@ -72,7 +72,7 @@ type DelegateToolOpts struct {
 	// exactly one substrate per session.
 	Workspace tools.Workspace
 
-	// RootScopeID is the session's shepherd root scope (shepherd-adoption
+	// RootScopeID is the session's goatherd root scope (goatherd-adoption
 	// plan D1): sub-agent scopes fork from it, so the supervisor's scope
 	// tree mirrors the dispatch tree. Empty when tracing is off or the
 	// root could not be created — the runner then falls back to a flat
@@ -100,8 +100,8 @@ type DelegateToolOpts struct {
 	// no recovery adopted anything.
 	ResumedScopes map[string]bool
 
-	// TraceStore is the session's Shepherd trace store (plan 07, H4):
-	// the sub-agent loops' shepherd_trace middleware writes through it.
+	// TraceStore is the session's Goatherd trace store (plan 07, H4):
+	// the sub-agent loops' goatherd_trace middleware writes through it.
 	// Nil when tracing is off.
 	TraceStore pipeline.TraceSink
 

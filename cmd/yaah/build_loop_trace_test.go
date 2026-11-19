@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/agent"
 	"github.com/goatherdai/yaah/internal/config"
 )
@@ -14,7 +14,7 @@ import (
 // orchestrator trace depends on: the session's shared store must reach
 // LoopConfig, not only the sub-agent runner options.
 func TestSessionLoopBuilderWiresTraceStore(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

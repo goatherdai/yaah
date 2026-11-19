@@ -77,7 +77,7 @@ func TestMigrate_AddsCrossLinkColumns(t *testing.T) {
 }
 
 // TestRecordTraceOwner verifies the subTraceID -> parentSession mapping
-// roundtrip that makes Shepherd facts joinable to parent sessions.
+// roundtrip that makes Goatherd facts joinable to parent sessions.
 func TestRecordTraceOwner(t *testing.T) {
 	d := openTestDB(t)
 	defer d.Close()

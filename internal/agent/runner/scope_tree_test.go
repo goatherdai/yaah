@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 
 	"github.com/goatherdai/yaah/internal/agent/recovery"
@@ -18,9 +18,9 @@ import (
 )
 
 // newScopeManagerForTest returns a scope manager over an in-memory store.
-func newScopeManagerForTest(t *testing.T) (*goatherd.ScopeManager, *shepherdtrace.SQLiteTraceStore) {
+func newScopeManagerForTest(t *testing.T) (*goatherd.ScopeManager, *kerneltrace.SQLiteTraceStore) {
 	t.Helper()
-	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
+	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestCreateSubAgentScope_ForksFromRoot(t *testing.T) {
 	// "record the fork event in the parent's trace") with the child named
 	// in the payload — recovery and the supervisor's tree view both rely
 	// on it.
-	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "sess-tree", 999, shepherdtrace.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), kerneltrace.TrustedReadContext, "sess-tree", 999, kerneltrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("ReadOwnerPrefix: %v", err)
 	}
@@ -222,13 +222,13 @@ func TestCreateSubAgentScope_IsolatedIgnoresWorkdir(t *testing.T) {
 // loudly instead of degrading silently.
 func TestCreateRootScope_ResumeReattachesRecoveredRoot(t *testing.T) {
 	repo := newRunnerTestGitRepo(t)
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	tracePath := filepath.Join(t.TempDir(), "trace.sqlite")
 	store.Close(context.Background())
-	store, err = shepherdtrace.NewSQLiteTraceStore(tracePath)
+	store, err = kerneltrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestCreateRootScope_ResumeReattachesRecoveredRoot(t *testing.T) {
 	store.Close(context.Background())
 
 	// The restart: recovery rebuilds, resume reattaches.
-	store2, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
+	store2, err := kerneltrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestCreateRootScope_ResumeReattachesRecoveredRoot(t *testing.T) {
 func TestCreateRootScope_HaltedRecoveredRootRefuses(t *testing.T) {
 	repo := newRunnerTestGitRepo(t)
 	tracePath := filepath.Join(t.TempDir(), "trace.sqlite")
-	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
+	store, err := kerneltrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestCreateRootScope_HaltedRecoveredRootRefuses(t *testing.T) {
 	}
 	store.Close(context.Background())
 
-	store2, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
+	store2, err := kerneltrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}

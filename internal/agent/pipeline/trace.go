@@ -7,16 +7,16 @@ import (
 	"log/slog"
 	"sync/atomic"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
-// ShepherdTraceMiddleware records every tool call as a declaration (intent)
-// and capture (observation) in a Shepherd trace store.
-type ShepherdTraceMiddleware struct {
+// GoatherdTraceMiddleware records every tool call as a declaration (intent)
+// and capture (observation) in a Goatherd trace store.
+type GoatherdTraceMiddleware struct {
 	store           TraceSink
-	bus             *shepherdtrace.EffectBus
+	bus             *kerneltrace.EffectBus
 	scopeManager    *goatherd.ScopeManager
 	sessionID       string
 	ordinal         int
@@ -36,7 +36,7 @@ type ShepherdTraceMiddleware struct {
 	// retainedContext, when set, is stamped onto every fact group this
 	// middleware appends. Sub-agents carry the dispatch's substrate,
 	// containment, and role tool belt; the orchestrator leaves it nil.
-	retainedContext *shepherdtrace.RetainedContext
+	retainedContext *kerneltrace.RetainedContext
 
 	// sessionContextRecorded makes the session-context fact a once-per-
 	// middleware record even though the loop calls RecordSessionContext
@@ -48,10 +48,10 @@ type ShepherdTraceMiddleware struct {
 
 var nextOrdinal atomic.Int64
 
-// NewShepherdTraceMiddleware creates a trace middleware that owns the
+// NewGoatherdTraceMiddleware creates a trace middleware that owns the
 // given store — Close will close it.
-func NewShepherdTraceMiddleware(store TraceSink, sessionID string) *ShepherdTraceMiddleware {
-	return &ShepherdTraceMiddleware{
+func NewGoatherdTraceMiddleware(store TraceSink, sessionID string) *GoatherdTraceMiddleware {
+	return &GoatherdTraceMiddleware{
 		store:     store,
 		sessionID: sessionID,
 		ordinal:   int(nextOrdinal.Add(1 << 20)),
@@ -59,29 +59,29 @@ func NewShepherdTraceMiddleware(store TraceSink, sessionID string) *ShepherdTrac
 	}
 }
 
-func (m *ShepherdTraceMiddleware) Name() string { return "shepherd_trace" }
+func (m *GoatherdTraceMiddleware) Name() string { return "goatherd_trace" }
 
 // append is the single write path. It stamps the retained context (when set)
 // on every group, so authority provenance rides the fact envelope instead of a
 // mutable session column.
-func (m *ShepherdTraceMiddleware) append(ctx context.Context, batch shepherdtrace.AppendBatch) (shepherdtrace.AppendReceipt, error) {
+func (m *GoatherdTraceMiddleware) append(ctx context.Context, batch kerneltrace.AppendBatch) (kerneltrace.AppendReceipt, error) {
 	if m.retainedContext != nil {
 		for i := range batch.Groups {
 			batch.Groups[i].RetainedContext = m.retainedContext
 		}
 	}
-	return m.store.Append(ctx, shepherdtrace.TrustedAppendContext, batch)
+	return m.store.Append(ctx, kerneltrace.TrustedAppendContext, batch)
 }
 
-func (m *ShepherdTraceMiddleware) PrepareStep(ctx context.Context, step *Step) (*Step, error) {
+func (m *GoatherdTraceMiddleware) PrepareStep(ctx context.Context, step *Step) (*Step, error) {
 	return step, nil
 }
 
-func (m *ShepherdTraceMiddleware) PostModel(ctx context.Context, msg *types.Message, step *Step) (*Step, error) {
+func (m *GoatherdTraceMiddleware) PostModel(ctx context.Context, msg *types.Message, step *Step) (*Step, error) {
 	return step, nil
 }
 
-func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolResult, step *Step) (*Step, error) {
+func (m *GoatherdTraceMiddleware) PostTool(ctx context.Context, results []ToolResult, step *Step) (*Step, error) {
 	if m.store == nil || m.sessionID == "" {
 		return step, nil
 	}
@@ -122,7 +122,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			payload[k] = v
 		}
 		// The kernel's supervision rules read the shell command from
-		// the declaration payload's "cmd" (shepherd-adoption plan B1:
+		// the declaration payload's "cmd" (goatherd-adoption plan B1:
 		// the advisory destructive rule matches patterns in it). yaah's
 		// tool schemas call the field "command", and the shell tool is
 		// bash on POSIX but powershell on Windows; copy it across for
@@ -137,13 +137,13 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			}
 		}
 
-		receipt, err := m.append(ctx, shepherdtrace.AppendBatch{
+		receipt, err := m.append(ctx, kerneltrace.AppendBatch{
 			AppendIntentID: intentID,
-			Groups: []shepherdtrace.AppendGroup{{
+			Groups: []kerneltrace.AppendGroup{{
 				TraceOwnerID:  m.sessionID,
 				CausalParents: m.lastFactIDs,
-				FactDrafts: []shepherdtrace.RecordDraft{{
-					Mode:      shepherdtrace.Declaration,
+				FactDrafts: []kerneltrace.RecordDraft{{
+					Mode:      kerneltrace.Declaration,
 					SchemaRef: schemaRef,
 					KindLabel: r.Name,
 					Payload:   payload,
@@ -151,7 +151,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			}},
 		})
 		if err != nil {
-			slog.Debug("shepherd_trace: declaration failed", "err", err)
+			slog.Debug("goatherd_trace: declaration failed", "err", err)
 			continue
 		}
 
@@ -171,13 +171,13 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 		}
 
 		captureIntentID := fmt.Sprintf("%s:result:%d", m.sessionID, m.ordinal)
-		captureReceipt, err := m.append(ctx, shepherdtrace.AppendBatch{
+		captureReceipt, err := m.append(ctx, kerneltrace.AppendBatch{
 			AppendIntentID: captureIntentID,
-			Groups: []shepherdtrace.AppendGroup{{
+			Groups: []kerneltrace.AppendGroup{{
 				TraceOwnerID:  m.sessionID,
 				CausalParents: receipt.FactIDs,
-				FactDrafts: []shepherdtrace.RecordDraft{{
-					Mode:      shepherdtrace.Capture,
+				FactDrafts: []kerneltrace.RecordDraft{{
+					Mode:      kerneltrace.Capture,
 					SchemaRef: schemaRef + ".applied",
 					KindLabel: r.Name + ":result",
 					Payload:   capturePayload,
@@ -185,7 +185,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			}},
 		})
 		if err != nil {
-			slog.Debug("shepherd_trace: capture failed", "err", err)
+			slog.Debug("goatherd_trace: capture failed", "err", err)
 		}
 
 		m.lastFactIDs = captureReceipt.FactIDs
@@ -196,16 +196,16 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 
 // SetTurnContext records the stable per-interaction turn ID (generated by
 // the agent loop) so every turn-lifecycle fact payload carries it. This
-// makes Shepherd facts joinable to the OTel spans and messages rows of the
+// makes Goatherd facts joinable to the OTel spans and messages rows of the
 // same interaction. Safe to call before each Run.
-func (m *ShepherdTraceMiddleware) SetTurnContext(turnID string) {
+func (m *GoatherdTraceMiddleware) SetTurnContext(turnID string) {
 	m.turnID = turnID
 }
 
 // turnPayload returns the common turn-lifecycle payload fields including
 // the cross-link IDs (session_id is the trace owner, which equals the
 // session ID for main agents and the synthetic sub-ID for sub-agents).
-func (m *ShepherdTraceMiddleware) turnPayload(turnNumber int) map[string]any {
+func (m *GoatherdTraceMiddleware) turnPayload(turnNumber int) map[string]any {
 	payload := map[string]any{
 		"turn":       turnNumber,
 		"session_id": m.sessionID,
@@ -218,7 +218,7 @@ func (m *ShepherdTraceMiddleware) turnPayload(turnNumber int) map[string]any {
 
 // StartTurn records an execution-lifecycle declaration+capture pair marking
 // the start of a turn. Returns the ordinal of the created record.
-func (m *ShepherdTraceMiddleware) StartTurn(ctx context.Context, turnNumber int, model string, prompt string) {
+func (m *GoatherdTraceMiddleware) StartTurn(ctx context.Context, turnNumber int, model string, prompt string) {
 	if m.store == nil || m.sessionID == "" {
 		return
 	}
@@ -240,13 +240,13 @@ func (m *ShepherdTraceMiddleware) StartTurn(ctx context.Context, turnNumber int,
 		}
 	}
 
-	receipt, err := m.append(ctx, shepherdtrace.AppendBatch{
+	receipt, err := m.append(ctx, kerneltrace.AppendBatch{
 		AppendIntentID: intentID,
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
 			CausalParents: m.lastFactIDs,
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Declaration,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Declaration,
 				SchemaRef: "yaah.execution.created.v1",
 				KindLabel: "turn:created",
 				Payload:   payload,
@@ -254,7 +254,7 @@ func (m *ShepherdTraceMiddleware) StartTurn(ctx context.Context, turnNumber int,
 		}},
 	})
 	if err != nil {
-		slog.Debug("shepherd_trace: turn start failed", "err", err)
+		slog.Debug("goatherd_trace: turn start failed", "err", err)
 		return
 	}
 
@@ -263,13 +263,13 @@ func (m *ShepherdTraceMiddleware) StartTurn(ctx context.Context, turnNumber int,
 	startPayload := m.turnPayload(turnNumber)
 	startPayload["model"] = model
 	captureIntentID := fmt.Sprintf("%s:turn_start:%d", m.sessionID, m.ordinal)
-	captureReceipt, err := m.append(ctx, shepherdtrace.AppendBatch{
+	captureReceipt, err := m.append(ctx, kerneltrace.AppendBatch{
 		AppendIntentID: captureIntentID,
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
 			CausalParents: receipt.FactIDs,
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Capture,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Capture,
 				SchemaRef: "yaah.execution.started.v1",
 				KindLabel: "turn:started",
 				Payload:   startPayload,
@@ -277,14 +277,14 @@ func (m *ShepherdTraceMiddleware) StartTurn(ctx context.Context, turnNumber int,
 		}},
 	})
 	if err != nil {
-		slog.Debug("shepherd_trace: turn start capture failed", "err", err)
+		slog.Debug("goatherd_trace: turn start capture failed", "err", err)
 	} else {
 		m.lastFactIDs = captureReceipt.FactIDs
 	}
 }
 
 // EndTurn records a turn completion capture.
-func (m *ShepherdTraceMiddleware) EndTurn(ctx context.Context, turnNumber int, promptTokens, completionTokens int) {
+func (m *GoatherdTraceMiddleware) EndTurn(ctx context.Context, turnNumber int, promptTokens, completionTokens int) {
 	if m.store == nil || m.sessionID == "" {
 		return
 	}
@@ -298,13 +298,13 @@ func (m *ShepherdTraceMiddleware) EndTurn(ctx context.Context, turnNumber int, p
 	payload["completion_tokens"] = completionTokens
 
 	intentID := fmt.Sprintf("%s:turn_done:%d", m.sessionID, m.ordinal)
-	receipt, err := m.append(ctx, shepherdtrace.AppendBatch{
+	receipt, err := m.append(ctx, kerneltrace.AppendBatch{
 		AppendIntentID: intentID,
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
 			CausalParents: m.turnRootFactIDs,
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Capture,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Capture,
 				SchemaRef: "yaah.execution.completed.v1",
 				KindLabel: "turn:completed",
 				Payload:   payload,
@@ -312,7 +312,7 @@ func (m *ShepherdTraceMiddleware) EndTurn(ctx context.Context, turnNumber int, p
 		}},
 	})
 	if err != nil {
-		slog.Debug("shepherd_trace: turn complete failed", "err", err)
+		slog.Debug("goatherd_trace: turn complete failed", "err", err)
 	} else {
 		m.lastFactIDs = receipt.FactIDs
 	}
@@ -321,7 +321,7 @@ func (m *ShepherdTraceMiddleware) EndTurn(ctx context.Context, turnNumber int, p
 }
 
 // FailTurn records a turn failure capture.
-func (m *ShepherdTraceMiddleware) FailTurn(ctx context.Context, turnNumber int, err error) {
+func (m *GoatherdTraceMiddleware) FailTurn(ctx context.Context, turnNumber int, err error) {
 	if m.store == nil || m.sessionID == "" {
 		return
 	}
@@ -340,13 +340,13 @@ func (m *ShepherdTraceMiddleware) FailTurn(ctx context.Context, turnNumber int, 
 	}
 
 	intentID := fmt.Sprintf("%s:turn_fail:%d", m.sessionID, m.ordinal)
-	receipt, aerr := m.append(ctx, shepherdtrace.AppendBatch{
+	receipt, aerr := m.append(ctx, kerneltrace.AppendBatch{
 		AppendIntentID: intentID,
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
 			CausalParents: m.turnRootFactIDs,
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Capture,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Capture,
 				SchemaRef: "yaah.execution.failed.v1",
 				KindLabel: "turn:failed",
 				Payload:   payload,
@@ -354,7 +354,7 @@ func (m *ShepherdTraceMiddleware) FailTurn(ctx context.Context, turnNumber int, 
 		}},
 	})
 	if aerr != nil {
-		slog.Debug("shepherd_trace: turn fail recording failed", "err", aerr)
+		slog.Debug("goatherd_trace: turn fail recording failed", "err", aerr)
 	} else {
 		m.lastFactIDs = receipt.FactIDs
 	}
@@ -364,30 +364,30 @@ func (m *ShepherdTraceMiddleware) FailTurn(ctx context.Context, turnNumber int, 
 
 // publishFrontier publishes an immutable cut snapshot at the current
 // ordinal so the CLI can read stable turn boundaries.
-func (m *ShepherdTraceMiddleware) publishFrontier(ctx context.Context, turnNumber int) {
+func (m *GoatherdTraceMiddleware) publishFrontier(ctx context.Context, turnNumber int) {
 	if len(m.lastFactIDs) == 0 {
 		return
 	}
 	// The frontier cut is part of the turn's durable record (see StartTurn).
 	ctx = context.WithoutCancel(ctx)
 
-	spec := shepherdtrace.FrontierSpec{
+	spec := kerneltrace.FrontierSpec{
 		FrontierID:         fmt.Sprintf("%s:frontier:%d", m.sessionID, turnNumber),
 		TargetTraceOwnerID: m.sessionID,
 		ThroughFactID:      m.lastFactIDs[len(m.lastFactIDs)-1],
 		AppendIntentID:     fmt.Sprintf("%s:frontier_intent:%d", m.sessionID, turnNumber),
 	}
-	_, err := m.store.PublishFrontier(ctx, shepherdtrace.TrustedAppendContext, spec)
+	_, err := m.store.PublishFrontier(ctx, kerneltrace.TrustedAppendContext, spec)
 	if err != nil {
-		slog.Debug("shepherd_trace: frontier publish failed", "err", err)
+		slog.Debug("goatherd_trace: frontier publish failed", "err", err)
 	}
 }
 
 // Ordinal returns the current trace ordinal.
-func (m *ShepherdTraceMiddleware) Ordinal() int {
+func (m *GoatherdTraceMiddleware) Ordinal() int {
 	return m.ordinal
 }
-func (m *ShepherdTraceMiddleware) Close(ctx context.Context) error {
+func (m *GoatherdTraceMiddleware) Close(ctx context.Context) error {
 	if m.store != nil && m.ownsStore {
 		// Closing must not depend on the caller's cancellation: a Close
 		// reached on an expired context would leak the store handle.
@@ -397,23 +397,23 @@ func (m *ShepherdTraceMiddleware) Close(ctx context.Context) error {
 }
 
 // Store returns the underlying trace store seam for inspection by CLI commands.
-func (m *ShepherdTraceMiddleware) Store() TraceSink {
+func (m *GoatherdTraceMiddleware) Store() TraceSink {
 	return m.store
 }
 
 // SessionID returns the session identifier for this trace.
-func (m *ShepherdTraceMiddleware) SessionID() string {
+func (m *GoatherdTraceMiddleware) SessionID() string {
 	return m.sessionID
 }
 
 // Bus returns the effect bus for real-time event subscription.
 // Returns nil if supervision is not enabled.
-func (m *ShepherdTraceMiddleware) Bus() *shepherdtrace.EffectBus {
+func (m *GoatherdTraceMiddleware) Bus() *kerneltrace.EffectBus {
 	return m.bus
 }
 
 // ScopeManager returns the scope manager for fork/merge/discard operations.
 // Returns nil if supervision is not enabled.
-func (m *ShepherdTraceMiddleware) ScopeManager() *goatherd.ScopeManager {
+func (m *GoatherdTraceMiddleware) ScopeManager() *goatherd.ScopeManager {
 	return m.scopeManager
 }

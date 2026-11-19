@@ -236,8 +236,8 @@ func TestBuildSubAgentRegistry_UnrestrictedSessionPostureGuard(t *testing.T) {
 // dispatch's environment header advertises the assigned worktree, not the
 // orchestrator's process cwd (#312).
 func TestBuildSubAgentSysPrompt_WorkdirHeader(t *testing.T) {
-	got := buildSubAgentSysPrompt(taskRunnerOpts{}, "developer", subagent.RoleProfile{}, false, "/repo/shepherd-worktrees/var-a", nil)
-	if !strings.Contains(got, "/repo/shepherd-worktrees/var-a") {
+	got := buildSubAgentSysPrompt(taskRunnerOpts{}, "developer", subagent.RoleProfile{}, false, "/repo/goatherd-worktrees/var-a", nil)
+	if !strings.Contains(got, "/repo/goatherd-worktrees/var-a") {
 		t.Errorf("env header must advertise the workdir, got:\n%.400s", got)
 	}
 }

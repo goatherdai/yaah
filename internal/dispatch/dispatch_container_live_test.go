@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/config"
 )
 
@@ -165,7 +165,7 @@ func assertProposalFact(t *testing.T, fx *sessionFixtures, rootID, schema string
 	if !ok {
 		t.Fatalf("root scope %s not found", rootID)
 	}
-	slice, err := fx.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, parent.OwnerID(), 999, shepherdtrace.ModeBoth)
+	slice, err := fx.store.ReadOwnerPrefix(context.Background(), kerneltrace.TrustedReadContext, parent.OwnerID(), 999, kerneltrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace owner %s: %v", parent.OwnerID(), err)
 	}

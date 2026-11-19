@@ -28,7 +28,7 @@ func dispatchSearchFixture(t *testing.T) string {
 	}
 
 	write("real/real.go", "package real\n\n// needle\n")
-	write(".yaah/shepherd-worktrees/proposal-1/hit.go", "package stale\n\n// needle\n")
+	write(".yaah/goatherd-worktrees/proposal-1/hit.go", "package stale\n\n// needle\n")
 	write(".kilo/worktrees/copy/hit.go", "package stale\n\n// needle\n")
 	write(".scratch/hit.go", "package stale\n\n// needle\n")
 	write("custom-world/hit.go", "package stale\n\n// needle\n")
@@ -182,7 +182,7 @@ func TestIsWorktreeGitdir(t *testing.T) {
 
 func TestGlobNative_ExplicitIgnoredRootStillSearchable(t *testing.T) {
 	tmp := dispatchSearchFixture(t)
-	root := filepath.Join(tmp, ".yaah", "shepherd-worktrees", "proposal-1")
+	root := filepath.Join(tmp, ".yaah", "goatherd-worktrees", "proposal-1")
 	out, err := (&GlobTool{}).globNative(context.Background(), "*.go", root)
 	if err != nil {
 		t.Fatalf("glob: %v", err)
@@ -313,7 +313,7 @@ func TestReplace_SkipsNestedWorktree(t *testing.T) {
 	}
 
 	copies := [][]string{
-		{".yaah", "shepherd-worktrees", "proposal-1", "hit.go"},
+		{".yaah", "goatherd-worktrees", "proposal-1", "hit.go"},
 		{".kilo", "worktrees", "copy", "hit.go"},
 		{".scratch", "hit.go"},
 		{"custom-world", "hit.go"},

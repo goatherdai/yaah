@@ -150,19 +150,19 @@ entirely — its sessions are named by the client's `session/new` and
 `session/load` requests.
 
 Session data lives in `~/.yaah/state.db` (or `$YAAH_HOME/state.db`).
-Shepherd execution traces are always on and record the session context,
+Goatherd execution traces are always on and record the session context,
 every turn boundary, assistant content plus reasoning content/signature,
 tool calls, and tool output bodies in a content-addressed store. Free-text
 facts are capped at 64KiB and mark truncation; an oversized tool result that
 already spilled to disk carries its spill path:
 
 ```bash
-yaah shepherd-trace list
-yaah shepherd-trace show <session>
-yaah shepherd-trace show --latest
-yaah shepherd-trace profile <session>
-yaah shepherd-trace rebuild <session>              # JSON transcript
-yaah shepherd-trace conflicts [--session <id>] [--json]  # conflict + dispatch aggregate
+yaah goatherd-trace list
+yaah goatherd-trace show <session>
+yaah goatherd-trace show --latest
+yaah goatherd-trace profile <session>
+yaah goatherd-trace rebuild <session>              # JSON transcript
+yaah goatherd-trace conflicts [--session <id>] [--json]  # conflict + dispatch aggregate
 ```
 
 `rebuild` is the crash-safe mirror: it reconstructs the provider-shaped
@@ -353,7 +353,7 @@ registers the built-in middleware and runs all of them; there is no
 enable/disable list. Each one is either a safety net (compaction, the
 evidence/loop/intent guards, approval), required plumbing (steering,
 follow-ups, tracing), or inert until its own knob turns it on.
-Sub-agent loops use a curated pipeline (`tool_concurrency`, `shepherd_trace`,
+Sub-agent loops use a curated pipeline (`tool_concurrency`, `goatherd_trace`,
 and `evidence_guard`, plus `steer` and `supervisor_guard` where applicable).
 The full table, the fixed order, and the two opt-in knobs
 (`prompt_caching`, the consolidate intervals) live in
@@ -373,10 +373,10 @@ buckets:
 | `missing` | An active child's worktree is gone |
 | `unadopted` | A recorded path is not a registered worktree of its repository |
 
-Nothing is deleted automatically. Use `yaah shepherd` to list worktree
-leftovers and `yaah shepherd prune <path>` to delete one orphan after verifying
-ownership. `yaah shepherd containers` lists non-running per-dispatch
-containers; `yaah shepherd prune-container <id>` deletes one exact id after
+Nothing is deleted automatically. Use `yaah goatherd` to list worktree
+leftovers and `yaah goatherd prune <path>` to delete one orphan after verifying
+ownership. `yaah goatherd containers` lists non-running per-dispatch
+containers; `yaah goatherd prune-container <id>` deletes one exact id after
 re-checking its label and task state.
 `yaah doctor` runs the same scan.
 

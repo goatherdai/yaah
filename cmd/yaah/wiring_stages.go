@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
 	"github.com/goatherdai/goatherd-runtime/sandbox/egress"
@@ -713,7 +713,7 @@ func bindToolbeltLiveAdmits(sess *agentSession, tr *toolRegistryStage) {
 }
 
 // loopInfraStage is what buildLoopInfra produces: the restored transcript, the
-// session identity, shepherd/the supervisor infrastructure, the egress posture,
+// session identity, goatherd/the supervisor infrastructure, the egress posture,
 // the delegate tool and the remaining registrations.
 type loopInfraStage struct {
 	messages     []types.Message
@@ -740,8 +740,8 @@ type loopInfraStage struct {
 	wakeHooks      *events.HookEmitter
 
 	scopeMgr      *goatherd.ScopeManager
-	traceStore    *shepherdtrace.SQLiteTraceStore
-	traceBus      *shepherdtrace.EffectBus
+	traceStore    *kerneltrace.SQLiteTraceStore
+	traceBus      *kerneltrace.EffectBus
 	rootScopeID   string
 	runs          *supervision.Registry
 	supervisorSvc *supervision.Service
@@ -764,13 +764,13 @@ type loopInfraStage struct {
 }
 
 // buildLoopInfra restores the transcript, builds the loop's shared
-// infrastructure (background jobs, shepherd scope tree, egress posture), and
+// infrastructure (background jobs, goatherd scope tree, egress posture), and
 // registers the tools that depend on it: delegate, sub-agent jobs, supervisor,
 // proposal and list_sub_agents.
 //
 // The body is the focused constructors below, in the order a session needs
 // them: loadProviderCatalog, restoreTranscript, buildBackgroundLoop,
-// buildShepherdInfra, wireDispatchPosture, buildDelegateTool, startScopeReaper,
+// buildGoatherdInfra, wireDispatchPosture, buildDelegateTool, startScopeReaper,
 // wireLaneRouting, wireBackgroundJobs, registerWakeTools,
 // registerSubAgentTools.
 func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, ws *workspaceStage, tr *toolRegistryStage, mcps *mcpSkillsStage) (*loopInfraStage, error) {
@@ -796,7 +796,7 @@ func buildLoopInfra(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	buildWakeEngine(st, cfg, ws, tr, mcps)
 	// retainCapable reports whether the session root can capture workspace
 	// state, which decides the retained lane further down.
-	retainCapable := buildShepherdInfra(st, cfg, ws, tr)
+	retainCapable := buildGoatherdInfra(st, cfg, ws, tr)
 
 	posture, err := wireDispatchPosture(st, cfg, opts, ws, retainCapable)
 	if err != nil {
@@ -980,7 +980,7 @@ func buildWakeEngine(st *loopInfraStage, cfg *config.Config, ws *workspaceStage,
 	})
 }
 
-// buildShepherdInfra brings up the session's supervision infrastructure: the
+// buildGoatherdInfra brings up the session's supervision infrastructure: the
 // trace store, the recovered scope tree, the steering channel, the supervision
 // bridge, the root scope, the accept seam's effect sink and the advisory-rules
 // service. It returns retainCapable: whether the root scope can actually
@@ -991,10 +991,10 @@ func buildWakeEngine(st *loopInfraStage, cfg *config.Config, ws *workspaceStage,
 // guard can close the store and the service on a failed startup. Tracing
 // degrades rather than fails, so there is no error return: a session without
 // supervision is a supported session.
-func buildShepherdInfra(st *loopInfraStage, cfg *config.Config, ws *workspaceStage, tr *toolRegistryStage) bool {
-	// Shepherd infrastructure: session-shared trace store, effect bus,
+func buildGoatherdInfra(st *loopInfraStage, cfg *config.Config, ws *workspaceStage, tr *toolRegistryStage) bool {
+	// Goatherd infrastructure: session-shared trace store, effect bus,
 	// and scope manager. Initialized before the task tool is built — the
-	// session's root scope (shepherd-adoption plan D1) must exist when
+	// session's root scope (goatherd-adoption plan D1) must exist when
 	// the runner closure is constructed, since every sub-agent scope
 	// forks from it and the supervisor's tree should mirror the dispatch
 	// tree. The orchestrator and sub-agent pipelines share this store, so
@@ -1016,9 +1016,9 @@ func buildShepherdInfra(st *loopInfraStage, cfg *config.Config, ws *workspaceSta
 	// store-open failure is the runtime safety net, not a config switch —
 	// warn and continue without a root scope.
 	{
-		store, bus, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.TraceStoreConfig(), 0)
+		store, bus, mgr, serr := pipeline.InitGoatherdInfrastructure(cfg.Agent.Default.TraceStoreConfig(), 0)
 		if serr != nil {
-			fmt.Fprintf(os.Stderr, "warning: shepherd trace store unavailable, continuing without a root scope: %v\n", serr)
+			fmt.Fprintf(os.Stderr, "warning: goatherd trace store unavailable, continuing without a root scope: %v\n", serr)
 		}
 		// Scope recovery (adoption plan R1, decision D5): the trace is
 		// the registry — rebuild the scope tree, checkpoints, and
@@ -1044,7 +1044,7 @@ func buildShepherdInfra(st *loopInfraStage, cfg *config.Config, ws *workspaceSta
 			var stats goatherd.RecoveryStats
 			recovered, report, rerr := recovery.Recover(context.Background(), store, repoPath, ws.sessionSandbox == nil, &stats)
 			if rerr != nil {
-				fmt.Fprintf(os.Stderr, "warning: shepherd tracing disabled: scope recovery failed: %v\n", rerr)
+				fmt.Fprintf(os.Stderr, "warning: goatherd tracing disabled: scope recovery failed: %v\n", rerr)
 				store.Close(context.Background())
 				tracingReady = false
 			} else {
@@ -1098,7 +1098,7 @@ func buildShepherdInfra(st *loopInfraStage, cfg *config.Config, ws *workspaceSta
 					// generic no-root warning.
 					fmt.Fprintf(os.Stderr, "warning: %v — sub-agent scopes run unsupervised (flat) for this session\n", rerr)
 				} else {
-					fmt.Fprintf(os.Stderr, "warning: no shepherd root scope — sub-agent scopes fall back to flat creation: %v\n", rerr)
+					fmt.Fprintf(os.Stderr, "warning: no goatherd root scope — sub-agent scopes fall back to flat creation: %v\n", rerr)
 				}
 			} else {
 				st.rootScopeID = root.ID()
@@ -1419,7 +1419,7 @@ func registerWakeTools(st *loopInfraStage, tr *toolRegistryStage, oneShot bool) 
 // list_sub_agents. A tool whose infrastructure stayed down is named on the belt
 // instead, so an allowlist mentioning it is not reported as a typo.
 func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegistryStage) {
-	// Shepherd-dependent tool surface: the supervisor and proposal tools
+	// Goatherd-dependent tool surface: the supervisor and proposal tools
 	// register only when the infrastructure above came up.
 	if st.scopeMgr != nil {
 		// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/status).
@@ -1453,7 +1453,7 @@ func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 		if st.taskTool.Retained != nil {
 			// The orchestrator is the gate: it reads the proposal's diff and
 			// settles it. There is no reviewer dispatch — the judgement lives on
-			// this side of the boundary, as it does in shepherd's `gate(task,
+			// this side of the boundary, as it does in goatherd's `gate(task,
 			// predicate)`, so no verdict protocol or review round exists.
 			//
 			// One registry per session (yaah-yox): runner.NewDelegateTool

@@ -1,0 +1,175 @@
+# dev-issue — the standard development workflow for one backlog issue.
+#
+# This file IS the dispatcher: `yaah workflow run .agents/workflows/dev-issue.yaml
+# --param issue=<bead id or task statement>` carries one issue from triage to a
+# landed, gate-clean change. It composes only verified v1 primitives (the same
+# shapes as internal/workflow/spec/testdata/valid/bounded_repair.yaml and
+# fanout_settle.yaml).
+#
+# Worked example — the append-tool bead (P1, file-tools). The orchestrator
+# resolves the bead once host-side, then runs:
+#   bd show yaah-1794425741925-143-80217852 | Out-File -Encoding utf8 .scratch\issue-143.md
+#   .\yaah.exe workflow run .agents\workflows\dev-issue.yaml `
+#     --param issue=yaah-1794425741925-143-80217852 `
+#     --param issue_file=.scratch\issue-143.md
+# ("write truncates; add an append tool with atomic O_APPEND semantics for
+#  logs and JSONL ledgers" — self-contained, stdlib-only, testable.)
+#
+# Honesty notes, so nobody has to rediscover them:
+# - The workflow lands changes on the tree but does NOT commit, push, close
+#   the bead, or open a PR. Those stay human/agent decisions after `report`
+#   (conservative git + beads policy).
+# - Params feed templates only, never graph bounds (max_iterations is a
+#   literal by design).
+# - `continue_from` is not used in the repair loop: a proposal settles exactly
+#   once, so after `land` applies it, repair re-proposes from the current tree
+#   (which already contains the landed change) instead of forking a consumed
+#   proposal.
+# - Orchestrator-first bead resolution: the orchestrator (host-side, one
+#   cheap `bd show`) resolves the issue text before the run and hands it to
+#   the brief step via --param issue_file; sub-agents never pay for text
+#   recovery. issue_file is optional — when empty, the brief step resolves
+#   the text itself (bd show, then ~/.yaah/hooks/sess-*.jsonl; this repo has
+#   no .beads/issues.jsonl passive export, export.auto is false).
+
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: dev-issue
+  version: 1.0.0
+spec:
+  params:
+    issue:
+      type: string
+      required: true
+    issue_file:
+      type: string
+      default: ""
+  defaults:
+    lane: proposal
+    network: deny_all
+    grants:
+      - path: cmd
+        access: readwrite
+      - path: internal
+        access: readwrite
+      - path: docs
+        access: readwrite
+  budgets:
+    max_dispatches: 16
+    max_wall_clock_seconds: 3600
+    max_concurrent_dispatches: 2
+  steps:
+    # 1. Triage: resolve the issue text and survey the code before anyone
+    #    writes anything.
+    - id: brief
+      kind: delegate
+      role: analyst
+      lane: report
+      output: Brief
+      prompt: |
+        Triage this issue for implementation: "{{ params.issue }}"
+        The orchestrator resolved the issue text ahead of you: read the file
+        at "{{ params.issue_file }}" (if non-empty) and treat its contents as
+        the canonical issue text. Only if that path is empty or unreadable,
+        resolve the text yourself: run `bd show <id>` (local, no network), or
+        search ~/.yaah/hooks/sess-*.jsonl for the id.
+        Survey the relevant code under cmd/ and internal/ before writing
+        anything.
+        Return JSON only:
+        {"summary": "...", "paths": ["..."], "approach": "...",
+         "risks": ["..."], "tests": "..."}
+    # 2. Implement: one developer, one retained proposal, no direct writes.
+    - id: implement
+      kind: delegate
+      role: developer
+      needs: [brief]
+      output: proposal
+      prompt: |
+        Implement this issue: {{ params.issue }}
+        Brief: {{ steps.brief.output }}
+        Follow AGENTS.md: internal/ only, errors are values not panics,
+        no new direct dependencies without a stated reason, tests live next
+        to the code, gofmt clean. Do NOT commit — return the proposal.
+    # 3. Review: report-lane verdict on the sealed diff before it lands.
+    - id: review
+      kind: delegate
+      role: code-reviewer
+      lane: report
+      needs: [implement]
+      output: ReviewVerdict
+      prompt: |
+        Review this proposal against the brief for: {{ params.issue }}
+        Brief: {{ steps.brief.output }}
+        Diff: {{ steps.implement.output.diff }}
+        Check correctness, AGENTS.md conventions, and test coverage.
+        Return JSON: {"verdict":"pass"|"fail","reasons":["..."]}
+    # 4. Land: apply only on a passing review; conflicts stop for a human.
+    - id: land
+      kind: settle
+      needs: [implement, review]
+      proposals: { from: steps.implement.output, as_list: true }
+      where: { from: steps.review.output, field: verdict, equals: pass, as_list: true }
+      action: apply
+      policy: three_way
+      on_conflict: stop
+      on_empty: fail
+    # 5. Verify: real gates on the landed tree (the proposal is applied now,
+    #    so build/test/lint see the actual change).
+    - id: verify
+      kind: delegate
+      role: golang-tester
+      lane: report
+      needs: [land]
+      timeout_seconds: 900
+      output: VerifyVerdict
+      prompt: |
+        The change for "{{ params.issue }}" has landed on the tree. Run the
+        quality gates: go build ., go test ./... (allow at least 540s — the
+        full suite exceeds 420s on Windows), gofmt -l ., and staticcheck ./...
+        Return JSON: {"verdict":"pass"|"fail","failures":["..."]}
+    # 6. Repair: bounded loop — re-propose against the current tree, re-apply,
+    #    re-check. max_iterations is a literal (params never feed graph bounds).
+    - id: repair
+      kind: loop
+      needs: [verify]
+      max_iterations: 2
+      until: { from: steps.repair.collect, field: verdict, equals: pass }
+      collect: rounds
+      on_failure: continue
+      body:
+        - id: fix
+          kind: delegate
+          role: developer
+          output: fix_proposal
+          prompt: |
+            The quality gates failed on the landed change for {{ params.issue }}:
+            {{ steps.verify.output }}
+            Repair the failures and return a fresh proposal against the
+            current tree.
+        - id: land_fix
+          kind: settle
+          proposals: { from: steps.fix.output, as_list: true }
+          action: apply
+          policy: three_way
+          on_conflict: stop
+          on_empty: fail
+        - id: recheck
+          kind: delegate
+          role: golang-tester
+          lane: report
+          timeout_seconds: 900
+          output: RecheckVerdict
+          prompt: |
+            Re-run the quality gates (go build ., go test ./..., gofmt -l .,
+            staticcheck ./...) after the repair for {{ params.issue }}.
+            Return JSON: {"verdict":"pass"|"fail","failures":["..."]}
+    # 7. Report: what landed, and what stays human.
+    - id: report
+      kind: emit
+      needs: [repair]
+      value: |
+        Issue {{ params.issue }}: landed {{ steps.land.output.settled }} proposal(s);
+        repair rounds: {{ steps.repair.collect }}.
+        Still human: review the diff, close the bead with evidence (bd close <id>
+        --reason "..."), commit and push only on request.

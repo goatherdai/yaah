@@ -1,4 +1,4 @@
-// Package recovery rebuilds the shepherd scope registry from the
+// Package recovery rebuilds the goatherd scope registry from the
 // durable trace at startup (adoption plan R1, decision D5): the trace
 // is the registry — scope lifecycle events, checkpoint blobs, and
 // settlement records are durably recorded, so a restarted process
@@ -20,7 +20,7 @@ import (
 	"runtime"
 	"strings"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
@@ -36,14 +36,14 @@ import (
 const SchemaWorktreeProvisioned = "yaah.worktree.provisioned.v1"
 
 // legacySchemaScopeForked is the fork schema ref as the runtime wrote it
-// before the goatherd rename (shepherd-runtime-go <= v0.18.0): the rename
+// before the goatherd rename (goatherd-runtime-go <= v0.18.0): the rename
 // rebranded the runtime's own record vocabulary, so traces from pre-rename
 // sessions carry the old value. Recovery scans it as a fallback so
 // worktrees carved before the upgrade still list and prune — silently
 // dropping them would strand live worktrees (the failure this file
 // exists to prevent). Removable at the next minor together with the
 // SchemaWorktreeProvisioned fallback above. The kernel's frozen
-// shepherd2.* vocabulary is unaffected and needs no fallback.
+// KEEPgoatherd2KEEP.* vocabulary is unaffected and needs no fallback.
 const legacySchemaScopeForked = "shepherd.scope.forked.v1"
 
 // worktreeInfo is one recorded worktree provisioning: where it lives
@@ -141,7 +141,7 @@ type Report struct {
 //
 // A resolver error fails the recovery loudly: half-adopted sandboxes
 // are worse than none (the kernel's contract).
-func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPath string, adoptRoots bool, stats *goatherd.RecoveryStats) (*goatherd.ScopeManager, *Report, error) {
+func Recover(ctx context.Context, store *kerneltrace.SQLiteTraceStore, repoPath string, adoptRoots bool, stats *goatherd.RecoveryStats) (*goatherd.ScopeManager, *Report, error) {
 	if repoPath == "" {
 		return nil, nil, fmt.Errorf("no repository to re-adopt onto")
 	}
@@ -307,10 +307,10 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 // entry — the exact "a worktree the trace cannot find is an orphan
 // recovery would never list" failure this design fights — and fails the
 // recovery loudly rather than being skipped.
-func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, trustedRepo string) (map[string]worktreeInfo, error) {
+func scanWorktreePaths(ctx context.Context, store *kerneltrace.SQLiteTraceStore, trustedRepo string) (map[string]worktreeInfo, error) {
 	paths := make(map[string]worktreeInfo)
 
-	forks, err := shepherdtrace.ScanRecordsBySchema(ctx, store, goatherd.SchemaScopeForked)
+	forks, err := kerneltrace.ScanRecordsBySchema(ctx, store, goatherd.SchemaScopeForked)
 	if err != nil {
 		return nil, fmt.Errorf("scan fork records: %w", err)
 	}
@@ -327,7 +327,7 @@ func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStor
 	// legacySchemaScopeForked): scan them too so worktrees carved before
 	// the upgrade stay owned. The current ref wins on collision — same
 	// last-write rule as the fallback below.
-	legacyForks, err := shepherdtrace.ScanRecordsBySchema(ctx, store, legacySchemaScopeForked)
+	legacyForks, err := kerneltrace.ScanRecordsBySchema(ctx, store, legacySchemaScopeForked)
 	if err != nil {
 		return nil, fmt.Errorf("scan legacy fork records: %w", err)
 	}
@@ -343,7 +343,7 @@ func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStor
 		paths[child] = worktreeInfo{path: path, repo: trustedRepo}
 	}
 
-	records, err := shepherdtrace.ScanRecordsBySchema(ctx, store, SchemaWorktreeProvisioned)
+	records, err := kerneltrace.ScanRecordsBySchema(ctx, store, SchemaWorktreeProvisioned)
 	if err != nil {
 		return nil, fmt.Errorf("scan worktree records: %w", err)
 	}

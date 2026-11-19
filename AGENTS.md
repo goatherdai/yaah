@@ -18,7 +18,7 @@ from them:
 
 - **`.scratch/`** — scratch space for cloning third-party repos while building
   a skill. Real dependencies are pinned in `go.sum`.
-- **`.yaah/`** — local runtime state, including the `shepherd-worktrees/`
+- **`.yaah/`** — local runtime state, including the `goatherd-worktrees/`
   checkouts that proposal settlement creates. Each is a full copy of the repo
   at an older commit, so a repo-wide `find` or `grep` matches every file twice
   and reports stale code as current. Search with `git grep`, which respects
@@ -74,7 +74,7 @@ yaah/
 │   ├── mcp/                     # MCP client + server (stdio + HTTP)
 │   ├── memory/                  # SQLite sessions, memory, FTS5, embeddings
 │   ├── observability/           # OpenTelemetry tracing + span buffer
-│   ├── parity/                  # Shepherd parity ledger drift guard
+│   ├── parity/                  # Goatherd parity ledger drift guard
 │   ├── permissions/             # ordered allow/deny/ask tool rules (leaf package)
 │   ├── plans/                   # PLAN.md discovery/parsing
 │   ├── process/                 # background process manager

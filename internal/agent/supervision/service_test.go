@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/goatherd-runtime"
-	shepherdsupervisor "github.com/goatherdai/goatherd-runtime/supervisor"
+	supervisor "github.com/goatherdai/goatherd-runtime/supervisor"
 )
 
 // newTestService assembles a real supervision stack for one fake
@@ -20,15 +20,15 @@ import (
 // events are published as the trace middleware would (TraceOwnerID =
 // the raw owner; the intervention addresses "scope:<owner>", the same
 // form the runner registers under).
-func newTestService(t *testing.T, rules AdvisoryRules) (*Service, *shepherdtrace.SQLiteTraceStore, chan string, *shepherdtrace.EffectBus) {
+func newTestService(t *testing.T, rules AdvisoryRules) (*Service, *kerneltrace.SQLiteTraceStore, chan string, *kerneltrace.EffectBus) {
 	t.Helper()
 
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	bus := shepherdtrace.NewEffectBus(64)
+	bus := kerneltrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
 
@@ -54,7 +54,7 @@ func newTestService(t *testing.T, rules AdvisoryRules) (*Service, *shepherdtrace
 }
 
 // publish publishes one effect event the way the trace store does.
-func publish(bus *shepherdtrace.EffectBus, e shepherdtrace.EffectEvent) {
+func publish(bus *kerneltrace.EffectBus, e kerneltrace.EffectEvent) {
 	e.Timestamp = time.Now()
 	bus.Publish(e)
 }
@@ -80,9 +80,9 @@ func awaitSteer(t *testing.T, steer <-chan string, want bool) string {
 // assertInjectRecorded pins the A2 invariant the drain keeps: the trace
 // fact is the record. The firing must appear in the target scope's
 // trace as a supervisor inject.
-func assertInjectRecorded(t *testing.T, store *shepherdtrace.SQLiteTraceStore, owner string) {
+func assertInjectRecorded(t *testing.T, store *kerneltrace.SQLiteTraceStore, owner string) {
 	t.Helper()
-	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, owner, 999, shepherdtrace.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), kerneltrace.TrustedReadContext, owner, 999, kerneltrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -105,9 +105,9 @@ func allAdvisoryRules() AdvisoryRules {
 func TestService_DestructiveRuleFires(t *testing.T) {
 	_, store, steer, bus := newTestService(t, allAdvisoryRules())
 
-	publish(bus, shepherdtrace.EffectEvent{
+	publish(bus, kerneltrace.EffectEvent{
 		TraceOwnerID: "sub-worker",
-		Mode:         shepherdtrace.Declaration,
+		Mode:         kerneltrace.Declaration,
 		SchemaRef:    "yaah.tool.bash.v1",
 		KindLabel:    "bash",
 		Payload:      map[string]any{"cmd": "rm -rf /tmp/probe"},
@@ -129,9 +129,9 @@ func TestService_HighErrorRateFires(t *testing.T) {
 	// The kernel's default window is 10 and it evaluates from
 	// window/2 results on, so five failures suffice.
 	for i := 0; i < 5; i++ {
-		publish(bus, shepherdtrace.EffectEvent{
+		publish(bus, kerneltrace.EffectEvent{
 			TraceOwnerID: "sub-worker",
-			Mode:         shepherdtrace.Capture,
+			Mode:         kerneltrace.Capture,
 			SchemaRef:    "yaah.tool.bash.v1.applied",
 			KindLabel:    "bash:result",
 			Payload:      map[string]any{"success": false},
@@ -156,16 +156,16 @@ func TestService_ErrorThresholdFromConfig(t *testing.T) {
 	})
 
 	for i := 0; i < 4; i++ {
-		publish(bus, shepherdtrace.EffectEvent{
+		publish(bus, kerneltrace.EffectEvent{
 			TraceOwnerID: "sub-worker",
-			Mode:         shepherdtrace.Capture,
+			Mode:         kerneltrace.Capture,
 			KindLabel:    "bash:result",
 			Payload:      map[string]any{"success": false},
 		})
 	}
-	publish(bus, shepherdtrace.EffectEvent{
+	publish(bus, kerneltrace.EffectEvent{
 		TraceOwnerID: "sub-worker",
-		Mode:         shepherdtrace.Capture,
+		Mode:         kerneltrace.Capture,
 		KindLabel:    "bash:result",
 		Payload:      map[string]any{"success": true},
 	})
@@ -180,9 +180,9 @@ func TestService_StuckDetectionFires(t *testing.T) {
 
 	// The kernel default threshold is 3.
 	for i := 0; i < 3; i++ {
-		publish(bus, shepherdtrace.EffectEvent{
+		publish(bus, kerneltrace.EffectEvent{
 			TraceOwnerID: "sub-worker",
-			Mode:         shepherdtrace.Declaration,
+			Mode:         kerneltrace.Declaration,
 			SchemaRef:    "yaah.tool.read.v1",
 			KindLabel:    "read",
 			Payload:      map[string]any{"path": "/same/file"},
@@ -203,17 +203,17 @@ func TestService_RuleDisabledIsSilent(t *testing.T) {
 	_, _, steer, bus := newTestService(t, AdvisoryRules{DestructiveTool: true})
 
 	for i := 0; i < 5; i++ {
-		publish(bus, shepherdtrace.EffectEvent{
+		publish(bus, kerneltrace.EffectEvent{
 			TraceOwnerID: "sub-worker",
-			Mode:         shepherdtrace.Capture,
+			Mode:         kerneltrace.Capture,
 			KindLabel:    "bash:result",
 			Payload:      map[string]any{"success": false},
 		})
 	}
 	for i := 0; i < 3; i++ {
-		publish(bus, shepherdtrace.EffectEvent{
+		publish(bus, kerneltrace.EffectEvent{
 			TraceOwnerID: "sub-worker",
-			Mode:         shepherdtrace.Declaration,
+			Mode:         kerneltrace.Declaration,
 			KindLabel:    "read",
 			Payload:      map[string]any{"path": "/same/file"},
 		})
@@ -233,9 +233,9 @@ func TestService_RootFiringsDropped(t *testing.T) {
 	// A parent repeating its own tool call trips stuck-detection; the
 	// events carry the ROOT's trace owner.
 	for i := 0; i < 3; i++ {
-		publish(bus, shepherdtrace.EffectEvent{
+		publish(bus, kerneltrace.EffectEvent{
 			TraceOwnerID: "sess-root",
-			Mode:         shepherdtrace.Declaration,
+			Mode:         kerneltrace.Declaration,
 			SchemaRef:    "yaah.tool.delegate.v1",
 			KindLabel:    "delegate",
 			Payload:      map[string]any{"role": "worker"},
@@ -243,7 +243,7 @@ func TestService_RootFiringsDropped(t *testing.T) {
 	}
 	awaitSteer(t, steer, false)
 
-	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "sess-root", 999, shepherdtrace.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), kerneltrace.TrustedReadContext, "sess-root", 999, kerneltrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -264,9 +264,9 @@ func TestService_NoSelfFeedback(t *testing.T) {
 	_, store, steer, bus := newTestService(t, AdvisoryRules{StuckDetection: true})
 
 	for i := 0; i < 3; i++ {
-		publish(bus, shepherdtrace.EffectEvent{
+		publish(bus, kerneltrace.EffectEvent{
 			TraceOwnerID: "sub-worker",
-			Mode:         shepherdtrace.Declaration,
+			Mode:         kerneltrace.Declaration,
 			KindLabel:    "read",
 			Payload:      map[string]any{"path": "/same/file"},
 		})
@@ -282,7 +282,7 @@ func TestService_NoSelfFeedback(t *testing.T) {
 	default:
 	}
 
-	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "sub-worker", 999, shepherdtrace.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), kerneltrace.TrustedReadContext, "sub-worker", 999, kerneltrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -301,12 +301,12 @@ func TestService_NoSelfFeedback(t *testing.T) {
 // close relies on: Close stops the engine and returns only after the
 // drain goroutine has exited, and stays idempotent.
 func TestService_CloseJoinsDrain(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	bus := shepherdtrace.NewEffectBus(64)
+	bus := kerneltrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
 
@@ -321,9 +321,9 @@ func TestService_CloseJoinsDrain(t *testing.T) {
 	svc := NewService(mgr, bus, runs, allAdvisoryRules(), false, false, "")
 	svc.Start("close-test")
 
-	publish(bus, shepherdtrace.EffectEvent{
+	publish(bus, kerneltrace.EffectEvent{
 		TraceOwnerID: "sub-worker",
-		Mode:         shepherdtrace.Declaration,
+		Mode:         kerneltrace.Declaration,
 		SchemaRef:    "yaah.tool.bash.v1",
 		KindLabel:    "bash",
 		Payload:      map[string]any{"cmd": "rm -rf /tmp/probe"},
@@ -349,12 +349,12 @@ func TestService_CloseJoinsDrain(t *testing.T) {
 // sandbox torn down), so the stuck rule's firing lands nowhere — no
 // steering message may claim an intervention that was never recorded.
 func TestService_NoRecordNoDelivery(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	bus := shepherdtrace.NewEffectBus(64)
+	bus := kerneltrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
 
@@ -375,9 +375,9 @@ func TestService_NoRecordNoDelivery(t *testing.T) {
 	t.Cleanup(svc.Close)
 
 	for i := 0; i < 3; i++ {
-		publish(bus, shepherdtrace.EffectEvent{
+		publish(bus, kerneltrace.EffectEvent{
 			TraceOwnerID: "sub-worker",
-			Mode:         shepherdtrace.Declaration,
+			Mode:         kerneltrace.Declaration,
 			KindLabel:    "read",
 			Payload:      map[string]any{"path": "/same/file"},
 		})
@@ -390,12 +390,12 @@ func TestService_NoRecordNoDelivery(t *testing.T) {
 // (whose wg.Add would race the completed wg.Wait — the WaitGroup reuse
 // rule), and Close stays safe to call repeatedly.
 func TestService_StartAfterCloseIsNoop(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	bus := shepherdtrace.NewEffectBus(64)
+	bus := kerneltrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	mgr := goatherd.NewScopeManager(store)
 	runs := NewRegistry()
@@ -422,12 +422,12 @@ func TestService_StartAfterCloseIsNoop(t *testing.T) {
 // with no advisory rules, so a deny can only come from the guard.
 func newGuardService(t *testing.T) (*Service, func(ownerID, toolName, argsJSON string) string) {
 	t.Helper()
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	bus := shepherdtrace.NewEffectBus(64)
+	bus := kerneltrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
 	mgr := goatherd.NewScopeManager(store)
@@ -480,12 +480,12 @@ func TestGuardCheck_DeniesShellBeforeDispatch(t *testing.T) {
 // without the guard exposes no check, and a nil check is the
 // pipeline's pass-through — tracing-off sessions dispatch unchanged.
 func TestGuardCheck_DisabledIsNil(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	bus := shepherdtrace.NewEffectBus(64)
+	bus := kerneltrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 
 	svc := NewService(goatherd.NewScopeManager(store), bus, NewRegistry(), allAdvisoryRules(), false, false, "")
@@ -502,9 +502,9 @@ func TestService_GuidanceNamesTheRule(t *testing.T) {
 	_, _, steer, bus := newTestService(t, AdvisoryRules{StuckDetection: true, StuckRepeatThreshold: 3})
 
 	for i := 0; i < 3; i++ {
-		publish(bus, shepherdtrace.EffectEvent{
+		publish(bus, kerneltrace.EffectEvent{
 			TraceOwnerID: "sub-worker",
-			Mode:         shepherdtrace.Declaration,
+			Mode:         kerneltrace.Declaration,
 			KindLabel:    "read",
 			Payload:      map[string]any{"path": "/same/file"},
 		})
@@ -518,15 +518,15 @@ func TestService_GuidanceNamesTheRule(t *testing.T) {
 // haltRule is a test-only rule that halts whatever scope emits a
 // declaration of the given kind — the producer B3's dispatch needs on
 // the wire.
-func haltRule(kind string) shepherdsupervisor.SupervisionRule {
-	return shepherdsupervisor.SupervisionRule{
+func haltRule(kind string) supervisor.SupervisionRule {
+	return supervisor.SupervisionRule{
 		Name: "test_halt",
-		Match: func(e shepherdtrace.EffectEvent) bool {
-			return e.Mode == shepherdtrace.Declaration && e.KindLabel == kind
+		Match: func(e kerneltrace.EffectEvent) bool {
+			return e.Mode == kerneltrace.Declaration && e.KindLabel == kind
 		},
-		Action: func(e shepherdtrace.EffectEvent) *shepherdsupervisor.Intervention {
-			return &shepherdsupervisor.Intervention{
-				Type:    shepherdsupervisor.InterventionHalt,
+		Action: func(e kerneltrace.EffectEvent) *supervisor.Intervention {
+			return &supervisor.Intervention{
+				Type:    supervisor.InterventionHalt,
 				ScopeID: "scope:" + e.TraceOwnerID,
 				Payload: "test halt",
 			}
@@ -538,12 +538,12 @@ func haltRule(kind string) shepherdsupervisor.SupervisionRule {
 // ordering: the run's cancellation fires first, then the kernel-side
 // halt lands — the scope ends discarded, its trace holding the halt.
 func TestService_HaltDispatchSubScope(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	bus := shepherdtrace.NewEffectBus(64)
+	bus := kerneltrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
 	mgr := goatherd.NewScopeManager(store)
@@ -572,9 +572,9 @@ func TestService_HaltDispatchSubScope(t *testing.T) {
 	t.Cleanup(svc.Close)
 	svc.sup.AddRule(haltRule("explode"))
 
-	publish(bus, shepherdtrace.EffectEvent{
+	publish(bus, kerneltrace.EffectEvent{
 		TraceOwnerID: "sub-worker",
-		Mode:         shepherdtrace.Declaration,
+		Mode:         kerneltrace.Declaration,
 		KindLabel:    "explode",
 	})
 
@@ -598,14 +598,14 @@ func TestService_HaltDispatchSubScope(t *testing.T) {
 // newRootHaltStack assembles a service with a root scope whose run is
 // cancellable, plus a halt rule that fires on "explode" declarations
 // from the root owner. haltRoot is the B3 gate under test.
-func newRootHaltStack(t *testing.T, haltRoot bool) (*goatherd.ScopeManager, *atomic.Bool, *shepherdtrace.EffectBus) {
+func newRootHaltStack(t *testing.T, haltRoot bool) (*goatherd.ScopeManager, *atomic.Bool, *kerneltrace.EffectBus) {
 	t.Helper()
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	bus := shepherdtrace.NewEffectBus(64)
+	bus := kerneltrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
 	mgr := goatherd.NewScopeManager(store)
@@ -627,10 +627,10 @@ func newRootHaltStack(t *testing.T, haltRoot bool) (*goatherd.ScopeManager, *ato
 	return mgr, &cancelled, bus
 }
 
-func publishRootExplode(bus *shepherdtrace.EffectBus) {
-	publish(bus, shepherdtrace.EffectEvent{
+func publishRootExplode(bus *kerneltrace.EffectBus) {
+	publish(bus, kerneltrace.EffectEvent{
 		TraceOwnerID: "sess-root",
-		Mode:         shepherdtrace.Declaration,
+		Mode:         kerneltrace.Declaration,
 		KindLabel:    "explode",
 	})
 }
@@ -687,9 +687,9 @@ func TestService_FiringsCountAdvisory(t *testing.T) {
 	svc, _, steer, bus := newTestService(t, allAdvisoryRules())
 
 	decl := func(owner string) {
-		publish(bus, shepherdtrace.EffectEvent{
+		publish(bus, kerneltrace.EffectEvent{
 			TraceOwnerID: owner,
-			Mode:         shepherdtrace.Declaration,
+			Mode:         kerneltrace.Declaration,
 			SchemaRef:    "yaah.tool.bash.v1",
 			KindLabel:    "bash",
 			Payload:      map[string]any{"cmd": "rm -rf /tmp/probe"},
@@ -724,12 +724,12 @@ func TestService_FiringsCountAdvisory(t *testing.T) {
 // surface: a blocking pre-dispatch deny counts under the shell guard's
 // own rule name, scoped to the sub-agent the guard refused.
 func TestService_FiringsCountGuardDeny(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	bus := shepherdtrace.NewEffectBus(64)
+	bus := kerneltrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	mgr := goatherd.NewScopeManager(store)
 
@@ -757,12 +757,12 @@ func TestService_FiringsCountGuardDeny(t *testing.T) {
 // here against a scope with no registered run, so the halt lands as a
 // kernel-side record only.
 func TestService_FiringsCountHalt(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	bus := shepherdtrace.NewEffectBus(64)
+	bus := kerneltrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
 	mgr := goatherd.NewScopeManager(store)
@@ -775,9 +775,9 @@ func TestService_FiringsCountHalt(t *testing.T) {
 	t.Cleanup(svc.Close)
 	svc.sup.AddRule(advisoryRule(haltRule("explode"), svc.recordFiring))
 
-	publish(bus, shepherdtrace.EffectEvent{
+	publish(bus, kerneltrace.EffectEvent{
 		TraceOwnerID: "sub-worker",
-		Mode:         shepherdtrace.Declaration,
+		Mode:         kerneltrace.Declaration,
 		KindLabel:    "explode",
 	})
 
@@ -805,9 +805,9 @@ func TestService_FiringsEmptyWhenSilent(t *testing.T) {
 	svc, _, steer, bus := newTestService(t, allAdvisoryRules())
 
 	// A benign declaration: no rule matches, nothing is steered.
-	publish(bus, shepherdtrace.EffectEvent{
+	publish(bus, kerneltrace.EffectEvent{
 		TraceOwnerID: "sub-worker",
-		Mode:         shepherdtrace.Declaration,
+		Mode:         kerneltrace.Declaration,
 		SchemaRef:    "yaah.tool.read.v1",
 		KindLabel:    "read",
 	})
@@ -822,9 +822,9 @@ func TestService_FiringsEmptyWhenSilent(t *testing.T) {
 // creation, staying conservative when the tool attached no observation.
 func TestDestructiveFileRule_WriteClassification(t *testing.T) {
 	rule := destructiveFileRule()
-	decl := func(schema, kind string, payload map[string]any) shepherdtrace.EffectEvent {
-		return shepherdtrace.EffectEvent{
-			Mode:      shepherdtrace.Declaration,
+	decl := func(schema, kind string, payload map[string]any) kerneltrace.EffectEvent {
+		return kerneltrace.EffectEvent{
+			Mode:      kerneltrace.Declaration,
 			SchemaRef: schema,
 			KindLabel: kind,
 			Payload:   payload,
@@ -833,7 +833,7 @@ func TestDestructiveFileRule_WriteClassification(t *testing.T) {
 
 	tests := []struct {
 		name  string
-		event shepherdtrace.EffectEvent
+		event kerneltrace.EffectEvent
 		want  bool
 	}{
 		{"new file passes", decl("yaah.tool.write.v1", "write", map[string]any{"file_existed": false}), false},
@@ -843,7 +843,7 @@ func TestDestructiveFileRule_WriteClassification(t *testing.T) {
 		{"rm still warns", decl("yaah.tool.bash.v1", "bash", map[string]any{"cmd": "rm -rf /tmp/x"}), true},
 		{"plain ls passes", decl("yaah.tool.bash.v1", "bash", map[string]any{"cmd": "ls /tmp"}), false},
 		{"delete warns", decl("yaah.tool.delete.v1", "delete", nil), true},
-		{"capture never matches", shepherdtrace.EffectEvent{Mode: shepherdtrace.Capture, SchemaRef: "yaah.tool.write.v1", KindLabel: "write", Payload: map[string]any{"file_existed": true}}, false},
+		{"capture never matches", kerneltrace.EffectEvent{Mode: kerneltrace.Capture, SchemaRef: "yaah.tool.write.v1", KindLabel: "write", Payload: map[string]any{"file_existed": true}}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

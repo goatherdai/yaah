@@ -25,7 +25,7 @@ type SessionPersister struct {
 	msgIdx    int
 
 	// Cross-link IDs for the current interaction: traceID joins a message
-	// row to its OTel span tree, turnID to the Shepherd turn facts. Both
+	// row to its OTel span tree, turnID to the Goatherd turn facts. Both
 	// empty when OTel is disabled / before the first Run of a prompt.
 	traceID string
 	turnID  string
@@ -261,7 +261,7 @@ func messageID(sessionID string, idx int, role, content, reasoning, toolName, to
 
 // newTurnID returns a random 128-bit hex ID that identifies one
 // prompt-to-answer interaction across OTel spans, persisted messages, and
-// Shepherd turn facts.
+// Goatherd turn facts.
 func newTurnID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {

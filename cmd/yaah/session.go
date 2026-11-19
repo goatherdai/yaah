@@ -39,7 +39,7 @@ import (
 	"syscall"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	"github.com/goatherdai/goatherd-runtime/sandbox/egress"
 	"github.com/goatherdai/yaah/internal/agent"
@@ -263,7 +263,7 @@ type agentSession struct {
 	// populated (surfaces hide the section).
 	worldStatus worldinfo.Status
 
-	// rootScopeID is the session's shepherd root scope (adoption plan
+	// rootScopeID is the session's goatherd root scope (adoption plan
 	// A2): registered in the run registry against steerCh, so supervisor
 	// inject into the root steers the session itself. close() unregisters
 	// it BEFORE closing steerCh — a registry send must never land on a
@@ -307,13 +307,13 @@ type agentSession struct {
 	// survive either way. Nil when tracing is off.
 	scopes *goatherd.ScopeManager
 
-	// traceStore and traceBus are the session's shepherd infrastructure
+	// traceStore and traceBus are the session's goatherd infrastructure
 	// (plan 07, H2): the store and bus the wiring created and the
 	// session closes on a clean exit — store first, then the bus, only
 	// when the background-job drain succeeded, warn-only like the rest
 	// of the clean-exit path. Nil when tracing is off.
-	traceStore *shepherdtrace.SQLiteTraceStore
-	traceBus   *shepherdtrace.EffectBus
+	traceStore *kerneltrace.SQLiteTraceStore
+	traceBus   *kerneltrace.EffectBus
 
 	// runCancel is the session-owned cancellation for the currently
 	// running prompt (adoption plan A3): the target of
@@ -583,7 +583,7 @@ func (s *agentSession) shutdown() {
 			fmt.Fprintf(os.Stderr, "warning: workspace sandbox teardown: %v\n", err)
 		}
 	}
-	// Shepherd infrastructure (plan 07, H2): a clean exit closes the trace
+	// Goatherd infrastructure (plan 07, H2): a clean exit closes the trace
 	// store and its bus — store first, then the bus — instead of leaving
 	// both to whatever the process exit does to them. Warn-only, like the
 	// rest of this path. Gated on the drain: a background job that
@@ -593,9 +593,9 @@ func (s *agentSession) shutdown() {
 	// the infrastructure stays open with a warning instead.
 	if s.traceStore != nil || s.traceBus != nil {
 		if !drained {
-			fmt.Fprintln(os.Stderr, "warning: shepherd trace store left open — a background job outlived the drain and still writes it")
+			fmt.Fprintln(os.Stderr, "warning: goatherd trace store left open — a background job outlived the drain and still writes it")
 		} else {
-			pipeline.CloseShepherdInfrastructure(pipeline.TraceSinkOf(s.traceStore), s.traceBus)
+			pipeline.CloseGoatherdInfrastructure(pipeline.TraceSinkOf(s.traceStore), s.traceBus)
 			s.traceStore, s.traceBus = nil, nil
 		}
 	}

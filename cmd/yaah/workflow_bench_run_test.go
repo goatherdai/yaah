@@ -29,7 +29,7 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 
@@ -59,7 +59,7 @@ func wfBenchRetainedEnv(t *testing.T, runner jobs.TaskRunner) *dispatch.Retained
 	if _, err := osexec.LookPath("git"); err != nil {
 		t.Skip("git binary not available")
 	}
-	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
+	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test trace store: %v", err)
 	}
@@ -456,7 +456,7 @@ func TestBenchSpecOrchRecoveryRunsFromTheDocument(t *testing.T) {
 	if got := strings.TrimSpace(string(data)); got != adopted {
 		t.Errorf("recovery.txt = %q, want %q", got, adopted)
 	}
-	if !strings.Contains(gotPrompt, "shepherd") {
+	if !strings.Contains(gotPrompt, "goatherd") {
 		t.Errorf("delegate prompt does not carry the recovery scan: %q", gotPrompt)
 	}
 }

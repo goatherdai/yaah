@@ -4,7 +4,7 @@ import (
 	"context"
 	"slices"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/config"
 	"github.com/goatherdai/yaah/internal/toolcontract"
 	"github.com/goatherdai/yaah/internal/types"
@@ -90,14 +90,14 @@ type PipelineConfig struct {
 	Pruner     *Pruner
 	PruneHooks PruneHooks
 
-	// SessionID scopes Shepherd trace records. The sub-agent pipeline's
-	// shepherd_trace middleware records under this owner using the
+	// SessionID scopes Goatherd trace records. The sub-agent pipeline's
+	// goatherd_trace middleware records under this owner using the
 	// session-shared store (TraceStore, injected by the wiring — plan
 	// 07, H4), and the supervisor_guard middleware addresses its
 	// checks to the same owner.
 	SessionID string
 
-	// TraceStore is the session-wide Shepherd trace sink (plan 07,
+	// TraceStore is the session-wide Goatherd trace sink (plan 07,
 	// H4): session-owned and injected by the wiring, like the
 	// supervisor registry — sub-agent middleware writes through this
 	// shared connection instead of reaching through package globals.
@@ -110,7 +110,7 @@ type PipelineConfig struct {
 	// middleware appends. Sub-agents use it to bind their transcript to the
 	// dispatch's substrate, containment, and role tool belt without relying
 	// on mutable session columns (yaah-o86).
-	RetainedContext *shepherdtrace.RetainedContext
+	RetainedContext *kerneltrace.RetainedContext
 
 	// DestructiveGuard is the supervision service's synchronous
 	// pre-dispatch check (adoption plan B2): a non-empty return denies
@@ -160,19 +160,19 @@ func buildToolConcurrency(cfg PipelineConfig) Middleware {
 	return NewToolConcurrencyMiddleware(cfg.MaxToolConcurrency)
 }
 
-// buildShepherdTrace is shared by the orchestrator and sub-agent pipelines.
+// buildGoatherdTrace is shared by the orchestrator and sub-agent pipelines.
 // Both write through the session-shared store; nil store/session falls back to
 // the noop slot so the pipeline shape stays stable.
-func buildShepherdTrace(cfg PipelineConfig) Middleware {
+func buildGoatherdTrace(cfg PipelineConfig) Middleware {
 	store := cfg.TraceStore
 	// A tracing-off session carries a nil kernel store in a non-nil interface
 	// (the composition root still holds the concrete handle), so the nil test
 	// goes through the seam's own predicate: a typed-nil sink must resolve to
 	// the noop slot, exactly as it did when the field held the bare pointer.
 	if SinkIsNil(store) || cfg.SessionID == "" {
-		return &noopShepherdTraceMiddleware{}
+		return &noopGoatherdTraceMiddleware{}
 	}
-	return &ShepherdTraceMiddleware{
+	return &GoatherdTraceMiddleware{
 		store:           store,
 		sessionID:       cfg.SessionID,
 		ordinal:         int(nextOrdinal.Add(1 << 20)),
@@ -228,7 +228,7 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 		return NewEvidenceGuardMiddleware(cfg.EvidenceGuardNudge, cfg.EvidenceGuardHalt)
 	},
 	"tool_concurrency": buildToolConcurrency,
-	"shepherd_trace":   buildShepherdTrace,
+	"goatherd_trace":   buildGoatherdTrace,
 	"prompt_caching":   func(cfg PipelineConfig) Middleware { return &PromptCachingMiddleware{enabled: cfg.PromptCaching} },
 	"soft_prune": func(cfg PipelineConfig) Middleware {
 		return &SoftPruneMiddleware{pruner: cfg.Pruner, emit: cfg.PruneHooks.Emit, otel: cfg.PruneHooks.Otel}
@@ -262,23 +262,23 @@ var subAgentBuilders = map[string]func(PipelineConfig) Middleware{
 		return &SteerMiddleware{ch: cfg.Steer}
 	},
 	"tool_concurrency": buildToolConcurrency,
-	"shepherd_trace":   buildShepherdTrace,
+	"goatherd_trace":   buildGoatherdTrace,
 	"evidence_guard": func(cfg PipelineConfig) Middleware {
 		return NewEvidenceGuardMiddleware(cfg.EvidenceGuardNudge, cfg.EvidenceGuardHalt)
 	},
 }
 
-// noopShepherdTraceMiddleware is a placeholder returned when shepherd_trace is disabled.
-type noopShepherdTraceMiddleware struct{}
+// noopGoatherdTraceMiddleware is a placeholder returned when goatherd_trace is disabled.
+type noopGoatherdTraceMiddleware struct{}
 
-func (m *noopShepherdTraceMiddleware) Name() string { return "shepherd_trace" }
-func (m *noopShepherdTraceMiddleware) PrepareStep(ctx context.Context, step *Step) (*Step, error) {
+func (m *noopGoatherdTraceMiddleware) Name() string { return "goatherd_trace" }
+func (m *noopGoatherdTraceMiddleware) PrepareStep(ctx context.Context, step *Step) (*Step, error) {
 	return step, nil
 }
-func (m *noopShepherdTraceMiddleware) PostModel(ctx context.Context, msg *types.Message, step *Step) (*Step, error) {
+func (m *noopGoatherdTraceMiddleware) PostModel(ctx context.Context, msg *types.Message, step *Step) (*Step, error) {
 	return step, nil
 }
-func (m *noopShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolResult, step *Step) (*Step, error) {
+func (m *noopGoatherdTraceMiddleware) PostTool(ctx context.Context, results []ToolResult, step *Step) (*Step, error) {
 	return step, nil
 }
 
@@ -292,7 +292,7 @@ var defaultPipelineNames = []string{
 	"approval",
 	"inline_limit",
 	"tool_concurrency",
-	"shepherd_trace",
+	"goatherd_trace",
 	"loop_detection",
 	"intent_loop",
 	"evidence_guard",
@@ -321,16 +321,16 @@ var defaultPipelineNames = []string{
 //
 // Included (conditionally, by NewSubAgentPipeline):
 //   - steer: when the run carries a supervision inject channel
-//     (shepherd-adoption plan A2) — the supervisor's guidance must reach
+//     (goatherd-adoption plan A2) — the supervisor's guidance must reach
 //     the loop between turns. Without a channel there is nothing to
 //     drain, and the orchestrator's REPL steering remains excluded.
 //
 // Included always:
 // - tool_concurrency: prevents uncontrolled parallel tool dispatch
-// - shepherd_trace: records tool calls for error enrichment and sub-agent diagnostics
+// - goatherd_trace: records tool calls for error enrichment and sub-agent diagnostics
 var subAgentPipelineNames = []string{
 	"tool_concurrency",
-	"shepherd_trace",
+	"goatherd_trace",
 	"evidence_guard",
 }
 
@@ -350,8 +350,8 @@ func SubAgentPipelineNames() []string {
 
 // NewSubAgentPipeline builds the middleware pipeline for a sub-agent loop
 // from config. It uses subAgentPipelineNames instead of the orchestrator
-// defaults; the shepherd_trace builder writes through the session-shared
-// store (set by InitShepherdInfrastructure during wiring).
+// defaults; the goatherd_trace builder writes through the session-shared
+// store (set by InitGoatherdInfrastructure during wiring).
 //
 // The sub-agent pipeline is built from subAgentPipelineNames; conditional
 // prepends (steer, supervisor_guard) are documented on that list.

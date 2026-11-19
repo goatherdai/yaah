@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
@@ -58,7 +58,7 @@ type RetainedRuntime struct {
 	// session in the same repository claiming them.
 	SessionID string
 	// WorktreeRoot is the parent directory for retained worktrees. Empty
-	// defaults to ".yaah/shepherd-worktrees" inside the repository working
+	// defaults to ".yaah/goatherd-worktrees" inside the repository working
 	// tree (project-local).
 	WorktreeRoot string
 	// WorktreeBootstrap runs inside each worktree after creation, for repos
@@ -252,7 +252,7 @@ type proposalEnvelope struct {
 }
 
 // proposalVerbs is the settlement vocabulary advertised to the orchestrator,
-// mirroring Shepherd's run select | apply | release | discard.
+// mirroring Goatherd's run select | apply | release | discard.
 func proposalVerbs() []string { return []string{"select", "apply", "release", "discard"} }
 
 // continuableVerbs is the open-worktree vocabulary: the settlement verbs plus
@@ -330,7 +330,7 @@ type retainedProposal struct {
 	// dispatch; artifactDir is the durable proposal directory; target is
 	// "host" or "session"; world records the lane for envelopes.
 	repoPath    string
-	basisState  shepherdtrace.WorkspaceState
+	basisState  kerneltrace.WorkspaceState
 	basisDigest string
 	artifactDir string
 	deltaDigest string
@@ -741,7 +741,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// before the container is destroyed: the manifest is the proposal, so no
 	// live world (and no kernel output) has to survive settlement.
 	if worldRes.Resolved == subagent.WorldContainer {
-		var basis shepherdtrace.WorkspaceState
+		var basis kerneltrace.WorkspaceState
 		var basisDigest string
 		if !report && !containerSession {
 			// The select precondition is the host workspace state captured
@@ -1059,8 +1059,8 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 // deletions/reversions into the envelope.
 type threadSeed struct {
 	source   *goatherd.RetainedOutput
-	seed     shepherdtrace.WorkspaceState
-	baseline shepherdtrace.WorkspaceState
+	seed     kerneltrace.WorkspaceState
+	baseline kerneltrace.WorkspaceState
 	messages []types.Message
 }
 
@@ -1407,7 +1407,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 }
 
 // resolveDispatchWorld applies the dispatch-world ladder
-// (docs/shepherd-parity.md) to one dispatch. It is pure over the runtime's
+// (docs/goatherd-parity.md) to one dispatch. It is pure over the runtime's
 // config and this host's capabilities: it provisions nothing, so a refusal
 // costs a failed call rather than a stranded world.
 func resolveDispatchWorld(rt RetainedRuntime, role string, report bool) (subagent.WorldResolution, error) {
@@ -1426,7 +1426,7 @@ func resolveDispatchWorld(rt RetainedRuntime, role string, report bool) (subagen
 	// A host-session container proposal settles onto the host git tree. A
 	// container-session proposal settles into the session container; its
 	// manifest is session-lifetime (see the session-target decision in
-	// docs/shepherd-parity.md). Both lanes get a sibling world when the setup
+	// docs/goatherd-parity.md). Both lanes get a sibling world when the setup
 	// is wired.
 	containerSession := rt.DispatchWorlds != nil && rt.DispatchWorlds.SessionSandbox != nil
 
@@ -2063,7 +2063,7 @@ func runRetainedBody(ctx context.Context, rt RetainedRuntime, prompt string, sp 
 func retainedWorktreeRoot(rt RetainedRuntime) string {
 	root := rt.WorktreeRoot
 	if root == "" {
-		root = filepath.Join(rt.RepoPath, ".yaah", "shepherd-worktrees")
+		root = filepath.Join(rt.RepoPath, ".yaah", "goatherd-worktrees")
 	}
 	if abs, err := filepath.Abs(root); err == nil {
 		root = abs

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/goatherd-runtime/effect"
 	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 	"github.com/goatherdai/yaah/internal/config"
@@ -35,7 +35,7 @@ type effectSandbox struct {
 	calls   int
 }
 
-func (e *effectSandbox) EffectChanges(context.Context, shepherdtrace.WorkspaceState) ([]effect.Change, error) {
+func (e *effectSandbox) EffectChanges(context.Context, kerneltrace.WorkspaceState) ([]effect.Change, error) {
 	e.calls++
 	if e.err != nil {
 		return nil, e.err
@@ -73,15 +73,15 @@ type recordingAppender struct {
 	seq     int
 }
 
-func (r *recordingAppender) AppendFact(_ context.Context, schemaRef, kindLabel string, payload map[string]any) (shepherdtrace.AppendReceipt, error) {
+func (r *recordingAppender) AppendFact(_ context.Context, schemaRef, kindLabel string, payload map[string]any) (kerneltrace.AppendReceipt, error) {
 	r.seq++
 	if r.err != nil {
-		return shepherdtrace.AppendReceipt{}, r.err
+		return kerneltrace.AppendReceipt{}, r.err
 	}
 	r.refs = append(r.refs, schemaRef)
 	r.labels = append(r.labels, kindLabel)
 	r.payload = append(r.payload, payload)
-	return shepherdtrace.AppendReceipt{
+	return kerneltrace.AppendReceipt{
 		AppendIntentID: fmt.Sprintf("intent:%d", r.seq),
 		FactIDs:        []string{fmt.Sprintf("fact:%d", r.seq)},
 	}, nil
@@ -185,7 +185,7 @@ func TestApplyOutTool_RecordsEffectsOnAccept(t *testing.T) {
 	// sourced either output from the wrong field.
 	const ownerID, opID = "session:abc", "scope:root-1"
 	appender := &recordingAppender{ownerID: ownerID}
-	bus := shepherdtrace.NewEffectBus(16)
+	bus := kerneltrace.NewEffectBus(16)
 	events := bus.Subscribe("test")
 
 	tool := &ApplyOutTool{Sandbox: ss, HostDir: src}
@@ -233,7 +233,7 @@ func TestApplyOutTool_RecordsEffectsOnAccept(t *testing.T) {
 	// filled and dropped, say — turning a clear failure into a hung run.
 	published := 0
 	for i := 0; i < len(want); i++ {
-		var ev shepherdtrace.EffectEvent
+		var ev kerneltrace.EffectEvent
 		select {
 		case ev = <-events:
 		case <-time.After(5 * time.Second):

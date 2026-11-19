@@ -4,7 +4,7 @@
 # with a live delegated worktree, and the answer file names the worktree the
 # recovery scan adopted. The IR mapping (../IR-MAPPING.md, G7) is right that
 # the ADOPTION itself is not a graph edge — it is a run-lifecycle step, the
-# `yaah shepherd` pre-run command. What a document CAN own here is the other
+# `yaah goatherd` pre-run command. What a document CAN own here is the other
 # half of the drill: the delegation that runs the scan and reports the adopted
 # path, and the emit that turns the report into recovery.txt.
 #
@@ -40,7 +40,7 @@ spec:
         The durable supervision trace is at .orch-trace/trace.sqlite and the
         stale worktree is under .orch-worktree/.
 
-        Run `yaah shepherd` in this workspace to scan and recover the
+        Run `yaah goatherd` in this workspace to scan and recover the
         supervision state. The recovered worktree is live work: leave it on
         disk, and do not touch anything under .orch-worktree/.
 

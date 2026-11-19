@@ -237,34 +237,34 @@ type Defaults struct {
 	// directives via SubAgentConfig.Roles[name].Directives instead.
 	Directives []string `yaml:"directives"`
 
-	// ShepherdTracePath is the file path of the Shepherd trace store.
+	// GoatherdTracePath is the file path of the Goatherd trace store.
 	// Tracing is integral: sub-agent tool calls are always recorded, the
 	// supervisor tool is registered, and per-turn checkpointing is
 	// available to roles that opt in (`turn_checkpoints`). Empty resolves to the
 	// default trace store under the yaah home — see TracePath.
 	//
-	// DEPRECATED flat form of ShepherdTrace.DSN for the SQLite backend: it
+	// DEPRECATED flat form of GoatherdTrace.DSN for the SQLite backend: it
 	// still resolves exactly as before (TraceStoreConfig falls back to it
 	// when the stanza carries no DSN), but new configuration uses
-	// shepherd_trace.{backend,dsn}. See ShepherdTrace.
-	ShepherdTracePath string `yaml:"shepherd_trace_path"`
+	// goatherd_trace.{backend,dsn}. See GoatherdTrace.
+	GoatherdTracePath string `yaml:"goatherd_trace_path"`
 
-	// ShepherdTrace configures where traces live — the storage backend
+	// GoatherdTrace configures where traces live — the storage backend
 	// and its data source. The zero value is the default: an SQLite file
 	// under the yaah home (TracePath). Backend "postgres" moves the trace
 	// ledger to a PostgreSQL server; dsn is then a connection URL and is
 	// required. The record and context id spaces do not depend on the
 	// backend, but a store's contents do not migrate automatically — use
 	// a deliberate export/import to move sessions between backends.
-	ShepherdTrace struct {
+	GoatherdTrace struct {
 		// Backend is "sqlite" (default) or "postgres".
 		Backend string `yaml:"backend"`
 		// DSN is the backend data source name. For SQLite it is a file
-		// path (empty falls back to shepherd_trace_path, then the yaah
+		// path (empty falls back to goatherd_trace_path, then the yaah
 		// home default); for PostgreSQL it is a connection URL and is
 		// required.
 		DSN string `yaml:"dsn"`
-	} `yaml:"shepherd_trace"`
+	} `yaml:"goatherd_trace"`
 
 	// Supervisor configures the advisory supervision rules engine
 	// (adoption plan B1). It is not gated on tracing: tracing is always
@@ -285,7 +285,7 @@ type Defaults struct {
 	RetainedRepoPath string `yaml:"retained_repo_path"`
 
 	// RetainedWorktreeRoot is the parent directory for sub-agent worktrees.
-	// Empty (unset) uses a ".yaah/shepherd-worktrees" directory inside the
+	// Empty (unset) uses a ".yaah/goatherd-worktrees" directory inside the
 	// repository working tree (project-local).
 	RetainedWorktreeRoot string `yaml:"retained_worktree_root"`
 
@@ -481,7 +481,7 @@ type RoleConfig struct {
 
 	// TurnCheckpoints enables per-turn checkpoint/restore inside this
 	// role's sub-agent loop. Default false. Only meaningful where a shared
-	// shepherd scope manager is configured.
+	// goatherd scope manager is configured.
 	TurnCheckpoints bool `yaml:"turn_checkpoints"`
 }
 
@@ -735,23 +735,6 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// `shepherd_trace_dir` was renamed to `shepherd_trace_path` and
-	// retyped from directory to file path; warn once so an upgraded
-	// config knows the old key is ignored and the store resolves to the
-	// default path. The supervised_task keys and the per-role
-	// `supervised` flag are past their deprecation window and now die
-	// silently like any unknown key.
-	var legacyRenamed struct {
-		Agents struct {
-			Default struct {
-				ShepherdTraceDir *string `yaml:"shepherd_trace_dir"`
-			} `yaml:"default"`
-		} `yaml:"agents"`
-	}
-	if err := yaml.Unmarshal(data, &legacyRenamed); err == nil && legacyRenamed.Agents.Default.ShepherdTraceDir != nil {
-		fmt.Fprintf(os.Stderr, "warning: config key `agents.default.shepherd_trace_dir` was renamed to `shepherd_trace_path` and now names the trace store file, not its directory; the old key is ignored and the store resolves to the default path\n")
-	}
-
 	if cfg.Hooks.Dir != "" {
 		cfg.Hooks.Dir = expandHomeDir(cfg.Hooks.Dir)
 	}
@@ -800,11 +783,11 @@ func Load() (*Config, error) {
 		}
 	}
 
-	if cfg.Agent.Default.ShepherdTracePath != "" {
-		cfg.Agent.Default.ShepherdTracePath = expandHomeDir(cfg.Agent.Default.ShepherdTracePath)
+	if cfg.Agent.Default.GoatherdTracePath != "" {
+		cfg.Agent.Default.GoatherdTracePath = expandHomeDir(cfg.Agent.Default.GoatherdTracePath)
 	}
-	if cfg.Agent.Default.ShepherdTrace.DSN != "" {
-		cfg.Agent.Default.ShepherdTrace.DSN = expandHomeDir(cfg.Agent.Default.ShepherdTrace.DSN)
+	if cfg.Agent.Default.GoatherdTrace.DSN != "" {
+		cfg.Agent.Default.GoatherdTrace.DSN = expandHomeDir(cfg.Agent.Default.GoatherdTrace.DSN)
 	}
 	if cfg.Agent.Default.RetainedRepoPath != "" {
 		cfg.Agent.Default.RetainedRepoPath = expandHomeDir(cfg.Agent.Default.RetainedRepoPath)

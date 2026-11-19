@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
@@ -65,7 +65,7 @@ func buildCrashState(t *testing.T) *crashState {
 	t.Helper()
 	repo := newGitRepo(t)
 	dir := t.TempDir()
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -130,7 +130,7 @@ func buildCrashState(t *testing.T) *crashState {
 // durable trace and recovers.
 func reopen(t *testing.T, state *crashState) (*goatherd.ScopeManager, *Report) {
 	t.Helper()
-	store, err := shepherdtrace.NewSQLiteTraceStore(state.storePath)
+	store, err := kerneltrace.NewSQLiteTraceStore(state.storePath)
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestRecover_StaleCheckpointRefusedWithReason(t *testing.T) {
 // record without a child owner — the kernel's scan refuses it.
 func TestRecover_FailsLoudlyOnCorruptTrace(t *testing.T) {
 	repo := newGitRepo(t)
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -242,12 +242,12 @@ func TestRecover_FailsLoudlyOnCorruptTrace(t *testing.T) {
 
 	// A malformed fork record: no child_owner, which the kernel's
 	// recovery scan treats as a corrupt trace.
-	if _, err := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+	if _, err := store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 		AppendIntentID: "sess-bad:fork:corrupt:1",
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID: "sess-bad",
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Declaration,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Declaration,
 				SchemaRef: goatherd.SchemaScopeForked,
 				KindLabel: "scope:forked",
 				Payload:   map[string]any{"isolated": false},
@@ -268,7 +268,7 @@ func TestRecover_FailsLoudlyOnCorruptTrace(t *testing.T) {
 // would strand pre-rename worktrees (they would fall out of `paths` and
 // neither list nor prune). The current ref wins on collision.
 func TestScanWorktreePaths_LegacyForkRecordsListed(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -276,12 +276,12 @@ func TestScanWorktreePaths_LegacyForkRecordsListed(t *testing.T) {
 
 	appendFork := func(ref, intent, owner, path string) {
 		t.Helper()
-		if _, err := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		if _, err := store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 			AppendIntentID: intent,
-			Groups: []shepherdtrace.AppendGroup{{
+			Groups: []kerneltrace.AppendGroup{{
 				TraceOwnerID: "sess-old",
-				FactDrafts: []shepherdtrace.RecordDraft{{
-					Mode:      shepherdtrace.Declaration,
+				FactDrafts: []kerneltrace.RecordDraft{{
+					Mode:      kerneltrace.Declaration,
 					SchemaRef: ref,
 					KindLabel: "scope:forked",
 					Payload:   map[string]any{"child_owner": owner, "sandbox_path": path, "isolated": true},
@@ -420,7 +420,7 @@ func TestRecover_MissingWorktreeReported(t *testing.T) {
 func TestRecover_SquatterDirectoryNeverAdopted(t *testing.T) {
 	repo := newGitRepo(t)
 	dir := t.TempDir()
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -448,7 +448,7 @@ func TestRecover_SquatterDirectoryNeverAdopted(t *testing.T) {
 	}
 	store.Close(context.Background())
 
-	store2, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
+	store2, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestRecover_IsolatedSessionKeepsRootsCausal(t *testing.T) {
 // reopenMode recovers with an explicit adoptRoots mode.
 func reopenMode(t *testing.T, state *crashState, adoptRoots bool) (*goatherd.ScopeManager, *Report) {
 	t.Helper()
-	store, err := shepherdtrace.NewSQLiteTraceStore(state.storePath)
+	store, err := kerneltrace.NewSQLiteTraceStore(state.storePath)
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}
@@ -519,13 +519,13 @@ func reopenMode(t *testing.T, state *crashState, adoptRoots bool) (*goatherd.Sco
 // record — the shape traces written before the kernel recorded sandbox
 // addresses itself carry. Tests use it to stand in for a fork made by an
 // older yaah against the same kernel trace.
-func appendLegacyWorktreeRecord(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, owner, repoPath, worktreePath string) error {
-	_, err := store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+func appendLegacyWorktreeRecord(ctx context.Context, store *kerneltrace.SQLiteTraceStore, owner, repoPath, worktreePath string) error {
+	_, err := store.Append(ctx, kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:worktree:%d", owner, time.Now().UnixNano()),
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID: owner,
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Declaration,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Declaration,
 				SchemaRef: SchemaWorktreeProvisioned,
 				KindLabel: "worktree:provisioned",
 				Payload: map[string]any{
@@ -548,7 +548,7 @@ func appendLegacyWorktreeRecord(ctx context.Context, store *shepherdtrace.SQLite
 // worktree, with the pre-crash work live, and lists it as adopted.
 func TestRecover_KernelRecordedWorktreeAdoptsWithoutYaahRecord(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "trace.sqlite")
-	store, err := shepherdtrace.NewSQLiteTraceStore(storePath)
+	store, err := kerneltrace.NewSQLiteTraceStore(storePath)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -577,7 +577,7 @@ func TestRecover_KernelRecordedWorktreeAdoptsWithoutYaahRecord(t *testing.T) {
 
 	// The crash: nothing is closed, no yaah record is written, and the
 	// restarted process knows only the trace.
-	reopened, err := shepherdtrace.NewSQLiteTraceStore(storePath)
+	reopened, err := kerneltrace.NewSQLiteTraceStore(storePath)
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}
@@ -615,7 +615,7 @@ func TestRecover_KernelRecordedWorktreeAdoptsWithoutYaahRecord(t *testing.T) {
 // fallback deleted at the next minor — with the same strict verification.
 func TestRecover_LegacyRecordFallbackAdopts(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "trace.sqlite")
-	store, err := shepherdtrace.NewSQLiteTraceStore(storePath)
+	store, err := kerneltrace.NewSQLiteTraceStore(storePath)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -639,12 +639,12 @@ func TestRecover_LegacyRecordFallbackAdopts(t *testing.T) {
 
 	// The pre-bump trace shape: the fork record carries the backend but
 	// no sandbox address, and yaah's own record holds the path.
-	if _, err := store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+	if _, err := store.Append(ctx, kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 		AppendIntentID: "sess-legacy:fork-legacy",
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID: root.OwnerID(),
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Declaration,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Declaration,
 				SchemaRef: goatherd.SchemaScopeForked,
 				KindLabel: "scope:forked",
 				Payload: map[string]any{
@@ -663,7 +663,7 @@ func TestRecover_LegacyRecordFallbackAdopts(t *testing.T) {
 	store.Close(context.Background())
 
 	// The crash and restart.
-	reopened, err := shepherdtrace.NewSQLiteTraceStore(storePath)
+	reopened, err := kerneltrace.NewSQLiteTraceStore(storePath)
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}
@@ -701,7 +701,7 @@ func TestRecover_LegacyRecordFallbackAdopts(t *testing.T) {
 func TestRecover_StatsSinkForwarded(t *testing.T) {
 	state := buildCrashState(t)
 
-	store, err := shepherdtrace.NewSQLiteTraceStore(state.storePath)
+	store, err := kerneltrace.NewSQLiteTraceStore(state.storePath)
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}

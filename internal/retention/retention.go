@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/memory"
 	"github.com/goatherdai/yaah/internal/tracestore"
 )
@@ -31,7 +31,7 @@ type Evictor struct {
 
 // NewEvictor builds the evictor for the trace store named by cfg
 // (config.Defaults.TraceStoreConfig: the yaah-home trace file or the
-// shepherd_trace override).
+// goatherd_trace override).
 func NewEvictor(cfg tracestore.Config) *Evictor {
 	return &Evictor{trace: cfg}
 }
@@ -105,9 +105,9 @@ func (e *Evictor) EvictSession(db *memory.DB, sessionID string) error {
 		// non-empty path retains its ordinal-0 entry — and the tombstone
 		// check inside the read still fires ErrOwnerEvicted before the
 		// entries query runs.
-		prefix, err := store.ReadOwnerPrefix(ctx, shepherdtrace.TrustedReadContext, owner, 0, shepherdtrace.ModeBoth)
+		prefix, err := store.ReadOwnerPrefix(ctx, kerneltrace.TrustedReadContext, owner, 0, kerneltrace.ModeBoth)
 		if err != nil {
-			if errors.Is(err, shepherdtrace.ErrOwnerEvicted) {
+			if errors.Is(err, kerneltrace.ErrOwnerEvicted) {
 				continue // a prior delete attempt already evicted this path
 			}
 			return fmt.Errorf("probe trace path: %w", err)
@@ -116,8 +116,8 @@ func (e *Evictor) EvictSession(db *memory.DB, sessionID string) error {
 			continue
 		}
 
-		if _, err := store.EvictOwnerPath(ctx, shepherdtrace.TrustedAppendContext, owner, true); err != nil {
-			if errors.Is(err, shepherdtrace.ErrOwnerEvicted) {
+		if _, err := store.EvictOwnerPath(ctx, kerneltrace.TrustedAppendContext, owner, true); err != nil {
+			if errors.Is(err, kerneltrace.ErrOwnerEvicted) {
 				continue // raced a concurrent delete of the same session
 			}
 			return fmt.Errorf("evict trace owner %s: %w", owner, err)
@@ -158,7 +158,7 @@ func (e *Evictor) SweepNow() error {
 	}
 	defer store.Close(context.Background())
 
-	receipt, err := store.CollectGarbage(context.Background(), shepherdtrace.TrustedAppendContext)
+	receipt, err := store.CollectGarbage(context.Background(), kerneltrace.TrustedAppendContext)
 	if err != nil {
 		return err
 	}

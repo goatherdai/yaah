@@ -105,7 +105,7 @@ class YaahAgent(AbstractInstalledAgent):
             # is readable from the host run directory afterwards.
             TerminalCommand(
                 command=(
-                    "yaah shepherd-trace profile "
+                    "yaah goatherd-trace profile "
                     "> /agent-logs/yaah-profile.txt 2>&1 || true"
                 ),
                 max_timeout_sec=60.0,

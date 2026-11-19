@@ -7,18 +7,18 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
 )
 
-// TestShepherdTurnCheckpointer_RestoreRevertsWorkspace verifies the adapter's
+// TestGoatherdTurnCheckpointer_RestoreRevertsWorkspace verifies the adapter's
 // two-phase behavior: Checkpoint captures the workspace plus a snapshot, and
 // Restore rewinds both — returning the stored snapshot and reverting file
 // changes. It also pins the single-use contract (a second restore must fail).
-func TestShepherdTurnCheckpointer_RestoreRevertsWorkspace(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
+func TestGoatherdTurnCheckpointer_RestoreRevertsWorkspace(t *testing.T) {
+	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestShepherdTurnCheckpointer_RestoreRevertsWorkspace(t *testing.T) {
 		t.Fatalf("create scope: %v", err)
 	}
 
-	ck := NewShepherdTurnCheckpointer(pipeline.ScopeSourceOf(mgr), scope.ID(), sb)
+	ck := NewGoatherdTurnCheckpointer(pipeline.ScopeSourceOf(mgr), scope.ID(), sb)
 
 	ctx := context.Background()
 

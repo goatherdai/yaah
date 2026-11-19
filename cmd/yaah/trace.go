@@ -10,7 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
 	"github.com/goatherdai/yaah/internal/config"
 	"github.com/goatherdai/yaah/internal/tracestore"
@@ -18,30 +18,30 @@ import (
 )
 
 func init() {
-	rootCmd.AddCommand(newShepherdTraceCmd())
+	rootCmd.AddCommand(newGoatherdTraceCmd())
 }
 
-func newShepherdTraceCmd() *cobra.Command {
+func newGoatherdTraceCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "shepherd-trace",
-		Short: "Inspect and manage Shepherd execution traces",
+		Use:   "goatherd-trace",
+		Short: "Inspect and manage Goatherd execution traces",
 	}
 
-	cmd.AddCommand(newShepherdTraceListCmd())
-	cmd.AddCommand(newShepherdTraceShowCmd())
-	cmd.AddCommand(newShepherdTraceProfileCmd())
-	cmd.AddCommand(newShepherdTraceRebuildCmd())
-	cmd.AddCommand(newShepherdTraceConflictsCmd())
+	cmd.AddCommand(newGoatherdTraceListCmd())
+	cmd.AddCommand(newGoatherdTraceShowCmd())
+	cmd.AddCommand(newGoatherdTraceProfileCmd())
+	cmd.AddCommand(newGoatherdTraceRebuildCmd())
+	cmd.AddCommand(newGoatherdTraceConflictsCmd())
 
 	return cmd
 }
 
-func newShepherdTraceListCmd() *cobra.Command {
+func newGoatherdTraceListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List recent trace sessions",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := openShepherdTraceStore()
+			store, err := openGoatherdTraceStore()
 			if err != nil {
 				return err
 			}
@@ -50,8 +50,8 @@ func newShepherdTraceListCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			slice, err := store.ReadOwnerPrefix(
 				cmd.Context(),
-				shepherdtrace.TrustedReadContext,
-				"", 99999, shepherdtrace.ModeDeclarationsOnly,
+				kerneltrace.TrustedReadContext,
+				"", 99999, kerneltrace.ModeDeclarationsOnly,
 			)
 			if err != nil {
 				return fmt.Errorf("read traces: %w", err)
@@ -80,7 +80,7 @@ func newShepherdTraceListCmd() *cobra.Command {
 	}
 }
 
-func newShepherdTraceShowCmd() *cobra.Command {
+func newGoatherdTraceShowCmd() *cobra.Command {
 	var latest bool
 
 	cmd := &cobra.Command{
@@ -88,7 +88,7 @@ func newShepherdTraceShowCmd() *cobra.Command {
 		Short: "Show tool calls in a trace session",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := openShepherdTraceStore()
+			store, err := openGoatherdTraceStore()
 			if err != nil {
 				return err
 			}
@@ -99,8 +99,8 @@ func newShepherdTraceShowCmd() *cobra.Command {
 			if latest || len(args) == 0 {
 				slice, err := store.ReadOwnerPrefix(
 					cmd.Context(),
-					shepherdtrace.TrustedReadContext,
-					"", 99999, shepherdtrace.ModeDeclarationsOnly,
+					kerneltrace.TrustedReadContext,
+					"", 99999, kerneltrace.ModeDeclarationsOnly,
 				)
 				if err != nil {
 					return fmt.Errorf("read traces: %w", err)
@@ -121,8 +121,8 @@ func newShepherdTraceShowCmd() *cobra.Command {
 
 			slice, err := store.ReadOwnerPrefix(
 				cmd.Context(),
-				shepherdtrace.TrustedReadContext,
-				sessionID, 99999, shepherdtrace.ModeBoth,
+				kerneltrace.TrustedReadContext,
+				sessionID, 99999, kerneltrace.ModeBoth,
 			)
 			if err != nil {
 				return fmt.Errorf("read session: %w", err)
@@ -137,14 +137,14 @@ func newShepherdTraceShowCmd() *cobra.Command {
 			var sessionContext map[string]any
 			for _, factID := range slice.FactIDs() {
 				fact := slice.FactsByID[factID]
-				rec, ok := fact.(shepherdtrace.Record)
+				rec, ok := fact.(kerneltrace.Record)
 				if !ok {
 					continue
 				}
-				if rec.Envelope.Mode == shepherdtrace.Capture && rec.View.KindLabel == "session:context" && sessionContext == nil {
+				if rec.Envelope.Mode == kerneltrace.Capture && rec.View.KindLabel == "session:context" && sessionContext == nil {
 					sessionContext = rec.Body.Payload
 				}
-				if rec.Envelope.Mode != shepherdtrace.Capture {
+				if rec.Envelope.Mode != kerneltrace.Capture {
 					continue
 				}
 				if len(rec.Envelope.CausedByIDs) > 0 {
@@ -163,15 +163,15 @@ func newShepherdTraceShowCmd() *cobra.Command {
 			num := 0
 			for _, factID := range slice.FactIDs() {
 				fact := slice.FactsByID[factID]
-				rec, ok := fact.(shepherdtrace.Record)
+				rec, ok := fact.(kerneltrace.Record)
 				if !ok {
 					continue
 				}
-				if rec.Envelope.Mode == shepherdtrace.Capture && rec.View.KindLabel == "assistant:message" {
+				if rec.Envelope.Mode == kerneltrace.Capture && rec.View.KindLabel == "assistant:message" {
 					fmt.Fprintf(w, "   assistant: %s\n", assistantSummary(rec.Body.Payload))
 					continue
 				}
-				if rec.Envelope.Mode != shepherdtrace.Declaration || rec.View.KindLabel == "turn:created" {
+				if rec.Envelope.Mode != kerneltrace.Declaration || rec.View.KindLabel == "turn:created" {
 					continue
 				}
 
@@ -208,13 +208,13 @@ func newShepherdTraceShowCmd() *cobra.Command {
 	return cmd
 }
 
-func newShepherdTraceProfileCmd() *cobra.Command {
+func newGoatherdTraceProfileCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "profile [session-id]",
 		Short: "Show execution profile for a trace session",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := openShepherdTraceStore()
+			store, err := openGoatherdTraceStore()
 			if err != nil {
 				return err
 			}
@@ -225,8 +225,8 @@ func newShepherdTraceProfileCmd() *cobra.Command {
 			if len(args) == 0 {
 				slice, err := store.ReadOwnerPrefix(
 					cmd.Context(),
-					shepherdtrace.TrustedReadContext,
-					"", 99999, shepherdtrace.ModeDeclarationsOnly,
+					kerneltrace.TrustedReadContext,
+					"", 99999, kerneltrace.ModeDeclarationsOnly,
 				)
 				if err != nil {
 					return fmt.Errorf("read traces: %w", err)
@@ -247,8 +247,8 @@ func newShepherdTraceProfileCmd() *cobra.Command {
 
 			slice, err := store.ReadOwnerPrefix(
 				cmd.Context(),
-				shepherdtrace.TrustedReadContext,
-				sessionID, 99999, shepherdtrace.ModeBoth,
+				kerneltrace.TrustedReadContext,
+				sessionID, 99999, kerneltrace.ModeBoth,
 			)
 			if err != nil {
 				return fmt.Errorf("read session: %w", err)
@@ -262,7 +262,7 @@ func newShepherdTraceProfileCmd() *cobra.Command {
 			captureByParent := make(map[string]captureRecord)
 			for _, factID := range slice.FactIDs() {
 				fact := slice.FactsByID[factID]
-				if fact.GetEnvelope().Mode != shepherdtrace.Capture {
+				if fact.GetEnvelope().Mode != kerneltrace.Capture {
 					continue
 				}
 				causedBy := fact.GetEnvelope().CausedByIDs
@@ -296,15 +296,15 @@ func newShepherdTraceProfileCmd() *cobra.Command {
 
 			for _, factID := range slice.FactIDs() {
 				fact := slice.FactsByID[factID]
-				rec, isRecord := fact.(shepherdtrace.Record)
+				rec, isRecord := fact.(kerneltrace.Record)
 				kind := fact.GetView().KindLabel
-				if fact.GetEnvelope().Mode == shepherdtrace.Capture && kind == "assistant:message" && current != nil {
+				if fact.GetEnvelope().Mode == kerneltrace.Capture && kind == "assistant:message" && current != nil {
 					if isRecord {
 						current.assistant = append(current.assistant, assistantSummary(rec.Body.Payload))
 					}
 					continue
 				}
-				if fact.GetEnvelope().Mode != shepherdtrace.Declaration {
+				if fact.GetEnvelope().Mode != kerneltrace.Declaration {
 					continue
 				}
 
@@ -315,7 +315,7 @@ func newShepherdTraceProfileCmd() *cobra.Command {
 						promptTokens:     cap.promptTokens,
 						completionTokens: cap.completionTokens,
 					}
-					if rec, ok := fact.(shepherdtrace.Record); ok {
+					if rec, ok := fact.(kerneltrace.Record); ok {
 						if n, ok2 := payloadNumber(rec.Body.Payload["turn"]); ok2 {
 							turn.number = int(n)
 						}
@@ -464,8 +464,8 @@ type captureRecord struct {
 	outputSpill      string
 }
 
-func readCapturePayload(fact shepherdtrace.VisibleRecord) captureRecord {
-	rec, ok := fact.(shepherdtrace.Record)
+func readCapturePayload(fact kerneltrace.VisibleRecord) captureRecord {
+	rec, ok := fact.(kerneltrace.Record)
 	if !ok {
 		return captureRecord{}
 	}
@@ -516,7 +516,7 @@ func formatNum(n int) string {
 	return fmt.Sprintf("%d", n)
 }
 
-func openShepherdTraceStore() (*shepherdtrace.SQLiteTraceStore, error) {
+func openGoatherdTraceStore() (*kerneltrace.SQLiteTraceStore, error) {
 	cfg, _ := config.Load()
 	traceCfg := (config.Defaults{}).TraceStoreConfig()
 	if cfg != nil {
@@ -536,8 +536,8 @@ func openShepherdTraceStore() (*shepherdtrace.SQLiteTraceStore, error) {
 	return store, nil
 }
 
-func captureStatus(fact shepherdtrace.VisibleRecord) string {
-	rec, ok := fact.(shepherdtrace.Record)
+func captureStatus(fact kerneltrace.VisibleRecord) string {
+	rec, ok := fact.(kerneltrace.Record)
 	if !ok {
 		return "pending"
 	}
@@ -591,17 +591,17 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-// newShepherdTraceRebuildCmd reconstructs one owner's conversation from trace
+// newGoatherdTraceRebuildCmd reconstructs one owner's conversation from trace
 // facts alone. It is the acceptance proof for yaah-o86: a crash between a turn
 // and state.db's debounced write no longer loses the transcript.
-func newShepherdTraceRebuildCmd() *cobra.Command {
+func newGoatherdTraceRebuildCmd() *cobra.Command {
 	var outPath string
 	cmd := &cobra.Command{
 		Use:   "rebuild [session-id]",
 		Short: "Reconstruct a session transcript from trace facts",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := openShepherdTraceStore()
+			store, err := openGoatherdTraceStore()
 			if err != nil {
 				return err
 			}
@@ -611,7 +611,7 @@ func newShepherdTraceRebuildCmd() *cobra.Command {
 			if len(args) > 0 {
 				sessionID = args[0]
 			} else {
-				slice, err := store.ReadOwnerPrefix(cmd.Context(), shepherdtrace.TrustedReadContext, "", 99999, shepherdtrace.ModeDeclarationsOnly)
+				slice, err := store.ReadOwnerPrefix(cmd.Context(), kerneltrace.TrustedReadContext, "", 99999, kerneltrace.ModeDeclarationsOnly)
 				if err != nil {
 					return fmt.Errorf("read traces: %w", err)
 				}

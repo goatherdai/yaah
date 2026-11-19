@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/config"
@@ -18,7 +18,7 @@ import (
 // dispatch_container.go implements per-dispatch container worlds (yaah-ihfh.3).
 // A report dispatch never seals, so its container is created, used, and
 // destroyed. A proposal dispatch seals its work as a GitDelta manifest before
-// the container is destroyed (docs/shepherd-parity.md §Container settlement:
+// the container is destroyed (docs/goatherd-parity.md §Container settlement:
 // GitDelta), so settlement needs no live world: the manifest is the proposal.
 // Both lanes obtain the world from the same DispatchWorlds setup.
 
@@ -60,8 +60,8 @@ func dispatchWorldPreflightFailure(res subagent.WorldResolution, cause error) (s
 // container's captured state, so a sibling sees the session's current world
 // rather than a stale host copy. It returns a live sandbox on success; every
 // failure path destroys whatever was opened.
-func openDispatchWorld(ctx context.Context, rt RetainedRuntime, authority dispatchAuthority) (*substrate.SessionSandbox, shepherdtrace.WorkspaceState, string, error) {
-	var noBasis shepherdtrace.WorkspaceState
+func openDispatchWorld(ctx context.Context, rt RetainedRuntime, authority dispatchAuthority) (*substrate.SessionSandbox, kerneltrace.WorkspaceState, string, error) {
+	var noBasis kerneltrace.WorkspaceState
 	dw := rt.DispatchWorlds
 	if dw == nil || dw.Opener == nil {
 		return nil, noBasis, "", fmt.Errorf("no per-dispatch container setup is wired for this session")
@@ -148,8 +148,8 @@ func openDispatchWorld(ctx context.Context, rt RetainedRuntime, authority dispat
 // applied to the shaped sandbox, and the staging world is destroyed. The
 // shaped sandbox's baseline is the applied state, so the snapshot-native seal
 // measures exactly the body's delta.
-func openShapedHostWorld(startCtx, parentCtx context.Context, rt RetainedRuntime, dw *DispatchWorlds, shaped config.WorkspaceConfig) (*substrate.SessionSandbox, shepherdtrace.WorkspaceState, string, error) {
-	var noBasis shepherdtrace.WorkspaceState
+func openShapedHostWorld(startCtx, parentCtx context.Context, rt RetainedRuntime, dw *DispatchWorlds, shaped config.WorkspaceConfig) (*substrate.SessionSandbox, kerneltrace.WorkspaceState, string, error) {
+	var noBasis kerneltrace.WorkspaceState
 
 	stagingCfg := shaped
 	stagingCfg.WritableRoots = nil
@@ -216,7 +216,7 @@ func openShapedHostWorld(startCtx, parentCtx context.Context, rt RetainedRuntime
 	return ss, noBasis, "", nil
 }
 
-func releaseStaging(ctx context.Context, staging *substrate.SessionSandbox, state shepherdtrace.WorkspaceState) error {
+func releaseStaging(ctx context.Context, staging *substrate.SessionSandbox, state kerneltrace.WorkspaceState) error {
 	if !staging.Releasable() {
 		return nil
 	}
@@ -320,7 +320,7 @@ func runDispatchContainerProposal(
 	timeout time.Duration,
 	res subagent.WorldResolution,
 	sandbox *substrate.SessionSandbox,
-	basisState shepherdtrace.WorkspaceState,
+	basisState kerneltrace.WorkspaceState,
 	basisDigest string,
 ) (out retainedRunResult, runErr error) {
 	recordDispatchWorld(ctx, res)

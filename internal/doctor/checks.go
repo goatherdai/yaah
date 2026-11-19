@@ -55,7 +55,7 @@ func RunChecks(opts Options) []Check {
 		CheckQualityGates(cfg, cfgErr),
 		CheckDirectives(cfg, cfgErr, opts.DirectiveOverrides),
 		CheckPipeline(cfg, cfgErr),
-		CheckShepherd(cfg, cfgErr),
+		CheckGoatherd(cfg, cfgErr),
 		CheckOTel(cfg, cfgErr),
 		CheckHomeWritable(),
 		CheckPlatform(),
@@ -537,7 +537,7 @@ func jailed(placement string, available bool) bool {
 // doctor run that booted throwaway containers would be a probe, not a
 // diagnosis. The detail line names the libraries the binary really
 // depends on — goatherd-runtime's sandbox/croft adapter for the isolated
-// workspace, shepherd for supervision — so an "unknown backend" failure is
+// workspace, goatherd for supervision — so an "unknown backend" failure is
 // diagnosable here, against what the binary provides. That failure now has
 // a platform cause as well as a config one: the adapter registers no
 // backend off-Linux, so a non-Linux binary genuinely cannot provide
@@ -587,7 +587,7 @@ func CheckWorkspace(cfg *config.Config, cfgErr error) Check {
 		} else {
 			detail += ", socket containerd default"
 		}
-		detail += "; sandbox library: goatherd-runtime sandbox/croft (containerd), supervision: shepherd (git); daemon and image contract probed at session start"
+		detail += "; sandbox library: goatherd-runtime sandbox/croft (containerd), supervision: goatherd (git); daemon and image contract probed at session start"
 		return Check{Label: "Workspace", Status: "OK", Detail: detail}
 	default:
 		return Check{Label: "Workspace", Status: "FAIL", Detail: fmt.Sprintf("unknown backend %q (valid: local, containerd)", w.Backend)}
@@ -815,14 +815,14 @@ func resolveProviderName(cfg *config.Config) string {
 
 // Color helper functions - these respect NO_COLOR environment variable
 
-// CheckShepherd reports the shepherd-tracing health (adoption plan
+// CheckGoatherd reports the goatherd-tracing health (adoption plan
 // R2): the store must open and a recovery must rebuild — and the
 // recovery counts are the check's substance: scopes, roots, re-adopted
 // worktrees, and the warn-only buckets (orphans, missing, unadopted)
 // that surface leftover or lost work. Tracing is integral, so the
 // resolved store path is always reported.
-func CheckShepherd(cfg *config.Config, cfgErr error) Check {
-	const label = "Shepherd tracing"
+func CheckGoatherd(cfg *config.Config, cfgErr error) Check {
+	const label = "Goatherd tracing"
 	if cfgErr != nil || cfg == nil {
 		return Check{Label: label, Status: "WARN", Detail: "config unavailable"}
 	}

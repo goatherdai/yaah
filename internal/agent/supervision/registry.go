@@ -1,11 +1,11 @@
-// Package supervision bridges shepherd scopes to the loops that run
-// under them (shepherd-adoption plan D2): a scope's interventions must
+// Package supervision bridges goatherd scopes to the loops that run
+// under them (goatherd-adoption plan D2): a scope's interventions must
 // reach execution, not just the trace. The Registry maps scope IDs to
 // the running loops' steering channels, so the supervisor tool's inject
 // (and, from step A3 on, halt) addresses something real.
 //
 // The registry is deliberately dumb: it knows scope IDs and channels,
-// nothing about shepherded scopes or loop internals — the runner
+// nothing about KEEPgoatherdedKEEP scopes or loop internals — the runner
 // registers, the supervisor tool delivers, and lifecycle (a run's
 // deferred unregister) keeps the map honest.
 package supervision

@@ -212,7 +212,7 @@ Rule of thumb: **step down only along axes that were not required.**
 | copy-in/bootstrap refuses (not a repo, subdirectory, `.git` file, tracked symlink, tracked denied file) | preflight | fail — there is no faithful world to fall back to |
 | create / exec fails | in-run | fail the dispatch; keep the world |
 | capture fails at seal | end | fail the seal; keep the world |
-| teardown fails | end | warn; record the world for `yaah shepherd`; never block settlement |
+| teardown fails | end | warn; record the world for `yaah goatherd`; never block settlement |
 | capacity exhausted | preflight | bound/queue, or step down with a warning |
 
 ### Observation
@@ -228,8 +228,8 @@ Three channels, same vocabulary as confinement:
 ### Recovery
 
 A crash mid-dispatch leaves a container and a snapshot. The world's identity
-labels the container so `yaah shepherd containers` can list it and
-`yaah shepherd prune-container <id>` can delete one exact id. Unlike a
+labels the container so `yaah goatherd containers` can list it and
+`yaah goatherd prune-container <id>` can delete one exact id. Unlike a
 worktree, a croft world is not addressable by path; the exact container id is
 the handle.
 
@@ -329,7 +329,7 @@ Acceptance for retained container dispatches:
    scoped by durable session id; an `applying` marker quarantines an interrupted
    settlement, and a `settled` marker consumes the artifact instead of
    resurrecting it. A container orphaned **before** the seal is listed and
-   pruned by `yaah shepherd containers` / `prune-container <id>` (`yaah-vmje`).
+   pruned by `yaah goatherd containers` / `prune-container <id>` (`yaah-vmje`).
 4. `yaah doctor` reports the resolution and the reason before the first run.
 5. ~~Container-session proposals settle into the session container~~ — done:
    `select`/`apply` write through the session workspace, `select` requires the
@@ -380,7 +380,7 @@ patch parser.
 The container is destroyed at seal: the proposal is the manifest, not a live
 snapshot, so there is no pinned croft state, no lease, and no container to
 recover after a successful seal. A container orphaned before the seal is listed
-by `yaah shepherd containers` and pruned by exact id. The manifest is written
+by `yaah goatherd containers` and pruned by exact id. The manifest is written
 durably (`.yaah/proposals/<id>/`) at seal, which is what makes a crash-surviving
 proposal possible without keeping the world alive. Total manifest size is
 capped; exceeding it fails the seal with a clear message rather than truncating.

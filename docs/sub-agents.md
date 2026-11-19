@@ -221,7 +221,7 @@ before suspecting the provider or the network.
 A sub-agent's work is retained, not trusted: it runs in its own world and
 returns a proposal the orchestrator settles.
 
-- **Retention.** In a local session the shepherd root scope always exists
+- **Retention.** In a local session the goatherd root scope always exists
   (tracing is integral), so each proposal-lane dispatch runs in a detached
   `git worktree` by default and returns a sealed proposal. With a configured
   per-dispatch container world, the work is a whole-path `GitDelta` manifest

@@ -18,7 +18,7 @@ import (
 //
 // What going through the seam buys is the shared Sandbox contract and type
 // vocabulary: the container lane now speaks goatherdsandbox.ExecRequest,
-// shepherdtrace.WorkspaceState and the rest, so the runtime semantics that
+// kerneltrace.WorkspaceState and the rest, so the runtime semantics that
 // live behind that seam — capture digests, DeltaApplier, settlement, recovery
 // — are reachable from it rather than structurally out of reach. The adapter
 // also exposes optional capabilities this lane does not consume yet
@@ -30,7 +30,7 @@ import (
 // registry — goatherdgit.NewLocalGitSandbox (with the kernel's
 // CleanPreserveUntracked policy where lossless rewinds matter), and
 // goatherdgit.NewWorktreeSandbox in internal/tools/retained.go,
-// internal/agent/runner, internal/agent/recovery and cmd/yaah/shepherd.go.
+// internal/agent/runner, internal/agent/recovery and cmd/yaah/goatherd.go.
 // This is currently the only OpenSandbox call in yaah. Importing croftadapter
 // is what registers "containerd" — config can name a backend, only an import
 // can provide one.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/goatherd-runtime/effect"
 	"github.com/goatherdai/yaah/internal/prompts"
 )
@@ -53,7 +53,7 @@ type EffectSink struct {
 	// Bus publishes the effects for live supervision. Nil appends the durable
 	// record without publishing, which is correct for a session with no
 	// supervisor attached.
-	Bus *shepherdtrace.EffectBus
+	Bus *kerneltrace.EffectBus
 	// OpID attributes the effects to an operation, becoming each record's
 	// caused_by and the bus event's causal parent.
 	//

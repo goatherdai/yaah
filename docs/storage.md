@@ -7,8 +7,8 @@ be byte-identical.
 | | `state.db` | `trace.db` |
 |---|---|---|
 | **Role** | Active conversation and retrieval model | Append-only evidence, causal record, and recovery source |
-| **Default path** | `~/.yaah/state.db` (or `$YAAH_HOME/state.db`) | `~/.yaah/trace.db` (configurable with `shepherd_trace_path`) |
-| **Primary consumer** | Resume, session picker, history, FTS5, embeddings | `shepherd-trace`, `proposal`/supervision provenance, contract recovery, `rebuild` |
+| **Default path** | `~/.yaah/state.db` (or `$YAAH_HOME/state.db`) | `~/.yaah/trace.db` (configurable with `goatherd_trace_path`) |
+| **Primary consumer** | Resume, session picker, history, FTS5, embeddings | `goatherd-trace`, `proposal`/supervision provenance, contract recovery, `rebuild` |
 | **Mutation** | Positional rows are rebased/truncated on compaction or restore; sessions can be deleted | Append-only; facts are never rewritten |
 | **Message text** | The active rows the next Run resumes from | A content-bearing transcript mirror, capped at 64KiB per free-text field |
 | **Sub-agent work** | Not persisted | Persisted under a synthetic owner; the parent mapping is in `trace_owners` |
@@ -61,7 +61,7 @@ cache; it is a **write-ahead/audit tier beside a mutable read model**.
   every `state.db` concern: titles, embeddings, FTS index, session ordering, or
   the compaction working set.
 
-`yaah shepherd-trace rebuild <session>` can reconstruct a transcript from trace
+`yaah goatherd-trace rebuild <session>` can reconstruct a transcript from trace
 facts alone. It does not replace a resume: resume still reads `state.db`.
 
 ## Retention and deletion

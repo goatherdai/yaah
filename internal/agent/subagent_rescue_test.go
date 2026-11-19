@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/goatherd-runtime"
 	"github.com/goatherdai/yaah/internal/agent/supervision"
 	"github.com/goatherdai/yaah/internal/tools"
@@ -39,12 +39,12 @@ func (t *explodeTool) Execute(ctx context.Context, args string) (string, error) 
 // then finishes.
 func TestSubAgentLoop_ErrorRateRuleRescue(t *testing.T) {
 	// The supervision stack, assembled as the wiring does it.
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open trace store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	bus := shepherdtrace.NewEffectBus(64)
+	bus := kerneltrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
 	mgr := goatherd.NewScopeManager(store)
@@ -79,7 +79,7 @@ func TestSubAgentLoop_ErrorRateRuleRescue(t *testing.T) {
 		},
 	}}
 
-	// The sub-agent pipeline's shepherd_trace middleware writes through
+	// The sub-agent pipeline's goatherd_trace middleware writes through
 	// the session store injected here — the H4 seam, as the wiring does.
 	loop := NewSubAgentLoop(fp, reg, "test-model", "sys", SubAgentConfig{
 		MaxLoopCycles: 5,
@@ -133,7 +133,7 @@ func TestSubAgentLoop_ErrorRateRuleRescue(t *testing.T) {
 
 	// And the firing is recorded in the target scope's trace — the A2
 	// invariant: the fact is the record.
-	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "sub-worker", 999, shepherdtrace.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), kerneltrace.TrustedReadContext, "sub-worker", 999, kerneltrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}

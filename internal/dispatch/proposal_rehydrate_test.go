@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 )
 
@@ -125,7 +125,7 @@ func TestSettleGitDelta_RecordsSettledFact(t *testing.T) {
 	if !ok {
 		t.Fatal("root scope missing")
 	}
-	slice, err := f.fx.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, parent.OwnerID(), 999, shepherdtrace.ModeBoth)
+	slice, err := f.fx.store.ReadOwnerPrefix(context.Background(), kerneltrace.TrustedReadContext, parent.OwnerID(), 999, kerneltrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read owner prefix: %v", err)
 	}

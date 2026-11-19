@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 )
 
@@ -743,14 +743,14 @@ func TestRetained_ReportLaneTeardownFailureSurfaced(t *testing.T) {
 }
 
 // TestRetainedWorktreePath_DefaultProjectLocal pins the default worktree root:
-// when WorktreeRoot is unset, retained worktrees live at .yaah/shepherd-worktrees
+// when WorktreeRoot is unset, retained worktrees live at .yaah/goatherd-worktrees
 // inside the repository working tree — not beside it.
 func TestRetainedWorktreePath_DefaultProjectLocal(t *testing.T) {
 	repo := t.TempDir()
 	rt := RetainedRuntime{RepoPath: repo} // WorktreeRoot empty → default
 
 	got := retainedWorktreePath(rt, "proposal:1/2")
-	want := filepath.Join(repo, ".yaah", "shepherd-worktrees", "proposal-1-2")
+	want := filepath.Join(repo, ".yaah", "goatherd-worktrees", "proposal-1-2")
 	if got != want {
 		t.Errorf("default path = %q, want %q", got, want)
 	}
@@ -788,7 +788,7 @@ func TestEnsureWorktreeRootExcluded(t *testing.T) {
 	runGit(t, repo, "config", "user.email", "t@example.com")
 	runGit(t, repo, "config", "user.name", "test")
 
-	rt := RetainedRuntime{RepoPath: repo} // default root: repo/.yaah/shepherd-worktrees
+	rt := RetainedRuntime{RepoPath: repo} // default root: repo/.yaah/goatherd-worktrees
 
 	if err := ensureWorktreeRootExcluded(context.Background(), rt); err != nil {
 		t.Fatalf("ensureWorktreeRootExcluded: %v", err)
@@ -799,7 +799,7 @@ func TestEnsureWorktreeRootExcluded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read info/exclude: %v", err)
 	}
-	if !strings.Contains(string(data), ".yaah/shepherd-worktrees/") {
+	if !strings.Contains(string(data), ".yaah/goatherd-worktrees/") {
 		t.Errorf("info/exclude does not contain the worktree root:\n%s", data)
 	}
 
@@ -808,7 +808,7 @@ func TestEnsureWorktreeRootExcluded(t *testing.T) {
 		t.Fatalf("second ensureWorktreeRootExcluded: %v", err)
 	}
 	data, _ = os.ReadFile(excludePath)
-	if got := strings.Count(string(data), ".yaah/shepherd-worktrees/"); got != 1 {
+	if got := strings.Count(string(data), ".yaah/goatherd-worktrees/"); got != 1 {
 		t.Errorf("info/exclude contains the line %d times, want 1", got)
 	}
 }
@@ -831,7 +831,7 @@ func TestEnsureWorktreeRootExcluded_OutsideRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read info/exclude: %v", err)
 	}
-	if strings.Contains(string(data), "shepherd-worktrees") {
+	if strings.Contains(string(data), "goatherd-worktrees") {
 		t.Errorf("info/exclude unexpectedly modified for an outside root:\n%s", data)
 	}
 }
@@ -896,15 +896,15 @@ func TestRetained_ReportLaneBodyErrorPropagates(t *testing.T) {
 	}
 }
 
-func findRetainedFacts(t *testing.T, store *shepherdtrace.SQLiteTraceStore, owner, schema string) []shepherdtrace.Record {
+func findRetainedFacts(t *testing.T, store *kerneltrace.SQLiteTraceStore, owner, schema string) []kerneltrace.Record {
 	t.Helper()
-	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, owner, 999, shepherdtrace.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), kerneltrace.TrustedReadContext, owner, 999, kerneltrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace for %s: %v", owner, err)
 	}
-	var out []shepherdtrace.Record
+	var out []kerneltrace.Record
 	for _, id := range slice.FactIDs() {
-		if rec, ok := slice.FactsByID[id].(shepherdtrace.Record); ok && rec.Envelope.SchemaRef == schema {
+		if rec, ok := slice.FactsByID[id].(kerneltrace.Record); ok && rec.Envelope.SchemaRef == schema {
 			out = append(out, rec)
 		}
 	}

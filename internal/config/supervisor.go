@@ -9,7 +9,7 @@ import (
 )
 
 // SupervisorConfig configures the supervision rules engine
-// (shepherd-adoption plan B1). Tracing is integral, so the stanza is
+// (goatherd-adoption plan B1). Tracing is integral, so the stanza is
 // always consulted.
 //
 // Defaults, precisely: with tracing on and the stanza absent, every
@@ -143,11 +143,11 @@ func (s SupervisorConfig) StuckRepeatThreshold() int {
 	return s.Rules.StuckDetection.RepeatThreshold
 }
 
-// TracePath returns the Shepherd trace store file path. Tracing is
-// integral, so there is no empty/off result: an unset shepherd_trace_path
+// TracePath returns the Goatherd trace store file path. Tracing is
+// integral, so there is no empty/off result: an unset goatherd_trace_path
 // resolves to <yaah home>/trace.db, honoring $YAAH_HOME.
 func (d Defaults) TracePath() string {
-	if p := strings.TrimSpace(d.ShepherdTracePath); p != "" {
+	if p := strings.TrimSpace(d.GoatherdTracePath); p != "" {
 		return p
 	}
 	return filepath.Join(HomeDir(), "trace.db")
@@ -155,18 +155,18 @@ func (d Defaults) TracePath() string {
 
 // TraceStoreConfig resolves where traces live — backend and DSN — into the
 // seam the tracestore package opens. Resolution order, per field: the
-// shepherd_trace stanza wins; the deprecated flat shepherd_trace_path
+// goatherd_trace stanza wins; the deprecated flat goatherd_trace_path
 // remains the SQLite DSN when the stanza carries none; the SQLite default
 // is the yaah-home trace file. The backend is normalized (empty is the
 // SQLite default) so callers can branch on IsSQLite without re-validating.
 // A PostgreSQL backend without a DSN surfaces as an error at Open, not as
 // a silently wrong default.
 func (d Defaults) TraceStoreConfig() tracestore.Config {
-	backend := strings.TrimSpace(d.ShepherdTrace.Backend)
+	backend := strings.TrimSpace(d.GoatherdTrace.Backend)
 	if backend == "" {
 		backend = tracestore.BackendSQLite
 	}
-	dsn := strings.TrimSpace(d.ShepherdTrace.DSN)
+	dsn := strings.TrimSpace(d.GoatherdTrace.DSN)
 	if dsn == "" && backend == tracestore.BackendSQLite {
 		dsn = d.TracePath()
 	}

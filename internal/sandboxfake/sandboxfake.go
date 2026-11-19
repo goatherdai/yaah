@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 )
 
@@ -94,7 +94,7 @@ func (s *Sandbox) Capabilities() goatherdsandbox.SandboxCapabilities {
 		FileIO:      true,
 		Diff:        true,
 		Isolated:    true,
-		Containment: shepherdtrace.ContainContained,
+		Containment: kerneltrace.ContainContained,
 	}
 }
 

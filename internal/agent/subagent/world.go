@@ -8,7 +8,7 @@
 //
 // Degradation is requirement-preserving: a fallback is legal only when it
 // still enforces everything the dispatch declared. See
-// docs/shepherd-parity.md §Requirement-preserving degradation.
+// docs/goatherd-parity.md §Requirement-preserving degradation.
 package subagent
 
 import (

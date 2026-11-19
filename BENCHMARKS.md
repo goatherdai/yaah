@@ -15,7 +15,7 @@ page describes how measurements are taken so results stay comparable.
 - **Token usage** — prompt, completion, and total tokens, with cache reads
   and writes reported separately where the provider exposes them.
 - **Tool behavior** — tool calls, failures, and retries are available from the
-  run's session and Shepherd trace data.
+  run's session and Goatherd trace data.
 
 ## Method
 

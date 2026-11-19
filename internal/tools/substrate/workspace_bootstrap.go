@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/goatherd-runtime/effect"
 	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 )
@@ -324,7 +324,7 @@ func (s *SessionSandbox) DiffSinceBaseline(ctx context.Context, maxLines int) (s
 
 // Baseline returns the session's baseline state, or nil when the session
 // started without a bootstrap.
-func (s *SessionSandbox) Baseline() *shepherdtrace.WorkspaceState { return s.baseline }
+func (s *SessionSandbox) Baseline() *kerneltrace.WorkspaceState { return s.baseline }
 
 // effectChanger is the optional backend capability that yields typed workspace
 // changes in the runtime's neutral vocabulary. The containerd adapter and the
@@ -335,7 +335,7 @@ func (s *SessionSandbox) Baseline() *shepherdtrace.WorkspaceState { return s.bas
 // this package does not couple to a backend: any sandbox offering the method
 // satisfies it, and a backend that does not simply fails the assertion.
 type effectChanger interface {
-	EffectChanges(ctx context.Context, ws shepherdtrace.WorkspaceState) ([]effect.Change, error)
+	EffectChanges(ctx context.Context, ws kerneltrace.WorkspaceState) ([]effect.Change, error)
 }
 
 // SupportsEffects reports whether the session's backend can supply typed

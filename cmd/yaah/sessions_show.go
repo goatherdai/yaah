@@ -16,7 +16,7 @@ import (
 // message transcript in order. It closes the gap that made 'yaah sessions'
 // able to list and delete sessions but not read one — the only ways to see a
 // transcript were to resume it in the REPL or to read tool-call traces
-// through 'yaah shepherd-trace show', neither of which is inspection.
+// through 'yaah goatherd-trace show', neither of which is inspection.
 //
 // Like every other surface it goes through the registry (Registry.Transcript)
 // rather than opening the database directly.

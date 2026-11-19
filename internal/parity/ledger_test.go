@@ -11,7 +11,7 @@ import (
 
 // ledgerPath is the in-repo parity ledger. The external gap report is a
 // snapshot; this file and the code are the source of truth.
-const ledgerPath = "../../docs/shepherd-parity.md"
+const ledgerPath = "../../docs/goatherd-parity.md"
 
 func read(t *testing.T, path string) string {
 	t.Helper()
@@ -47,7 +47,7 @@ func TestLedgerPinsMatchGoMod(t *testing.T) {
 			t.Errorf("go.mod no longer contains %s — update the parity ledger and this guard together", pin)
 		}
 		if !strings.Contains(ledger, version) {
-			t.Errorf("ledger is missing the %s pin %s — refresh docs/shepherd-parity.md", module, version)
+			t.Errorf("ledger is missing the %s pin %s — refresh docs/goatherd-parity.md", module, version)
 		}
 	}
 }

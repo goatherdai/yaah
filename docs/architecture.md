@@ -195,7 +195,7 @@ The pipeline is built in `buildPipeline()` in a fixed order:
 5. `approval` — enforces the approval policy in `PostModel`: dangerous calls are stripped and replaced by synthesized denial tool-results (classification, user prompting, and hook emission are injected callbacks from `toPipelineConfig`)
 6. `inline_limit` — caps calls dispatched per turn in `PostModel`, synthesizing drop results for calls beyond `MaxInlineToolsPerTurn`
 7. `tool_concurrency` — shares the Loop-owned semaphore (`PipelineConfig.ToolConc`); one live instance per loop
-8. `shepherd_trace` — records tool declarations, observations, and transcript facts in the kernel trace
+8. `goatherd_trace` — records tool declarations, observations, and transcript facts in the kernel trace
 9. `loop_detection` — detects identical-call loops
 10. `intent_loop` — detects repeated cross-turn plans and can steer or halt
 11. `evidence_guard` — nudges or halts exploration that stops producing new evidence
@@ -539,7 +539,7 @@ A retained dispatch runs the sub-agent in an **isolated dispatch world** — a g
 - **The judgement.** It is the orchestrator's, not a sub-agent's: the retained lane returns a diff and the orchestrator decides. No reviewer sub-agent is inserted automatically.
 - **The conflict view.** `proposal list` reports each open proposal's changed paths and post-image metadata (content digest and mode), the parent paths that moved since its dispatch basis, and a typed conflict view across open proposals. Identical post-images are `duplicates`, not conflicts; different content or mode is `same_path_divergent`; delete versus non-delete is `delete_modify`; a proposal path the parent moved is `parent_overlap`; `path_overlap` is the fallback when a post-image could not be inspected. Container post-images come from the persisted `GitDelta`; worktree post-images are read from the live worktree with a bounded hash. Detected conflicts are recorded as `yaah.proposal.conflict.v1` facts on the parent owner path; duplicates are not recorded as conflicts. Each conflict also carries bounded base/current/proposed excerpts where the content can be inspected. This is advisory evidence for choosing or discarding before settlement; `apply` remains authoritative and path-disjoint by default, so even a duplicate pair can only land one side. A refused apply returns a structured `status: "conflict"` envelope naming the overlap when it can be re-derived, and leaves the proposal open. An explicit `apply` with `strategy: "three_way"` is available only on the worktree lane: it runs Git's merge over overlapping text paths, records the strategy in the settled fact, and fails closed on a textual conflict without writing the parent. Container proposals remain whole-path. Preventive path claims and schedulers are declined for now; see [conflict-prevention-decision.md](./conflict-prevention-decision.md).
 
-**Turn checkpoints.** `ShepherdTurnCheckpointer` (`internal/agent/runner/checkpoint.go`) adapts `goatherd.ScopeManager` to the loop's `TurnCheckpointer` interface. A checkpoint captures the workspace *and* the conversation, and a restore consumes it, so the two stay in step. This is per-attempt robustness inside a dispatch (a role sets `turn_checkpoints`), not a settlement mechanism — the worktree already makes the attempt disposable.
+**Turn checkpoints.** `GoatherdTurnCheckpointer` (`internal/agent/runner/checkpoint.go`) adapts `goatherd.ScopeManager` to the loop's `TurnCheckpointer` interface. A checkpoint captures the workspace *and* the conversation, and a restore consumes it, so the two stay in step. This is per-attempt robustness inside a dispatch (a role sets `turn_checkpoints`), not a settlement mechanism — the worktree already makes the attempt disposable.
 
 **Continuation.** An open worktree proposal can be carried forward instead of discarded. `proposal continue` re-runs it for `extra_turns` more turns, seeded from its captured conversation and its sealed workspace state through `ForkFromOutput`, with the source proposal's recorded basis as the delta base, and seals a superseding proposal; the original is discarded so settlement stays consume-once. `proposal fork` re-runs the same way but leaves the original open, so one proposal can be branched into several continuations. The continuation is its own scope and world, so it cleans up at settlement like any other proposal. `ContinueRetainedRun` (`internal/dispatch/retained.go`) owns the path; the transcript is captured through a `jobs` context sink in `internal/agent/runner/task_runner.go` and seeded into the loop via `SubAgentConfig.SeedMessages`. Container-lane proposals cannot continue: their world ended at seal.
 
@@ -978,7 +978,7 @@ insert.
 
 ### Two stores
 
-Session state lives in `state.db`; the append-only Shepherd evidence and
+Session state lives in `state.db`; the append-only Goatherd evidence and
 recovery record lives in `trace.db`. They intentionally overlap in message
 content and are not replicas. See [storage.md](./storage.md) for the ownership,
 fidelity, and retention contract.

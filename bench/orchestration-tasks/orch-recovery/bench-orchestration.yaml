@@ -1,6 +1,6 @@
 agents:
   default:
-    shepherd_trace_path: /app/.orch-trace/trace.sqlite
+    goatherd_trace_path: /app/.orch-trace/trace.sqlite
     retained_repo_path: /app
   subagent:
     mode: retained

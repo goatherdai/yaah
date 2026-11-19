@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 )
 
@@ -41,7 +41,7 @@ func TestDefaultMaxDispatchScopesIsPositive(t *testing.T) {
 // re-admitted from the trace, which hold no loop and therefore no
 // capacity.
 func TestDispatchScopeCount(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

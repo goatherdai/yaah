@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/goatherd-runtime/effect"
 )
 
@@ -26,24 +26,24 @@ import (
 
 // ReleaseState is a no-op: the fake capture carries no external pin. It exists
 // so capturing test backends still satisfy the release contract.
-func (s *Sandbox) ReleaseState(_ context.Context, _ shepherdtrace.WorkspaceState) error {
+func (s *Sandbox) ReleaseState(_ context.Context, _ kerneltrace.WorkspaceState) error {
 	return nil
 }
 
 // capture records the tree as a WorkspaceState. Revision counts captures, so
 // two captures of different trees never collide on the same key.
-func (s *Sandbox) Capture(_ context.Context) (shepherdtrace.WorkspaceState, error) {
+func (s *Sandbox) Capture(_ context.Context) (kerneltrace.WorkspaceState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.usable(); err != nil {
-		return shepherdtrace.WorkspaceState{}, err
+		return kerneltrace.WorkspaceState{}, err
 	}
 	s.rev++
 	files := make(map[string]any, len(s.files))
 	for p, e := range s.files {
 		files[p] = snapshotEntry(e)
 	}
-	return shepherdtrace.WorkspaceState{
+	return kerneltrace.WorkspaceState{
 		Backend:  s.Backend(),
 		Revision: strconv.Itoa(s.rev),
 		Data:     map[string]any{"files": files},
@@ -66,7 +66,7 @@ func snapshotEntry(e *entry) map[string]any {
 
 // apply resets the tree to a previously captured state. The state is
 // reusable: applying it twice is idempotent.
-func (s *Sandbox) Apply(_ context.Context, ws shepherdtrace.WorkspaceState) error {
+func (s *Sandbox) Apply(_ context.Context, ws kerneltrace.WorkspaceState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.usable(); err != nil {
@@ -130,7 +130,7 @@ func restoreEntry(m map[string]any) (*entry, error) {
 // diff compares a captured state against the current tree and returns a
 // unified diff plus the sorted list of changed paths (added, modified, or
 // deleted). maxLines <= 0 means unbounded.
-func (s *Sandbox) Diff(_ context.Context, ws shepherdtrace.WorkspaceState, maxLines int) (string, []string, error) {
+func (s *Sandbox) Diff(_ context.Context, ws kerneltrace.WorkspaceState, maxLines int) (string, []string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.usable(); err != nil {
@@ -186,7 +186,7 @@ func (s *Sandbox) Diff(_ context.Context, ws shepherdtrace.WorkspaceState, maxLi
 }
 
 // stateEntries restores a captured state's tree. Callers hold s.mu.
-func (s *Sandbox) stateEntries(ws shepherdtrace.WorkspaceState) (map[string]*entry, error) {
+func (s *Sandbox) stateEntries(ws kerneltrace.WorkspaceState) (map[string]*entry, error) {
 	if ws.Backend != s.Backend() {
 		return nil, fmt.Errorf("sandboxfake: cannot use state from backend %q", ws.Backend)
 	}
@@ -217,7 +217,7 @@ func (s *Sandbox) stateEntries(ws shepherdtrace.WorkspaceState) (map[string]*ent
 // This makes the in-memory fake a faithful stand-in for the one capability the
 // container proposal seal depends on; a test that needs a backend *without* the
 // capability wraps the fake rather than relying on its absence.
-func (s *Sandbox) EffectChanges(_ context.Context, ws shepherdtrace.WorkspaceState) ([]effect.Change, error) {
+func (s *Sandbox) EffectChanges(_ context.Context, ws kerneltrace.WorkspaceState) ([]effect.Change, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.usable(); err != nil {

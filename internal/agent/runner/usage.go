@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
 	"github.com/goatherdai/yaah/internal/tracestore"
 	"github.com/goatherdai/yaah/internal/types"
@@ -31,12 +31,12 @@ func recordSubAgentUsage(ctx context.Context, store pipeline.TraceSink, sessionI
 		"total_tokens":         usage.TotalTokens,
 		"cached_prompt_tokens": usage.CacheTokens(),
 	}
-	_, err := store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+	_, err := store.Append(ctx, kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 		AppendIntentID: sessionID + ":usage",
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID: sessionID,
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Capture,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Capture,
 				SchemaRef: "yaah.subagent.usage.v1",
 				KindLabel: "subagent:usage",
 				Payload:   payload,
@@ -67,7 +67,7 @@ func subagentTraceProfile(ctx context.Context, traceCfg tracestore.Config, sessi
 	// diagnoses is often the very cancellation that would abort the read.
 	defer store.Close(context.WithoutCancel(ctx))
 
-	slice, err := store.ReadOwnerPrefix(context.WithoutCancel(ctx), shepherdtrace.TrustedReadContext, sessionID, 99999, shepherdtrace.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.WithoutCancel(ctx), kerneltrace.TrustedReadContext, sessionID, 99999, kerneltrace.ModeBoth)
 	if err != nil || len(slice.FactIDs()) == 0 {
 		return ""
 	}
@@ -78,7 +78,7 @@ func subagentTraceProfile(ctx context.Context, traceCfg tracestore.Config, sessi
 	})
 	for _, factID := range slice.FactIDs() {
 		fact := slice.FactsByID[factID]
-		if fact.GetEnvelope().Mode != shepherdtrace.Capture {
+		if fact.GetEnvelope().Mode != kerneltrace.Capture {
 			continue
 		}
 		causedBy := fact.GetEnvelope().CausedByIDs
@@ -89,7 +89,7 @@ func subagentTraceProfile(ctx context.Context, traceCfg tracestore.Config, sessi
 		if _, exists := captureByParent[parentID]; exists {
 			continue
 		}
-		rec, ok := fact.(shepherdtrace.Record)
+		rec, ok := fact.(kerneltrace.Record)
 		if !ok {
 			continue
 		}
@@ -108,7 +108,7 @@ func subagentTraceProfile(ctx context.Context, traceCfg tracestore.Config, sessi
 	seq := 0
 	for _, factID := range slice.FactIDs() {
 		fact := slice.FactsByID[factID]
-		if fact.GetEnvelope().Mode != shepherdtrace.Declaration {
+		if fact.GetEnvelope().Mode != kerneltrace.Declaration {
 			continue
 		}
 		kind := fact.GetView().KindLabel

@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	agentctx "github.com/goatherdai/yaah/internal/agent/context"
 	"github.com/goatherdai/yaah/internal/agent/llm"
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
@@ -30,10 +30,10 @@ type TraceSink = pipeline.TraceSink
 
 // TraceSinkOf adapts a kernel trace store to the seam, nil-safely: a
 // tracing-off session carries a nil store, and the seam must stay nil so the
-// pipeline's shepherd_trace slot resolves to its noop instead of a live
+// pipeline's goatherd_trace slot resolves to its noop instead of a live
 // middleware over a nil handle. It is the agent-level name for
 // pipeline.TraceSinkOf.
-func TraceSinkOf(store *shepherdtrace.SQLiteTraceStore) TraceSink {
+func TraceSinkOf(store *kerneltrace.SQLiteTraceStore) TraceSink {
 	return pipeline.TraceSinkOf(store)
 }
 
@@ -307,10 +307,10 @@ type LoopConfig struct {
 	// workdir) so the trace names the tree the model actually saw, not the
 	// orchestration process's cwd.
 	TraceCWD string
-	// RetainedContext, when set, is stamped onto every Shepherd fact group
+	// RetainedContext, when set, is stamped onto every Goatherd fact group
 	// for this loop. Sub-agents bind their transcript to the dispatch
 	// substrate, containment, and role tool belt (yaah-o86).
-	RetainedContext *shepherdtrace.RetainedContext
+	RetainedContext *kerneltrace.RetainedContext
 
 	// IsSubAgent marks loops created by NewSubAgentLoop. Sub-agent loops
 	// build the curated sub-agent middleware pipeline instead of the
@@ -318,16 +318,16 @@ type LoopConfig struct {
 	IsSubAgent bool
 
 	// DestructiveGuard is the supervision service's blocking
-	// pre-dispatch check (shepherd-adoption plan B2), plumbed through
+	// pre-dispatch check (goatherd-adoption plan B2), plumbed through
 	// from SubAgentConfig: the sub-agent pipeline consults it before a
 	// tool call executes; a non-empty return denies the call. Nil (the
 	// default) means no guard — tracing-off sessions dispatch
 	// unchanged.
 	DestructiveGuard func(ownerID, toolName, argsJSON string) string
 
-	// TraceStore is the session's Shepherd trace sink (plan 07, H4),
+	// TraceStore is the session's Goatherd trace sink (plan 07, H4),
 	// plumbed through from SubAgentConfig: the sub-agent pipeline's
-	// shepherd_trace middleware writes through it. Nil when tracing
+	// goatherd_trace middleware writes through it. Nil when tracing
 	// is disabled. Typed as the pipeline seam so the loop config does
 	// not name the kernel's concrete store.
 	TraceStore TraceSink

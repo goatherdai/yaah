@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 
 	"github.com/goatherdai/yaah/internal/agent/supervision"
@@ -17,7 +17,7 @@ import (
 // is active but the advisory service is off: a nil *supervision.Service in
 // the Svc interface must read as absent, not panic on Firings().
 func TestSupervisorStatusWithTypedNilService(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -41,12 +41,12 @@ func TestSupervisorStatusWithTypedNilService(t *testing.T) {
 // a rule firing this session shows up in `supervisor status` — rule,
 // scope, count, kind — once the firing has been delivered.
 func TestSupervisorTool_StatusListsFirings(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	bus := shepherdtrace.NewEffectBus(64)
+	bus := kerneltrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
 
@@ -70,9 +70,9 @@ func TestSupervisorTool_StatusListsFirings(t *testing.T) {
 	svc.Start("status-test")
 	t.Cleanup(svc.Close)
 
-	bus.Publish(shepherdtrace.EffectEvent{
+	bus.Publish(kerneltrace.EffectEvent{
 		TraceOwnerID: "sub-status",
-		Mode:         shepherdtrace.Declaration,
+		Mode:         kerneltrace.Declaration,
 		SchemaRef:    "yaah.tool.bash.v1",
 		KindLabel:    "bash",
 		Payload:      map[string]any{"cmd": "rm -rf /tmp/probe"},
@@ -105,7 +105,7 @@ func TestSupervisorTool_StatusListsFirings(t *testing.T) {
 // with no supervision service, status reports no firings honestly
 // instead of guessing.
 func TestSupervisorTool_StatusWithoutService(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
+	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}

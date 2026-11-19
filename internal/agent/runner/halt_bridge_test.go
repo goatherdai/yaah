@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 
 	"github.com/goatherdai/yaah/internal/agent/supervision"
@@ -33,7 +33,7 @@ func (p *haltBlockProvider) Send(ctx context.Context, req types.ChatRequest) (*t
 func TestTaskRunner_HaltBridgeCancelsTheRun(t *testing.T) {
 	initTestRoles(t)
 
-	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
+	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}

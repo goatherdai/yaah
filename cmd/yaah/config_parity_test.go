@@ -38,8 +38,8 @@ func TestConfigAgentConfigParity(t *testing.T) {
 		"Model":                 true, // → WithModel
 		"Directives":            true, // → prompt assembly
 		"ReasoningProtect":      true, // → AgentConfig.ReasoningProtectTurns (renamed)
-		"ShepherdTracePath":     true, // → session-level shepherd init in wiring
-		"ShepherdTrace":         true, // → session-level shepherd init in wiring (backend+DSN for TraceStoreConfig)
+		"GoatherdTracePath":     true, // → session-level goatherd init in wiring
+		"GoatherdTrace":         true, // → session-level goatherd init in wiring (backend+DSN for TraceStoreConfig)
 		"Supervisor":            true, // → advisory rules engine in wiring (adoption plan B1)
 		"SupervisorHaltRoot":    true, // → supervisor tool's root-halt gate in wiring
 
