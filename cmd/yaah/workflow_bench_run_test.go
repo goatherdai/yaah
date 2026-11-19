@@ -20,6 +20,7 @@ package yaah
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	osexec "os/exec"
@@ -520,4 +521,88 @@ func TestBenchSpecResumeRefusesFinishedRun(t *testing.T) {
 // path_join helper local to this file keeps the call sites short.
 func pathJoin(parts ...string) string {
 	return filepath.Join(parts...)
+}
+
+// TestExampleArchitectureReviewRestrictedExecutionFromTheDocument runs the
+// architecture-review example document end to end with the restriction set it
+// declares: readonly grants over the reviewed trees and the synthesized
+// report landing as the run's final artifact. The example's dispatch pathway
+// is the same one every bench task drives, so the gate here is that a
+// document-shaped reviewer run reaches its artifact through the real
+// retained machinery, not just through a validate pass.
+func TestExampleArchitectureReviewRestrictedExecutionFromTheDocument(t *testing.T) {
+	dir := t.TempDir()
+	artifactRoot := filepath.Join(dir, "app")
+
+	runner := func(ctx context.Context, prompt string, params jobs.SubAgentParams) (string, error) {
+		switch {
+		case strings.Contains(prompt, "Decide the aspect list"):
+			// Scope reads the tree and picks the aspects.
+			return `{"aspects": ["boundaries", "error-handling"], "notes": "scope step"}`, nil
+		case strings.Contains(prompt, "Audit one architectural concern"):
+			return `{"aspect": "reviewed", "findings": [{"anchor": "internal/workflow/host/host.go:1", "note": "posture applied"}], "summary": "read-only review"}`, nil
+		case strings.Contains(prompt, "Synthesize"):
+			return `{"headline": "verdict", "findings": []}`, nil
+		}
+		return "", fmt.Errorf("example runner got an unknown prompt: %q", prompt)
+	}
+	stashBenchRetained(t, wfBenchRetainedEnv(t, runner))
+	swapRunRunner(t, runner, new(int))
+
+	rep, err := runWfRun(t, "--json", "--run-id", "bench-example-architecture-review",
+		"--state", filepath.Join(dir, "state.db"), "--artifact-root", artifactRoot,
+		"../../examples/workflows/architecture-review.yaml")
+	if err != nil {
+		t.Fatalf("example run: %v\noutput:\n%s", err, rep)
+	}
+	var parsed struct {
+		OK       bool     `json:"ok"`
+		Status   string   `json:"status"`
+		Reason   string   `json:"reason"`
+		Warnings []string `json:"warnings"`
+	}
+	if jerr := json.Unmarshal([]byte(rep), &parsed); jerr != nil {
+		t.Fatalf("parsing the run report: %v\noutput:\n%s", jerr, rep)
+	}
+	if !parsed.OK || parsed.Status != "succeeded" {
+		t.Fatalf("run status = %q ok=%v reason=%q\n%s", parsed.Status, parsed.OK, parsed.Reason, rep)
+	}
+	// The declared posture is enforced for proposal-lane dispatches only.
+	// The scope and synthesize delegates run on lane: report, where the
+	// folded grants and the deny_all network posture cannot be applied —
+	// the door reports that gap as a warning the run still succeeds with.
+	// The gate below pins the gap by name: if the door ever starts
+	// enforcing the report-lane posture (or the document moves those
+	// delegates to the proposal lane), the pinned warning disappears and
+	// this gate fails, which is the signal to update both the document and
+	// this test together.
+	joined := joinedWarnings(parsed.Warnings)
+	for _, want := range []string{"steps.scope", "steps.synthesize"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("warnings = %q, want the unenforced report-lane posture named for %s", joined, want)
+		}
+	}
+
+	// The final artifact: the emit's declared path under the artifact root.
+	landed, rerr := os.ReadFile(filepath.Join(artifactRoot, "artifacts", "architecture-review.md"))
+	if rerr != nil {
+		t.Fatalf("the final artifact never landed: %v\n%s", rerr, rep)
+	}
+	if !strings.Contains(string(landed), "architecture review") {
+		t.Errorf("artifact head = %q, want the synthesized report", headOf(string(landed)))
+	}
+}
+
+// joinedWarnings is the one-line form of a run's declared warnings, the shape
+// the restriction gate asserts against.
+func joinedWarnings(warnings []string) string {
+	return strings.Join(warnings, "\n")
+}
+
+// headOf returns the first line of s, the shape the failure output quotes.
+func headOf(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
