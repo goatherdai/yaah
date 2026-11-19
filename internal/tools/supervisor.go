@@ -5,13 +5,45 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	goatherd "github.com/goatherdai/goatherd-runtime"
 
-	"github.com/goatherdai/yaah/internal/agent/supervision"
 	"github.com/goatherdai/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/supervisionapi"
 )
+
+// portIsNil reports whether an interface-valued dependency is absent,
+// including a typed-nil pointer stored in it. Wiring may assign a nil
+// *supervision.Service to the Svc interface when tracing is on but advisory
+// rules are off; a plain == nil check would miss it and status would panic.
+func portIsNil(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return rv.IsNil()
+	}
+	return false
+}
+
+// runBridge is the supervisor tool's consumer-side view of the session's
+// supervision registry. The concrete *supervision.Registry satisfies it; the
+// tool does not import the agent family back.
+type runBridge interface {
+	Inject(scopeID, guidance string) error
+	Cancel(scopeID string) (<-chan struct{}, error)
+	ScopeIDs() []string
+}
+
+// firingSource is the status view's consumer-side view of the advisory
+// rules service.
+type firingSource interface {
+	Firings() []supervisionapi.Firing
+}
 
 // haltQuiesceTimeout bounds the wait for a halted run to stop before
 // the kernel-side sandbox teardown proceeds anyway — the same
@@ -53,13 +85,13 @@ type SupervisorTool struct {
 	// injected by the wiring — session-owned, not a process global. Nil
 	// when tracing is disabled: inject then degrades honestly to the
 	// trace-only outcome.
-	Runs *supervision.Registry
+	Runs runBridge
 
 	// Svc is the session's advisory-rules service (adoption plan B4):
 	// status lists its rule firings — which rules acted, on which
 	// scopes, how often. Nil when the supervisor stanza is not live;
 	// status then reports no firings rather than guessing.
-	Svc *supervision.Service
+	Svc firingSource
 }
 
 func (*SupervisorTool) Name() string { return "supervisor" }
@@ -107,6 +139,15 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 	if mgr == nil {
 		return "", fmt.Errorf("supervisor: goatherd scope manager unavailable (trace store failed to open)")
 	}
+	// Normalize typed-nil ports once, so inject/halt/status all see a true
+	// nil when wiring supplied a nil concrete pointer.
+	runs, svc := t.Runs, t.Svc
+	if portIsNil(runs) {
+		runs = nil
+	}
+	if portIsNil(svc) {
+		svc = nil
+	}
 
 	switch raw.Action {
 	case "list_scopes":
@@ -115,7 +156,7 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 		if raw.ScopeID == "" || raw.Guidance == "" {
 			return "", fmt.Errorf("supervisor: scope_id and guidance required for inject")
 		}
-		return executeInject(mgr, t.Runs, raw.ScopeID, raw.Guidance)
+		return executeInject(mgr, runs, raw.ScopeID, raw.Guidance)
 	case "halt":
 		if raw.ScopeID == "" {
 			return "", fmt.Errorf("supervisor: scope_id required for halt")
@@ -123,9 +164,9 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 		if raw.ScopeID == t.RootScopeID && !t.HaltRoot {
 			return "", fmt.Errorf("supervisor: halting the session root requires the supervisor_halt_root opt-in (agents.default.supervisor_halt_root); it stops the session's current run and ends scope-tree supervision for this process. Halt a sub-agent scope instead (see list_scopes)")
 		}
-		return executeHalt(mgr, t.Runs, raw.ScopeID)
+		return executeHalt(mgr, runs, raw.ScopeID)
 	case "status":
-		return executeStatus(mgr, t.Runs, t.Svc)
+		return executeStatus(mgr, runs, svc)
 	default:
 		return "", fmt.Errorf("supervisor: unknown action %q (valid: list_scopes, inject, halt, status)", raw.Action)
 	}
@@ -150,7 +191,7 @@ func executeListScopes(mgr *goatherd.ScopeManager) (string, error) {
 	return sb, nil
 }
 
-func executeInject(mgr *goatherd.ScopeManager, runs *supervision.Registry, scopeID, guidance string) (string, error) {
+func executeInject(mgr *goatherd.ScopeManager, runs runBridge, scopeID, guidance string) (string, error) {
 	scope, ok := mgr.Get(scopeID)
 	if !ok {
 		return "", fmt.Errorf("supervisor: scope %s not found", scopeID)
@@ -170,16 +211,16 @@ func executeInject(mgr *goatherd.ScopeManager, runs *supervision.Registry, scope
 	switch err := runs.Inject(scopeID, guidance); {
 	case err == nil:
 		return fmt.Sprintf("Injected guidance into %s; delivered to the running loop.", scopeID), nil
-	case errors.Is(err, supervision.ErrNoRun):
+	case errors.Is(err, supervisionapi.ErrNoRun):
 		return fmt.Sprintf("Guidance recorded in the trace for %s; no active run to deliver it to (the scope is not currently executing).", scopeID), nil
-	case errors.Is(err, supervision.ErrSteerBusy):
+	case errors.Is(err, supervisionapi.ErrSteerBusy):
 		return fmt.Sprintf("Guidance recorded in the trace for %s, but the run's steering buffer is full — it is not consuming guidance; consider halting the scope instead.", scopeID), nil
 	default:
 		return "", fmt.Errorf("supervisor: inject delivery failed: %w", err)
 	}
 }
 
-func executeHalt(mgr *goatherd.ScopeManager, runs *supervision.Registry, scopeID string) (string, error) {
+func executeHalt(mgr *goatherd.ScopeManager, runs runBridge, scopeID string) (string, error) {
 	scope, ok := mgr.Get(scopeID)
 	if !ok {
 		return "", fmt.Errorf("supervisor: scope %s not found", scopeID)
@@ -216,7 +257,7 @@ func executeHalt(mgr *goatherd.ScopeManager, runs *supervision.Registry, scopeID
 					// report names the unquiesced run.
 				}
 			}
-		case errors.Is(err, supervision.ErrNoRun), errors.Is(err, supervision.ErrNotHaltable):
+		case errors.Is(err, supervisionapi.ErrNoRun), errors.Is(err, supervisionapi.ErrNotHaltable):
 			// fall through to the kernel-side halt below
 		default:
 			return "", fmt.Errorf("supervisor: halt delivery failed: %w", err)
@@ -235,7 +276,7 @@ func executeHalt(mgr *goatherd.ScopeManager, runs *supervision.Registry, scopeID
 	}
 }
 
-func executeStatus(mgr *goatherd.ScopeManager, runs *supervision.Registry, svc *supervision.Service) (string, error) {
+func executeStatus(mgr *goatherd.ScopeManager, runs runBridge, svc firingSource) (string, error) {
 	active := mgr.ActiveScopes()
 	all := mgr.AllScopes()
 	out := fmt.Sprintf("Supervision status:\n  Scopes: %d active, %d total\n", len(active), len(all))

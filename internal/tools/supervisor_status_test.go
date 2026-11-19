@@ -13,6 +13,30 @@ import (
 	"github.com/goatherdai/yaah/internal/agent/supervision"
 )
 
+// TestSupervisorStatusWithTypedNilService pins the wiring case where tracing
+// is active but the advisory service is off: a nil *supervision.Service in
+// the Svc interface must read as absent, not panic on Firings().
+func TestSupervisorStatusWithTypedNilService(t *testing.T) {
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	mgr := goatherd.NewScopeManager(store)
+
+	tool := &SupervisorTool{
+		ScopeManager: mgr,
+		Svc:          (*supervision.Service)(nil),
+	}
+	out, err := tool.Execute(context.Background(), `{"action":"status"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, "supervision service not active") {
+		t.Errorf("status with a disabled service = %q, want the inactive report", out)
+	}
+}
+
 // TestSupervisorTool_StatusListsFirings pins the B4 surface end to end:
 // a rule firing this session shows up in `supervisor status` — rule,
 // scope, count, kind — once the firing has been delivered.

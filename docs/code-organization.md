@@ -61,6 +61,7 @@ yaah/
 │   ├── sessions/               # engine-level session registry
 │   ├── skills/                 # SKILL.md discovery/parsing
 │   ├── spinner/                # terminal spinner primitives
+│   ├── supervisionapi/         # neutral supervision errors and Firing shared by agent and tools
 │   ├── todo/                   # todo-list model shared by views
 │   ├── toolargs/               # strict argument decoding shared by tools and dispatch
 │   ├── toolcontract/           # neutral Tool/DangerClassifier contracts shared by agent and tools

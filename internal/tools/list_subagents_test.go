@@ -72,6 +72,7 @@ func TestListSubAgentsExcludesPrimaryOnlyRoles(t *testing.T) {
 	defer subagent.SetDefaultRoleRegistry(nil)
 
 	tool := &ListSubAgentsTool{
+		Delegatable: subagent.DelegatableRole,
 		Lister: func() []SubAgentInfo {
 			return []SubAgentInfo{
 				{Role: "boss", DisplayName: "Boss", Tools: []string{"read"}},

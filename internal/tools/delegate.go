@@ -50,6 +50,12 @@ type DelegateTool struct {
 	// registry, so the delegate tool sees newly created roles immediately.
 	RoleResolver func() []string
 
+	// Delegatable, when non-nil, filters role names down to dispatch
+	// targets (primary-only personas are excluded). The composition root
+	// supplies subagent.DelegatableRole; nil admits every name, which is
+	// the historical behavior for hand-built tools and tests.
+	Delegatable func(string) bool
+
 	// LaneForRole, when non-nil, resolves the dispatch lane for a role at
 	// execution time (yaah-7yf): proposal (isolated worktree + sealed
 	// delta), report (isolated worktree, plain result, auto-discarded), or

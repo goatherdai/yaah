@@ -62,6 +62,22 @@ func schemaRoleDescription(t *testing.T, raw json.RawMessage) string {
 // the delegate tool's dispatch surface — the schema enum, the rendered
 // role descriptions, and execution-time validation. "subagent" (explicit
 // or the missing-key default) and "all" stay.
+// TestUnconfiguredRoleFilterIsExplicit pins the documented contract: a
+// hand-built tool with no Delegatable filter admits every name, while the
+// composition root supplies subagent.DelegatableRole to enforce the
+// primary-only exclusion in production. This test makes the fail-open
+// unwired path a conscious, visible choice rather than an accident.
+func TestUnconfiguredRoleFilterIsExplicit(t *testing.T) {
+	tool := &DelegateTool{RoleNames: []string{"boss", "work"}}
+	if names := tool.roleNames(); !slices.Contains(names, "boss") {
+		t.Fatalf("unconfigured filter dropped a role: %v", names)
+	}
+	tool.Delegatable = func(name string) bool { return name != "boss" }
+	if names := tool.roleNames(); slices.Contains(names, "boss") {
+		t.Errorf("injected filter did not exclude primary-only role: %v", names)
+	}
+}
+
 func TestDelegateSchemaExcludesPrimaryOnlyRoles(t *testing.T) {
 	reg := subagent.NewRoleRegistry()
 	if err := reg.LoadBytes(delegationModeFixtures()); err != nil {
@@ -75,6 +91,7 @@ func TestDelegateSchemaExcludesPrimaryOnlyRoles(t *testing.T) {
 		RoleNames:        names,
 		RoleResolver:     func() []string { return names },
 		RoleDescriptions: map[string]string{"boss": "runs the session", "work": "does work"},
+		Delegatable:      subagent.DelegatableRole,
 	}
 
 	t.Run("enum drops primary keeps subagent all and default", func(t *testing.T) {

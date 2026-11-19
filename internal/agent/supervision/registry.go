@@ -12,26 +12,27 @@ package supervision
 
 import (
 	"context"
-	"errors"
 	"sort"
 	"sync"
+
+	"github.com/goatherdai/yaah/internal/supervisionapi"
 )
 
 // ErrNoRun reports an Inject at a scope with no registered run — the
 // scope may exist in the trace manager while its loop has finished (or
 // never registered). Callers fall back to trace-only recording.
-var ErrNoRun = errors.New("no running loop registered for this scope")
+var ErrNoRun = supervisionapi.ErrNoRun
 
 // ErrSteerBusy reports an Inject whose target loop's steering buffer is
 // full: the run is not consuming guidance (wedged between turns is the
 // usual cause), and blocking would stall the supervisor for a
 // wedged-run timeout.
-var ErrSteerBusy = errors.New("the run's steering buffer is full; it is not consuming guidance")
+var ErrSteerBusy = supervisionapi.ErrSteerBusy
 
 // ErrNotHaltable reports a Cancel at a registered run that carries no
 // cancellation function — injectable but not haltable. Callers report
 // the honest outcome instead of claiming a halt.
-var ErrNotHaltable = errors.New("the run registered no cancellation; it is not haltable")
+var ErrNotHaltable = supervisionapi.ErrNotHaltable
 
 // steerBuffer bounds one run's undelivered guidance. Steering is
 // between-turn delivery; a healthy run drains this every step.

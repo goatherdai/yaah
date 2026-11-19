@@ -82,6 +82,7 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, ro
 		reg.Register(&tools.DelegateTool{
 			Runner:         makeTaskRunner(opts, remainingDepth-1),
 			ResolveTimeout: resolveTimeout,
+			Delegatable:    subagent.DelegatableRole,
 		})
 	}
 

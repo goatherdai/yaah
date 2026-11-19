@@ -1477,6 +1477,7 @@ func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 	}
 
 	tr.reg.Register(&tools.ListSubAgentsTool{
+		Delegatable: subagent.DelegatableRole,
 		Lister: func() []tools.SubAgentInfo {
 			r := subagent.DefaultRegistry()
 			if r == nil {
