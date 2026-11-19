@@ -18,14 +18,14 @@ func writeTraceConfig(t *testing.T, yaml string) {
 	}
 }
 
-// The shepherd_trace stanza resolves traces' backend and DSN; the
-// deprecated flat shepherd_trace_path remains the SQLite fallback. Both
+// The goatherd_trace stanza resolves traces' backend and DSN; the
+// deprecated flat goatherd_trace_path remains the SQLite fallback. Both
 // must keep working: existing configurations never change meaning.
-func TestLoad_shepherdTraceStanza(t *testing.T) {
+func TestLoad_goatherdTraceStanza(t *testing.T) {
 	writeTraceConfig(t, `
 agents:
   default:
-    shepherd_trace:
+    goatherd_trace:
       backend: postgres
       dsn: postgres://u:p@db.internal:5432/traces
 `)
@@ -43,11 +43,11 @@ agents:
 	}
 }
 
-func TestLoad_shepherdTraceStanzaDSNTildeExpanded(t *testing.T) {
+func TestLoad_goatherdTraceStanzaDSNTildeExpanded(t *testing.T) {
 	writeTraceConfig(t, `
 agents:
   default:
-    shepherd_trace:
+    goatherd_trace:
       dsn: ~/traces/trace.db
 `)
 
@@ -65,14 +65,14 @@ agents:
 	}
 }
 
-func TestLoad_shepherdTraceStanzaOverridesLegacyPath(t *testing.T) {
+func TestLoad_goatherdTraceStanzaOverridesLegacyPath(t *testing.T) {
 	// The stanza's DSN wins over the legacy flat key: new configuration
-	// must not be silently shadowed by a leftover shepherd_trace_path.
+	// must not be silently shadowed by a leftover goatherd_trace_path.
 	writeTraceConfig(t, `
 agents:
   default:
-    shepherd_trace_path: /tmp/legacy/trace.db
-    shepherd_trace:
+    goatherd_trace_path: /tmp/legacy/trace.db
+    goatherd_trace:
       dsn: /tmp/new/trace.db
 `)
 
@@ -86,6 +86,78 @@ agents:
 	}
 	if got.Backend != tracestore.BackendSQLite {
 		t.Errorf("backend = %q, want the sqlite default", got.Backend)
+	}
+}
+
+func TestLoad_legacyShepherdTraceStanzaStillResolves(t *testing.T) {
+	// The renamed keys (goatherd_trace{,_path}) superseded the old
+	// shepherd_* spellings; an upgraded config must keep resolving its
+	// trace store, so the legacy stanza falls through when the new
+	// spelling carries nothing.
+	writeTraceConfig(t, `
+agents:
+  default:
+    shepherd_trace:
+      backend: postgres
+      dsn: postgres://legacy:5432/trace
+`)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	got := cfg.Agent.Default.TraceStoreConfig()
+	if got.Backend != tracestore.BackendPostgres {
+		t.Errorf("backend = %q, want the legacy stanza's postgres to fall through", got.Backend)
+	}
+	if got.DSN != "postgres://legacy:5432/trace" {
+		t.Errorf("dsn = %q, want the legacy stanza's DSN", got.DSN)
+	}
+}
+
+func TestLoad_legacyShepherdTracePathStillResolves(t *testing.T) {
+	// The legacy flat path key falls through when neither the new flat
+	// key nor the stanza carries a DSN.
+	writeTraceConfig(t, `
+agents:
+  default:
+    shepherd_trace_path: /tmp/legacy/trace.db
+`)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	got := cfg.Agent.Default.TraceStoreConfig()
+	if got.Backend != tracestore.BackendSQLite {
+		t.Errorf("backend = %q, want sqlite", got.Backend)
+	}
+	if got.DSN != "/tmp/legacy/trace.db" {
+		t.Errorf("dsn = %q, want the legacy path", got.DSN)
+	}
+}
+
+func TestLoad_goatherdTraceWinsOverLegacyShepherdKeys(t *testing.T) {
+	// The new spelling wins whenever it carries a value: a mixed config
+	// must resolve to the goatherd_ keys, not blend the two.
+	writeTraceConfig(t, `
+agents:
+  default:
+    shepherd_trace_path: /tmp/legacy/trace.db
+    goatherd_trace_path: /tmp/new/trace.db
+    shepherd_trace:
+      dsn: /tmp/ignored/trace.db
+    goatherd_trace:
+      dsn: /tmp/new-stanza/trace.db
+`)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	got := cfg.Agent.Default.TraceStoreConfig()
+	if got.DSN != "/tmp/new-stanza/trace.db" {
+		t.Errorf("dsn = %q, want the goatherd_trace stanza's DSN", got.DSN)
 	}
 }
 
@@ -115,7 +187,7 @@ func TestTraceStoreConfig_defaultsToSQLiteTracePath(t *testing.T) {
 func TestTraceStoreConfig_legacyPathStillResolves(t *testing.T) {
 	// The deprecated flat key, no stanza: existing configurations keep
 	// working — the path is the sqlite DSN.
-	d := Defaults{ShepherdTracePath: "/tmp/legacy/trace.db"}
+	d := Defaults{GoatherdTracePath: "/tmp/legacy/trace.db"}
 	got := d.TraceStoreConfig()
 	if got.Backend != tracestore.BackendSQLite || got.DSN != "/tmp/legacy/trace.db" {
 		t.Errorf("legacy path resolution = %+v, want sqlite /tmp/legacy/trace.db", got)

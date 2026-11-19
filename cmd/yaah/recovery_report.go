@@ -19,7 +19,7 @@ func printRecoveryReport(report *recovery.Report) {
 	if report == nil {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "shepherd recovery: %d scopes (%d root(s)) rebuilt from the trace", report.Scopes, report.Roots)
+	fmt.Fprintf(os.Stderr, "goatherd recovery: %d scopes (%d root(s)) rebuilt from the trace", report.Scopes, report.Roots)
 	if len(report.Adopted) > 0 {
 		fmt.Fprintf(os.Stderr, ", %d worktree(s) re-adopted", len(report.Adopted))
 	}
@@ -30,7 +30,7 @@ func printRecoveryReport(report *recovery.Report) {
 	// this work" and "this work is still running", and the two used to be
 	// conflated all the way into the dispatch cap.
 	if n := len(report.Resumed); n > 0 {
-		fmt.Fprintf(os.Stderr, "shepherd recovery: %d scope(s) resumed from the trace (%s); no loop runs under them and they do not count against the dispatch cap — the reaper retires the ones without a re-adopted worktree\n", n, recovery.ResumedExecution)
+		fmt.Fprintf(os.Stderr, "goatherd recovery: %d scope(s) resumed from the trace (%s); no loop runs under them and they do not count against the dispatch cap — the reaper retires the ones without a re-adopted worktree\n", n, recovery.ResumedExecution)
 	}
 
 	for _, o := range report.Orphans {
@@ -71,6 +71,6 @@ func printRecoveryStats(stats *goatherd.RecoveryStats) {
 	if stats == nil {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "shepherd recovery scan: %d fork, %d terminal, %d checkpoint, %d sealed record(s) in %s\n",
+	fmt.Fprintf(os.Stderr, "goatherd recovery scan: %d fork, %d terminal, %d checkpoint, %d sealed record(s) in %s\n",
 		stats.ForkRecords, stats.TerminalRecords, stats.CheckpointBlobs, stats.SealedOutputs, stats.ScanDuration.Round(time.Millisecond))
 }

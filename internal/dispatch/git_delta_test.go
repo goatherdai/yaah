@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	"github.com/goatherdai/goatherd-runtime/effect"
 	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
@@ -253,7 +253,7 @@ type deltaFixture struct {
 	fx          *sessionFixtures
 	repo        string
 	rootID      string
-	basisState  shepherdtrace.WorkspaceState
+	basisState  kerneltrace.WorkspaceState
 	basisDigest string
 	sessionID   string
 	registry    *ProposalRegistry

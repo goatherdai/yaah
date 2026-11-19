@@ -8,7 +8,7 @@ import (
 )
 
 // SupervisorGuardMiddleware is the blocking pre-dispatch net for
-// sub-agent loops (shepherd-adoption plan B2, decision D3): sub-agent
+// sub-agent loops (goatherd-adoption plan B2, decision D3): sub-agent
 // loops run at ApprovalMode "allow" — the parent's approval gate
 // never sees their calls — so a destructive call dispatched yesterday
 // with no gate at all. The middleware consults the supervision

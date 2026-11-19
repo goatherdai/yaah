@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 
 	"github.com/goatherdai/yaah/internal/agent/supervision"
@@ -22,7 +22,7 @@ import (
 // guarded (A2): the root is registered against the session's steering
 // channel, so injecting into it steers the session itself.
 func TestSupervisorTool_RootScopeHaltGuarded(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
+	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}

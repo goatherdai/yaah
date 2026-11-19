@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 )
 
 // setTestTraceConfig points the trace-store config key at
@@ -19,7 +19,7 @@ func setTestTraceConfig(t *testing.T, home, traceDir string) {
 agents:
   default:
     model: test/model
-    shepherd_trace_path: ` + filepath.Join(traceDir, "trace.sqlite") + `
+    goatherd_trace_path: ` + filepath.Join(traceDir, "trace.sqlite") + `
 `
 	os.WriteFile(filepath.Join(home, "config.yaml"), []byte(configContent), 0o644)
 }
@@ -27,7 +27,7 @@ agents:
 func seedTestTraceStore(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "trace.sqlite")
-	store, err := shepherdtrace.NewSQLiteTraceStore(path)
+	store, err := kerneltrace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -37,12 +37,12 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 
 	// Turn start marker
 	turnIntent := owner + ":turn:0"
-	turnReceipt, _ := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+	turnReceipt, _ := store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 		AppendIntentID: turnIntent,
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID: owner,
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Declaration,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Declaration,
 				SchemaRef: "yaah.execution.created.v1",
 				KindLabel: "turn:created",
 				Payload:   map[string]any{"turn": float64(0), "model": "test", "prompt": "run the tools"},
@@ -51,26 +51,26 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 	})
 
 	// Session context and assistant content are captured facts (yaah-o86).
-	store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+	store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 		AppendIntentID: owner + ":context",
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID:  owner,
 			CausalParents: turnReceipt.FactIDs,
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Capture,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Capture,
 				SchemaRef: "yaah.session.context.v1",
 				KindLabel: "session:context",
 				Payload:   map[string]any{"system_prompt": "seed system", "cwd": "/tmp/seed", "model": "test", "config_digest": "sha256:seed"},
 			}},
 		}},
 	})
-	store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+	store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 		AppendIntentID: owner + ":assistant",
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID:  owner,
 			CausalParents: turnReceipt.FactIDs,
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Capture,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Capture,
 				SchemaRef: "yaah.message.assistant.v1",
 				KindLabel: "assistant:message",
 				Payload: map[string]any{
@@ -85,13 +85,13 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 	var lastFactIDs []string
 	for i, name := range tools {
 		intent := owner + ":tool:" + string(rune('a'+i))
-		declReceipt, _ := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		declReceipt, _ := store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 			AppendIntentID: intent,
-			Groups: []shepherdtrace.AppendGroup{{
+			Groups: []kerneltrace.AppendGroup{{
 				TraceOwnerID:  owner,
 				CausalParents: lastFactIDs,
-				FactDrafts: []shepherdtrace.RecordDraft{{
-					Mode:      shepherdtrace.Declaration,
+				FactDrafts: []kerneltrace.RecordDraft{{
+					Mode:      kerneltrace.Declaration,
 					SchemaRef: "yaah.tool." + name + ".v1",
 					KindLabel: name,
 					Payload:   map[string]any{"tool": name, "args": `{}`},
@@ -104,13 +104,13 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 			capturePayload["output"] = "file one\n"
 		}
 		capture := owner + ":result:" + string(rune('a'+i))
-		captReceipt, _ := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		captReceipt, _ := store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 			AppendIntentID: capture,
-			Groups: []shepherdtrace.AppendGroup{{
+			Groups: []kerneltrace.AppendGroup{{
 				TraceOwnerID:  owner,
 				CausalParents: declReceipt.FactIDs,
-				FactDrafts: []shepherdtrace.RecordDraft{{
-					Mode:      shepherdtrace.Capture,
+				FactDrafts: []kerneltrace.RecordDraft{{
+					Mode:      kerneltrace.Capture,
 					SchemaRef: "yaah.tool." + name + ".v1.applied",
 					KindLabel: name + ":result",
 					Payload:   capturePayload,
@@ -123,13 +123,13 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 	// Turn complete marker — chain from the turn start, as the middleware
 	// does (EndTurn cites the turn:created fact as its causal parent; the
 	// profile resolves a turn's tokens through exactly that link).
-	store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+	store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 		AppendIntentID: owner + ":turn:0:done",
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID:  owner,
 			CausalParents: turnReceipt.FactIDs,
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Capture,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Capture,
 				SchemaRef: "yaah.execution.completed.v1",
 				KindLabel: "turn:completed",
 				Payload:   map[string]any{"turn": float64(0), "success": true, "prompt_tokens": float64(5000), "completion_tokens": float64(200)},
@@ -139,12 +139,12 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 
 	// Also add a sub-agent trace
 	subOwner := "sub-developer-sess-123-456"
-	store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+	store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 		AppendIntentID: "sub:tool:a",
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID: subOwner,
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Declaration,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Declaration,
 				SchemaRef: "yaah.tool.read.v1",
 				KindLabel: "read",
 				Payload:   map[string]any{"tool": "read", "args": `{}`},
@@ -165,7 +165,7 @@ func TestTraceList(t *testing.T) {
 	seedTestTraceStore(t, dir)
 
 	var buf bytes.Buffer
-	cmd := newShepherdTraceListCmd()
+	cmd := newGoatherdTraceListCmd()
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 
@@ -192,7 +192,7 @@ func TestTraceShow(t *testing.T) {
 	seedTestTraceStore(t, dir)
 
 	var buf bytes.Buffer
-	cmd := newShepherdTraceShowCmd()
+	cmd := newGoatherdTraceShowCmd()
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"sess-123"})
@@ -238,7 +238,7 @@ func TestTraceProfile(t *testing.T) {
 	seedTestTraceStore(t, dir)
 
 	var buf bytes.Buffer
-	cmd := newShepherdTraceProfileCmd()
+	cmd := newGoatherdTraceProfileCmd()
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"sess-123"})
@@ -281,14 +281,14 @@ func TestTraceProfileNoSessions(t *testing.T) {
 	os.MkdirAll(dir, 0o755)
 	setTestTraceConfig(t, home, dir)
 
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	store.Close(context.Background())
 
 	var buf bytes.Buffer
-	cmd := newShepherdTraceProfileCmd()
+	cmd := newGoatherdTraceProfileCmd()
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 
@@ -312,7 +312,7 @@ func TestTraceShowLatest(t *testing.T) {
 	seedTestTraceStore(t, dir)
 
 	var buf bytes.Buffer
-	cmd := newShepherdTraceShowCmd()
+	cmd := newGoatherdTraceShowCmd()
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--latest"})
@@ -327,7 +327,7 @@ func TestTraceShowLatest(t *testing.T) {
 	}
 }
 
-func TestOpenShepherdTraceStore_UsesConfigPath(t *testing.T) {
+func TestOpenGoatherdTraceStore_UsesConfigPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("YAAH_HOME", home)
 
@@ -336,7 +336,7 @@ func TestOpenShepherdTraceStore_UsesConfigPath(t *testing.T) {
 agents:
   default:
     model: test/model
-    shepherd_trace_path: ` + filepath.Join(home, "custom-traces", "trace.sqlite") + `
+    goatherd_trace_path: ` + filepath.Join(home, "custom-traces", "trace.sqlite") + `
 `
 	os.WriteFile(filepath.Join(home, "config.yaml"), []byte(configContent), 0o644)
 
@@ -344,14 +344,14 @@ agents:
 	os.MkdirAll(dir, 0o755)
 	seedTestTraceStore(t, dir)
 
-	store, err := openShepherdTraceStore()
+	store, err := openGoatherdTraceStore()
 	if err != nil {
-		t.Fatalf("openShepherdTraceStore() error: %v", err)
+		t.Fatalf("openGoatherdTraceStore() error: %v", err)
 	}
 	defer store.Close(context.Background())
 
 	// Verify we can read from it
-	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "sess-123", 999, shepherdtrace.ModeDeclarationsOnly)
+	slice, err := store.ReadOwnerPrefix(context.Background(), kerneltrace.TrustedReadContext, "sess-123", 999, kerneltrace.ModeDeclarationsOnly)
 	if err != nil {
 		t.Fatalf("read error: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestCaptureStatus(t *testing.T) {
 			os.MkdirAll(dir, 0o755)
 
 			path := filepath.Join(dir, "trace.sqlite")
-			store, _ := shepherdtrace.NewSQLiteTraceStore(path)
+			store, _ := kerneltrace.NewSQLiteTraceStore(path)
 			defer store.Close(context.Background())
 
 			payload := map[string]any{"success": tt.success}
@@ -389,24 +389,24 @@ func TestCaptureStatus(t *testing.T) {
 				payload["error"] = tt.errMsg
 			}
 
-			store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+			store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 				AppendIntentID: "test:decl:" + tt.name,
-				Groups: []shepherdtrace.AppendGroup{{
+				Groups: []kerneltrace.AppendGroup{{
 					TraceOwnerID: "owner",
-					FactDrafts: []shepherdtrace.RecordDraft{{
-						Mode:      shepherdtrace.Declaration,
+					FactDrafts: []kerneltrace.RecordDraft{{
+						Mode:      kerneltrace.Declaration,
 						SchemaRef: "yaah.test.v1",
 						KindLabel: "test",
 						Payload:   map[string]any{},
 					}},
 				}},
 			})
-			store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+			store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 				AppendIntentID: "test:cap:" + tt.name,
-				Groups: []shepherdtrace.AppendGroup{{
+				Groups: []kerneltrace.AppendGroup{{
 					TraceOwnerID: "owner",
-					FactDrafts: []shepherdtrace.RecordDraft{{
-						Mode:      shepherdtrace.Capture,
+					FactDrafts: []kerneltrace.RecordDraft{{
+						Mode:      kerneltrace.Capture,
 						SchemaRef: "yaah.test.v1.applied",
 						KindLabel: "test:result",
 						Payload:   payload,
@@ -414,10 +414,10 @@ func TestCaptureStatus(t *testing.T) {
 				}},
 			})
 
-			slice, _ := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "owner", 999, shepherdtrace.ModeBoth)
+			slice, _ := store.ReadOwnerPrefix(context.Background(), kerneltrace.TrustedReadContext, "owner", 999, kerneltrace.ModeBoth)
 			for _, factID := range slice.FactIDs() {
 				fact := slice.FactsByID[factID]
-				if fact.GetEnvelope().Mode == shepherdtrace.Capture {
+				if fact.GetEnvelope().Mode == kerneltrace.Capture {
 					got := captureStatus(fact)
 					if got != tt.want {
 						t.Errorf("captureStatus = %q, want %q", got, tt.want)
@@ -475,7 +475,7 @@ func TestTraceRebuild(t *testing.T) {
 	seedTestTraceStore(t, dir)
 
 	var buf bytes.Buffer
-	cmd := newShepherdTraceRebuildCmd()
+	cmd := newGoatherdTraceRebuildCmd()
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"sess-123"})

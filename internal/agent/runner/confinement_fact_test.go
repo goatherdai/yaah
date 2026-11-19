@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 
 	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 )
@@ -55,13 +55,13 @@ func TestRecordConfinementFact(t *testing.T) {
 		Broker:    41234,
 	})
 
-	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, root.OwnerID(), 100, shepherdtrace.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), kerneltrace.TrustedReadContext, root.OwnerID(), 100, kerneltrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
 	found := false
 	for _, id := range slice.FactIDs() {
-		rec, ok := slice.FactsByID[id].(shepherdtrace.Record)
+		rec, ok := slice.FactsByID[id].(kerneltrace.Record)
 		if !ok || rec.Envelope.SchemaRef != "yaah.subagent.confinement.v1" {
 			continue
 		}

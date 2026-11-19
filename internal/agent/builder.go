@@ -45,7 +45,7 @@ type LoopBuilder struct {
 	PreviousSummary string
 	// SessionID is the session identifier.
 	SessionID string
-	// TraceStore is the session-shared Shepherd trace sink. When set, the
+	// TraceStore is the session-shared Goatherd trace sink. When set, the
 	// orchestrator pipeline records turn, session-context, assistant, and
 	// tool-output facts through it (yaah-o86). The seam, not the kernel's
 	// concrete store — see pipeline.TraceSink.

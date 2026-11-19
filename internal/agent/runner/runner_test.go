@@ -9,7 +9,7 @@ import (
 
 	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"gopkg.in/yaml.v3"
 
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
@@ -405,7 +405,7 @@ roles:
 func TestSubagentTraceProfile(t *testing.T) {
 	dir := t.TempDir()
 	tracePath := filepath.Join(dir, "trace.sqlite")
-	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
+	store, err := kerneltrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -415,12 +415,12 @@ func TestSubagentTraceProfile(t *testing.T) {
 	// Record declaration + capture pairs
 	for i, name := range []string{"read", "edit", "bash"} {
 		intent := owner + ":tool:" + string(rune('a'+i))
-		declReceipt, _ := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		declReceipt, _ := store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 			AppendIntentID: intent,
-			Groups: []shepherdtrace.AppendGroup{{
+			Groups: []kerneltrace.AppendGroup{{
 				TraceOwnerID: owner,
-				FactDrafts: []shepherdtrace.RecordDraft{{
-					Mode:      shepherdtrace.Declaration,
+				FactDrafts: []kerneltrace.RecordDraft{{
+					Mode:      kerneltrace.Declaration,
 					SchemaRef: "yaah.tool." + name + ".v1",
 					KindLabel: name,
 					Payload:   map[string]any{"tool": name, "args": `{"file":"test.go"}`},
@@ -434,13 +434,13 @@ func TestSubagentTraceProfile(t *testing.T) {
 			success = false
 			errMsg = "permission denied"
 		}
-		store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 			AppendIntentID: captureIntent,
-			Groups: []shepherdtrace.AppendGroup{{
+			Groups: []kerneltrace.AppendGroup{{
 				TraceOwnerID:  owner,
 				CausalParents: declReceipt.FactIDs,
-				FactDrafts: []shepherdtrace.RecordDraft{{
-					Mode:      shepherdtrace.Capture,
+				FactDrafts: []kerneltrace.RecordDraft{{
+					Mode:      kerneltrace.Capture,
 					SchemaRef: "yaah.tool." + name + ".v1.applied",
 					KindLabel: name + ":result",
 					Payload:   map[string]any{"success": success, "error": errMsg},
@@ -473,7 +473,7 @@ func TestSubagentTraceProfile(t *testing.T) {
 func TestSubagentTraceProfile_NonexistentSession(t *testing.T) {
 	dir := t.TempDir()
 	tracePath := filepath.Join(dir, "trace.sqlite")
-	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
+	store, err := kerneltrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestSubagentTraceProfile_MissingFile(t *testing.T) {
 
 func TestRecordSubAgentUsage(t *testing.T) {
 	dir := t.TempDir()
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -508,13 +508,13 @@ func TestRecordSubAgentUsage(t *testing.T) {
 		CachedPromptTokens: 9000,
 	})
 
-	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, owner, 99, shepherdtrace.ModeCapturesOnly)
+	slice, err := store.ReadOwnerPrefix(context.Background(), kerneltrace.TrustedReadContext, owner, 99, kerneltrace.ModeCapturesOnly)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
 	var found bool
 	for _, id := range slice.FactIDs() {
-		rec, ok := slice.FactsByID[id].(shepherdtrace.Record)
+		rec, ok := slice.FactsByID[id].(kerneltrace.Record)
 		if !ok || rec.Envelope.SchemaRef != "yaah.subagent.usage.v1" {
 			continue
 		}
@@ -607,7 +607,7 @@ func (transcriptProvider) Send(context.Context, types.ChatRequest) (*types.ChatR
 func TestSubAgentTranscriptSurvivesProcessExit(t *testing.T) {
 	initTestRoles(t)
 	path := filepath.Join(t.TempDir(), "trace.sqlite")
-	store, err := shepherdtrace.NewSQLiteTraceStore(path)
+	store, err := kerneltrace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("open trace store: %v", err)
 	}
@@ -626,12 +626,12 @@ func TestSubAgentTranscriptSurvivesProcessExit(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	reopened, err := shepherdtrace.NewSQLiteTraceStore(path)
+	reopened, err := kerneltrace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer reopened.Close(context.Background())
-	slice, err := reopened.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "", 99999, shepherdtrace.ModeBoth)
+	slice, err := reopened.ReadOwnerPrefix(context.Background(), kerneltrace.TrustedReadContext, "", 99999, kerneltrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read owners: %v", err)
 	}
@@ -663,14 +663,14 @@ func TestSubAgentTranscriptSurvivesProcessExit(t *testing.T) {
 func TestSubAgentRetainedContext(t *testing.T) {
 	ctx := context.Background()
 	worktree := subAgentRetainedContext(ctx, taskRunnerOpts{}, "developer", "/work/wt", &subAgentConfinement{Enforced: true}, nil)
-	if worktree.SubstrateRef != "yaah.substrate.worktree.v1" || worktree.Containment != shepherdtrace.ContainContained {
+	if worktree.SubstrateRef != "yaah.substrate.worktree.v1" || worktree.Containment != kerneltrace.ContainContained {
 		t.Errorf("worktree context = %#v", worktree)
 	}
 	if len(worktree.ActiveBindingRefs) != 1 || worktree.ActiveBindingRefs[0] != "role:developer" {
 		t.Errorf("active bindings = %v", worktree.ActiveBindingRefs)
 	}
 	host := subAgentRetainedContext(ctx, taskRunnerOpts{}, "developer", "", nil, nil)
-	if host.SubstrateRef != "yaah.substrate.host.v1" || host.Containment != shepherdtrace.ContainUncontained {
+	if host.SubstrateRef != "yaah.substrate.host.v1" || host.Containment != kerneltrace.ContainUncontained {
 		t.Errorf("host context = %#v", host)
 	}
 }
@@ -692,7 +692,7 @@ func TestSubAgentRetainedContextContainer(t *testing.T) {
 	if got.SubstrateRef != "yaah.substrate.container.v1" {
 		t.Errorf("substrate = %q", got.SubstrateRef)
 	}
-	if got.Containment != shepherdtrace.ContainContained {
+	if got.Containment != kerneltrace.ContainContained {
 		t.Errorf("containment = %q, want contained (runtime backend parity)", got.Containment)
 	}
 }

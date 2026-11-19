@@ -24,8 +24,8 @@ import (
 // re-checks the orphan classification instead of trusting the list it printed.
 
 const (
-	containerLabelCroft    = "croft.sandbox"
-	containerLabelShepherd = "shepherd.sandbox"
+	containerLabelCroft          = "croft.sandbox"
+	containerLabelLegacyGoatherd = "shepherd.sandbox"
 )
 
 // OrphanContainer is one non-running sandbox container.
@@ -166,7 +166,7 @@ func ownedContainer(labels map[string]string) bool {
 	if v, ok := labels[containerLabelCroft]; ok && strings.TrimSpace(v) != "" {
 		return true
 	}
-	if v, ok := labels[containerLabelShepherd]; ok && strings.TrimSpace(v) != "" {
+	if v, ok := labels[containerLabelLegacyGoatherd]; ok && strings.TrimSpace(v) != "" {
 		return true
 	}
 	return false

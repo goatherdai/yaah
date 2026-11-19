@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/goatherd-runtime"
 	"github.com/goatherdai/yaah/internal/agent/recovery"
 	"github.com/goatherdai/yaah/internal/jobs"
@@ -18,7 +18,7 @@ import (
 // runner-side dispatch forks from.
 func scopeCapFixture(t *testing.T) (*goatherd.ScopeManager, string) {
 	t.Helper()
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestCreateSubAgentScopeIgnoresResumedScopesAtCap(t *testing.T) {
 	// The crashed run: a root and more active children than the cap allows,
 	// recorded durably — this is what a killed process leaves in the trace.
 	path := filepath.Join(t.TempDir(), "trace.sqlite")
-	store, err := shepherdtrace.NewSQLiteTraceStore(path)
+	store, err := kerneltrace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestCreateSubAgentScopeIgnoresResumedScopesAtCap(t *testing.T) {
 	}
 
 	// The restart: recovery rebuilds the very same tree from the trace.
-	reopened, err := shepherdtrace.NewSQLiteTraceStore(path)
+	reopened, err := kerneltrace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 
 	"github.com/goatherdai/yaah/internal/config"
@@ -24,7 +24,7 @@ import (
 
 type sessionFixtures struct {
 	mgr   *goatherd.ScopeManager
-	store *shepherdtrace.SQLiteTraceStore
+	store *kerneltrace.SQLiteTraceStore
 }
 
 // newSessionFixtures builds the shared fixtures: an in-memory trace store with
@@ -32,7 +32,7 @@ type sessionFixtures struct {
 func newSessionFixtures(t *testing.T) (*sessionFixtures, string, string) {
 	t.Helper()
 
-	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
+	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}

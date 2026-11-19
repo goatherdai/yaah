@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 
@@ -33,7 +33,7 @@ func retainedEnv(t *testing.T, runner jobs.TaskRunner) *dispatch.RetainedRuntime
 	if _, err := osexec.LookPath("git"); err != nil {
 		t.Skip("git binary not available")
 	}
-	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
+	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}

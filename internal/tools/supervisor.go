@@ -57,7 +57,7 @@ const haltQuiesceTimeout = 10 * time.Second
 //
 // The tool operates on the session's scope manager and trace store,
 // injected by the wiring (plan 07, H4) — the same instances the
-// shepherd_trace middleware and the sub-agent runner carry, so the
+// goatherd_trace middleware and the sub-agent runner carry, so the
 // supervisor, the runner, and the tracing share one registry.
 type SupervisorTool struct {
 	TraceDir string

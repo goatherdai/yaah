@@ -14,7 +14,7 @@ import (
 
 // memoryDigest returns the exact content digest for a memory entry's text.
 // Used for exact dedup; a plain SHA-256 suffices because memory text is a
-// plain string (no need for shepherd's canonical-JSON key sorting).
+// plain string (no need for goatherd's canonical-JSON key sorting).
 func memoryDigest(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])

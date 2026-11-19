@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 
 	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 	"github.com/goatherdai/yaah/internal/tools"
@@ -52,13 +52,13 @@ func TestRecordConfinementDegradedFact(t *testing.T) {
 	recordConfinementFact(ctx, root, conf)
 	recordConfinementDegradedFact(ctx, root, conf)
 
-	slice, err := store.ReadOwnerPrefix(ctx, shepherdtrace.TrustedReadContext, root.OwnerID(), 100, shepherdtrace.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(ctx, kerneltrace.TrustedReadContext, root.OwnerID(), 100, kerneltrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
 	var found bool
 	for _, id := range slice.FactIDs() {
-		rec, ok := slice.FactsByID[id].(shepherdtrace.Record)
+		rec, ok := slice.FactsByID[id].(kerneltrace.Record)
 		if !ok || rec.Envelope.SchemaRef != "yaah.subagent.confinement.degraded.v1" {
 			continue
 		}
@@ -111,12 +111,12 @@ func TestRecordConfinementDegradedFact_SilentWhenJailHeldOrAbsent(t *testing.T) 
 	recordConfinementDegradedFact(ctx, root, nil)
 	recordConfinementDegradedFact(ctx, nil, &subAgentConfinement{ws: degradedWorkspace{reason: degradedReason}})
 
-	slice, err := store.ReadOwnerPrefix(ctx, shepherdtrace.TrustedReadContext, root.OwnerID(), 100, shepherdtrace.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(ctx, kerneltrace.TrustedReadContext, root.OwnerID(), 100, kerneltrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
 	for _, id := range slice.FactIDs() {
-		rec, ok := slice.FactsByID[id].(shepherdtrace.Record)
+		rec, ok := slice.FactsByID[id].(kerneltrace.Record)
 		if ok && rec.Envelope.SchemaRef == "yaah.subagent.confinement.degraded.v1" {
 			t.Fatalf("recorded a degraded fact for a lane that never lost its jail: %v", rec.Body.Payload)
 		}

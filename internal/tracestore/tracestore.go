@@ -1,7 +1,7 @@
-// Package tracestore is yaah's single seam onto the Shepherd trace store.
+// Package tracestore is yaah's single seam onto the Goatherd trace store.
 //
 // Every component that opens a trace store — session wiring, the retention
-// evictor, doctor, the trace and shepherd CLIs, the usage recorder — goes
+// evictor, doctor, the trace and goatherd CLIs, the usage recorder — goes
 // through this package instead of calling the kernel's SQLite constructors
 // directly, so the storage backend is chosen in exactly one place: the
 // configuration. The kernel resolves backend specifics behind its dialect
@@ -14,13 +14,13 @@ import (
 	"net/url"
 	"strings"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 )
 
 // Backends yaah can configure. The empty value means the SQLite default.
 const (
-	BackendSQLite   = string(shepherdtrace.BackendSQLite)
-	BackendPostgres = string(shepherdtrace.BackendPostgres)
+	BackendSQLite   = string(kerneltrace.BackendSQLite)
+	BackendPostgres = string(kerneltrace.BackendPostgres)
 )
 
 // Config names a trace store: which backend, and its data source. The
@@ -48,7 +48,7 @@ func NewConfig(backend, dsn string) (Config, error) {
 		return Config{}, fmt.Errorf("unsupported trace store backend %q: supported backends: %s, %s", cfg.Backend, BackendSQLite, BackendPostgres)
 	}
 	if cfg.DSN == "" && cfg.Backend == BackendPostgres {
-		return Config{}, fmt.Errorf("trace store backend %q needs a DSN (set agent.default.shepherd_trace.dsn)", BackendPostgres)
+		return Config{}, fmt.Errorf("trace store backend %q needs a DSN (set agent.default.goatherd_trace.dsn)", BackendPostgres)
 	}
 	return cfg, nil
 }
@@ -121,27 +121,27 @@ func (c Config) Describe() string {
 // Open opens the trace store for read-write use per cfg. The store is the
 // kernel's concrete type: callers that need the effect bus attach it via
 // StoreConfig (OpenConfigured) instead.
-func Open(cfg Config) (*shepherdtrace.SQLiteTraceStore, error) {
-	return OpenConfigured(cfg, shepherdtrace.StoreConfig{})
+func Open(cfg Config) (*kerneltrace.SQLiteTraceStore, error) {
+	return OpenConfigured(cfg, kerneltrace.StoreConfig{})
 }
 
 // OpenReadOnly opens an existing trace store without write capability.
 // The database must already hold the full schema; a missing or non-trace
 // store fails loudly instead of materializing an empty one.
-func OpenReadOnly(cfg Config) (*shepherdtrace.SQLiteTraceStore, error) {
-	sc := shepherdtrace.StoreConfig{}
+func OpenReadOnly(cfg Config) (*kerneltrace.SQLiteTraceStore, error) {
+	sc := kerneltrace.StoreConfig{}
 	sc.ReadOnly = true
 	return OpenConfigured(cfg, sc)
 }
 
 // OpenConfigured opens the store with caller-supplied kernel options
 // (bus, limits, read-only) merged over the backend config.
-func OpenConfigured(cfg Config, sc shepherdtrace.StoreConfig) (*shepherdtrace.SQLiteTraceStore, error) {
+func OpenConfigured(cfg Config, sc kerneltrace.StoreConfig) (*kerneltrace.SQLiteTraceStore, error) {
 	normalized, err := NewConfig(cfg.Backend, cfg.DSN)
 	if err != nil {
 		return nil, err
 	}
-	sc.Backend = shepherdtrace.Backend(normalized.Backend)
+	sc.Backend = kerneltrace.Backend(normalized.Backend)
 	sc.DSN = normalized.DSN
-	return shepherdtrace.OpenSQLite(sc)
+	return kerneltrace.OpenSQLite(sc)
 }

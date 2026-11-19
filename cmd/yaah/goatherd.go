@@ -19,35 +19,36 @@ import (
 	"github.com/goatherdai/yaah/internal/tracestore"
 )
 
-// shepherdCmd surfaces the supervision state's leftovers (adoption
-// plan R3): `yaah shepherd` lists the orphan report recovery produces,
-// and `yaah shepherd prune <path>` deletes exactly one orphaned
+// goatherdCmd surfaces the supervision state's leftovers (adoption
+// plan R3): `yaah goatherd` lists the orphan report recovery produces,
+// and `yaah goatherd prune <path>` deletes exactly one orphaned
 // worktree — the only deletion path in the whole design, by name,
 // user-invoked (D5: an orphaned worktree may hold the only copy of
 // unmerged agent work, so nothing else may ever delete it).
-var shepherdCmd = &cobra.Command{
-	Use:   "shepherd",
-	Short: "List and prune orphaned supervision worktrees and containers",
-	Args:  cobra.NoArgs,
+var goatherdCmd = &cobra.Command{
+	Use:     "goatherd",
+	Aliases: []string{"shepherd"}, // pre-rename spelling; deprecated
+	Short:   "List and prune orphaned supervision worktrees and containers",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		report, cleanup, err := shepherdScan()
+		report, cleanup, err := goatherdScan()
 		if cleanup != nil {
 			defer cleanup()
 		}
 		if err != nil {
 			return err
 		}
-		printShepherdReport(cmd.OutOrStdout(), report)
+		printGoatherdReport(cmd.OutOrStdout(), report)
 		return nil
 	},
 }
 
-var shepherdContainersCmd = &cobra.Command{
+var goatherdContainersCmd = &cobra.Command{
 	Use:   "containers",
 	Short: "List orphaned per-dispatch containers",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		address, namespace, err := shepherdContainerTarget()
+		address, namespace, err := goatherdContainerTarget()
 		if err != nil {
 			return err
 		}
@@ -56,7 +57,7 @@ var shepherdContainersCmd = &cobra.Command{
 		}
 		orphans, err := tools.ListOrphanContainers(context.Background(), address, namespace)
 		if err != nil {
-			return fmt.Errorf("shepherd: list containers: %w", err)
+			return fmt.Errorf("goatherd: list containers: %w", err)
 		}
 		if len(orphans) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), "no orphaned containers.")
@@ -64,19 +65,19 @@ var shepherdContainersCmd = &cobra.Command{
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "orphaned containers (namespace %s):\n", namespace)
 		for _, o := range orphans {
-			fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  created %s — prune with `yaah shepherd prune-container %s`\n",
+			fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  created %s — prune with `yaah goatherd prune-container %s`\n",
 				o.ID, o.Image, o.CreatedAt.Format(time.RFC3339), o.ID)
 		}
 		return nil
 	},
 }
 
-var shepherdPruneContainerCmd = &cobra.Command{
+var goatherdPruneContainerCmd = &cobra.Command{
 	Use:   "prune-container <container-id>",
 	Short: "Delete one orphaned per-dispatch container (exact id)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		address, namespace, err := shepherdContainerTarget()
+		address, namespace, err := goatherdContainerTarget()
 		if err != nil {
 			return err
 		}
@@ -85,34 +86,34 @@ var shepherdPruneContainerCmd = &cobra.Command{
 		}
 		orphans, err := tools.ListOrphanContainers(context.Background(), address, namespace)
 		if err != nil {
-			return fmt.Errorf("shepherd: list containers: %w", err)
+			return fmt.Errorf("goatherd: list containers: %w", err)
 		}
 		for _, o := range orphans {
 			if o.ID != args[0] {
 				continue
 			}
 			if err := tools.PruneContainer(context.Background(), address, namespace, o.ID); err != nil {
-				return fmt.Errorf("shepherd: prune-container %s: %w", o.ID, err)
+				return fmt.Errorf("goatherd: prune-container %s: %w", o.ID, err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "pruned container %s\n", o.ID)
 			return nil
 		}
-		return fmt.Errorf("shepherd: %s is not on the orphaned-container list — run `yaah shepherd containers`; only listed ids prune", args[0])
+		return fmt.Errorf("goatherd: %s is not on the orphaned-container list — run `yaah goatherd containers`; only listed ids prune", args[0])
 	},
 }
 
-// shepherdContainerTarget resolves the daemon and namespace for the container
+// goatherdContainerTarget resolves the daemon and namespace for the container
 // listing. The address is required: without it the containerd client has no
 // endpoint to dial, and an empty address must not silently become a different
 // daemon than the session used.
-func shepherdContainerTarget() (address, namespace string, err error) {
+func goatherdContainerTarget() (address, namespace string, err error) {
 	cfg, err := config.Load()
 	if err != nil {
-		return "", "", fmt.Errorf("shepherd: load config: %w", err)
+		return "", "", fmt.Errorf("goatherd: load config: %w", err)
 	}
 	address = strings.TrimSpace(cfg.Workspace.Containerd.Address)
 	if address == "" {
-		return "", "", errors.New("shepherd: workspace.containerd.address is required to inspect containers")
+		return "", "", errors.New("goatherd: workspace.containerd.address is required to inspect containers")
 	}
 	namespace = strings.TrimSpace(cfg.Workspace.Containerd.Namespace)
 	if namespace == "" {
@@ -121,12 +122,12 @@ func shepherdContainerTarget() (address, namespace string, err error) {
 	return address, namespace, nil
 }
 
-var shepherdPruneCmd = &cobra.Command{
+var goatherdPruneCmd = &cobra.Command{
 	Use:   "prune <worktree-path>",
 	Short: "Delete one orphaned worktree (the only deletion path; exact path)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		report, cleanup, err := shepherdScan()
+		report, cleanup, err := goatherdScan()
 		if cleanup != nil {
 			defer cleanup()
 		}
@@ -137,25 +138,25 @@ var shepherdPruneCmd = &cobra.Command{
 	},
 }
 
-// shepherdScan recovers the supervision state from the configured
+// goatherdScan recovers the supervision state from the configured
 // trace store — the same scan startup and doctor run — and returns its
 // report. Tracing is integral, so there is no off state to report.
-func shepherdScan() (*recovery.Report, func(), error) {
+func goatherdScan() (*recovery.Report, func(), error) {
 	cfg, err := config.Load()
 	if err != nil {
-		return nil, nil, fmt.Errorf("shepherd: load config: %w", err)
+		return nil, nil, fmt.Errorf("goatherd: load config: %w", err)
 	}
 	traceCfg := cfg.Agent.Default.TraceStoreConfig()
 	// The SQLite store's parent directory is runtime-created; a server
 	// backend has nothing to create.
 	if traceCfg.IsSQLite() {
 		if err := os.MkdirAll(filepath.Dir(traceCfg.DSN), 0o700); err != nil {
-			return nil, nil, fmt.Errorf("shepherd: trace dir: %w", err)
+			return nil, nil, fmt.Errorf("goatherd: trace dir: %w", err)
 		}
 	}
 	store, err := tracestore.Open(traceCfg)
 	if err != nil {
-		return nil, nil, fmt.Errorf("shepherd: trace store (%s): %w", traceCfg.Describe(), err)
+		return nil, nil, fmt.Errorf("goatherd: trace store (%s): %w", traceCfg.Describe(), err)
 	}
 	cleanup := func() { store.Close(context.Background()) }
 	repoPath := cfg.Agent.Default.RetainedRepoPath
@@ -164,13 +165,13 @@ func shepherdScan() (*recovery.Report, func(), error) {
 	}
 	_, report, rerr := recovery.Recover(context.Background(), store, repoPath, true, nil)
 	if rerr != nil {
-		return nil, cleanup, fmt.Errorf("shepherd: recovery: %w", rerr)
+		return nil, cleanup, fmt.Errorf("goatherd: recovery: %w", rerr)
 	}
 	return report, cleanup, nil
 }
 
-// printShepherdReport lists the recovery's leftover buckets.
-func printShepherdReport(w io.Writer, report *recovery.Report) {
+// printGoatherdReport lists the recovery's leftover buckets.
+func printGoatherdReport(w io.Writer, report *recovery.Report) {
 	if report == nil {
 		return
 	}
@@ -183,7 +184,7 @@ func printShepherdReport(w io.Writer, report *recovery.Report) {
 		fmt.Fprintf(w, "  adopted   %s (live work, leave it)\n", p)
 	}
 	for _, o := range report.Orphans {
-		fmt.Fprintf(w, "  orphaned %s (%s) — scope %s; prunable with `yaah shepherd prune \"%s\"`\n", o.Path, formatSize(o.Size), o.ScopeID, o.Path)
+		fmt.Fprintf(w, "  orphaned %s (%s) — scope %s; prunable with `yaah goatherd prune \"%s\"`\n", o.Path, formatSize(o.Size), o.ScopeID, o.Path)
 	}
 	for _, m := range report.Missing {
 		fmt.Fprintf(w, "  missing  %s — scope %s; the worktree is gone, its work is lost\n", m.Path, m.ScopeID)
@@ -215,7 +216,7 @@ func printShepherdReport(w io.Writer, report *recovery.Report) {
 // falling back to deleting the directory.
 func pruneOrphan(w io.Writer, report *recovery.Report, name string) error {
 	if report == nil {
-		return errors.New("shepherd: nothing to prune (tracing off)")
+		return errors.New("goatherd: nothing to prune (tracing off)")
 	}
 	for _, o := range report.Orphans {
 		if o.Path != name {
@@ -223,33 +224,33 @@ func pruneOrphan(w io.Writer, report *recovery.Report, name string) error {
 		}
 		registered, err := registeredWorktree(context.Background(), o.Repo, name)
 		if err != nil {
-			return fmt.Errorf("shepherd: prune %s: worktree registry unavailable: %w", name, err)
+			return fmt.Errorf("goatherd: prune %s: worktree registry unavailable: %w", name, err)
 		}
 		if !registered || !recovery.WorktreeOwnedBy(o.Repo, name) {
-			return fmt.Errorf("shepherd: prune %s: the directory is no longer a worktree of its recorded repository — refusing; remove it manually if you are sure", name)
+			return fmt.Errorf("goatherd: prune %s: the directory is no longer a worktree of its recorded repository — refusing; remove it manually if you are sure", name)
 		}
 		if err := goatherdgit.NewWorktreeSandbox(o.Repo, name).Destroy(context.Background()); err != nil {
-			return fmt.Errorf("shepherd: prune %s: %w", name, err)
+			return fmt.Errorf("goatherd: prune %s: %w", name, err)
 		}
 		fmt.Fprintf(w, "pruned %s (scope %s)\n", name, o.ScopeID)
 		return nil
 	}
 	for _, p := range report.Adopted {
 		if p == name {
-			return fmt.Errorf("shepherd: %s is an adopted (live) worktree — pruning refuses; it holds unmerged work in use", name)
+			return fmt.Errorf("goatherd: %s is an adopted (live) worktree — pruning refuses; it holds unmerged work in use", name)
 		}
 	}
 	for _, m := range report.Missing {
 		if m.Path == name {
-			return fmt.Errorf("shepherd: %s is reported missing — the worktree is already gone; there is nothing to delete", name)
+			return fmt.Errorf("goatherd: %s is reported missing — the worktree is already gone; there is nothing to delete", name)
 		}
 	}
 	for _, u := range report.Unadopted {
 		if u.Path == name {
-			return fmt.Errorf("shepherd: %s is reported unadopted — it is not a registered worktree of its repository, so it is not yaah's to remove; do it manually if you are sure", name)
+			return fmt.Errorf("goatherd: %s is reported unadopted — it is not a registered worktree of its repository, so it is not yaah's to remove; do it manually if you are sure", name)
 		}
 	}
-	return fmt.Errorf("shepherd: %s is not on the orphan report — run `yaah shepherd` to list orphans; only listed paths prune", name)
+	return fmt.Errorf("goatherd: %s is not on the orphan report — run `yaah goatherd` to list orphans; only listed paths prune", name)
 }
 
 // registeredWorktree reports whether git's registry currently lists
@@ -278,8 +279,8 @@ func registeredWorktree(ctx context.Context, repo, name string) (bool, error) {
 }
 
 func init() {
-	shepherdCmd.AddCommand(shepherdContainersCmd)
-	shepherdCmd.AddCommand(shepherdPruneCmd)
-	shepherdCmd.AddCommand(shepherdPruneContainerCmd)
-	rootCmd.AddCommand(shepherdCmd)
+	goatherdCmd.AddCommand(goatherdContainersCmd)
+	goatherdCmd.AddCommand(goatherdPruneCmd)
+	goatherdCmd.AddCommand(goatherdPruneContainerCmd)
+	rootCmd.AddCommand(goatherdCmd)
 }

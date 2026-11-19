@@ -13,7 +13,7 @@ import (
 	"os"
 	"path/filepath"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
@@ -32,7 +32,7 @@ func main() {
 	if err := os.MkdirAll(filepath.Dir(*worktree), 0o755); err != nil {
 		fail("worktree parent: %v", err)
 	}
-	store, err := shepherdtrace.OpenSQLite(shepherdtrace.StoreConfig{DSN: *tracePath})
+	store, err := kerneltrace.OpenSQLite(kerneltrace.StoreConfig{DSN: *tracePath})
 	if err != nil {
 		fail("open trace: %v", err)
 	}

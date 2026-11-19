@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	sandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 	"github.com/goatherdai/yaah/internal/tracestore"
@@ -17,7 +17,7 @@ import (
 // the caller passes zero or a negative value.
 const defaultBusBuffer = 64
 
-// TraceSink is the write seam onto the session's Shepherd trace store (plan
+// TraceSink is the write seam onto the session's Goatherd trace store (plan
 // 07, H4). The trace middleware, the runner's per-dispatch usage facts and
 // the session teardown depend on this interface instead of the kernel's
 // concrete store, so the kernel type appears in one place — the adapter
@@ -27,8 +27,8 @@ const defaultBusBuffer = 64
 // batch, publish a frontier cut, and close the handle. Adding a method here
 // means the kernel store is the only implementation that needs it.
 type TraceSink interface {
-	Append(ctx context.Context, auth shepherdtrace.AppendContext, batch shepherdtrace.AppendBatch) (shepherdtrace.AppendReceipt, error)
-	PublishFrontier(ctx context.Context, auth shepherdtrace.AppendContext, spec shepherdtrace.FrontierSpec) (shepherdtrace.Frontier, error)
+	Append(ctx context.Context, auth kerneltrace.AppendContext, batch kerneltrace.AppendBatch) (kerneltrace.AppendReceipt, error)
+	PublishFrontier(ctx context.Context, auth kerneltrace.AppendContext, spec kerneltrace.FrontierSpec) (kerneltrace.Frontier, error)
 	Close(ctx context.Context) error
 }
 
@@ -56,14 +56,14 @@ type ScopeSource interface {
 
 // kernelTraceSink adapts the kernel's SQLite trace store to TraceSink.
 type kernelTraceSink struct {
-	store *shepherdtrace.SQLiteTraceStore
+	store *kerneltrace.SQLiteTraceStore
 }
 
-func (k kernelTraceSink) Append(ctx context.Context, auth shepherdtrace.AppendContext, batch shepherdtrace.AppendBatch) (shepherdtrace.AppendReceipt, error) {
+func (k kernelTraceSink) Append(ctx context.Context, auth kerneltrace.AppendContext, batch kerneltrace.AppendBatch) (kerneltrace.AppendReceipt, error) {
 	return k.store.Append(ctx, auth, batch)
 }
 
-func (k kernelTraceSink) PublishFrontier(ctx context.Context, auth shepherdtrace.AppendContext, spec shepherdtrace.FrontierSpec) (shepherdtrace.Frontier, error) {
+func (k kernelTraceSink) PublishFrontier(ctx context.Context, auth kerneltrace.AppendContext, spec kerneltrace.FrontierSpec) (kerneltrace.Frontier, error) {
 	return k.store.PublishFrontier(ctx, auth, spec)
 }
 
@@ -107,7 +107,7 @@ func (k kernelScopeSource) PruneCheckpoints(ctx context.Context, scopeID string)
 // TraceSinkOf adapts a kernel trace store to the seam. A nil store yields a
 // nil interface: callers test the seam for nil to mean "tracing is off", so a
 // typed nil must never be smuggled across in a non-nil interface value.
-func TraceSinkOf(store *shepherdtrace.SQLiteTraceStore) TraceSink {
+func TraceSinkOf(store *kerneltrace.SQLiteTraceStore) TraceSink {
 	if store == nil {
 		return nil
 	}
@@ -137,20 +137,20 @@ func SinkIsNil(sink TraceSink) bool {
 	switch s := sink.(type) {
 	case kernelTraceSink:
 		return s.store == nil
-	case *shepherdtrace.SQLiteTraceStore:
+	case *kerneltrace.SQLiteTraceStore:
 		return s == nil
 	}
 	return false
 }
 
-// InitShepherdInfrastructure creates the session-wide Shepherd trace store,
+// InitGoatherdInfrastructure creates the session-wide Goatherd trace store,
 // effect bus, and scope manager. Called once from wiring — tracing is
 // integral, so this always runs — and both the orchestrator and sub-agent
-// pipelines host shepherd_trace through this shared store. cfg names the
+// pipelines host goatherd_trace through this shared store. cfg names the
 // backend and its data source (file path for SQLite, connection URL for
 // PostgreSQL); file-only side effects (mkdir, chmod) are skipped for
 // server backends.
-func InitShepherdInfrastructure(cfg tracestore.Config, busBuffer int) (*shepherdtrace.SQLiteTraceStore, *shepherdtrace.EffectBus, *goatherd.ScopeManager, error) {
+func InitGoatherdInfrastructure(cfg tracestore.Config, busBuffer int) (*kerneltrace.SQLiteTraceStore, *kerneltrace.EffectBus, *goatherd.ScopeManager, error) {
 	if cfg.IsSQLite() {
 		traceDir := filepath.Dir(cfg.DSN)
 		// Only tighten the directory we create. The DSN may be relative,
@@ -159,39 +159,39 @@ func InitShepherdInfrastructure(cfg tracestore.Config, busBuffer int) (*shepherd
 		_, statErr := os.Stat(traceDir)
 		createdDir := os.IsNotExist(statErr)
 		if err := os.MkdirAll(traceDir, 0o700); err != nil {
-			return nil, nil, nil, fmt.Errorf("shepherd: mkdir %s: %w", traceDir, err)
+			return nil, nil, nil, fmt.Errorf("goatherd: mkdir %s: %w", traceDir, err)
 		}
 		// Trace data carries prompts and tool-call details. Restrict access to
 		// the session owner on POSIX platforms (Windows uses ACLs and ignores
 		// POSIX modes; os.Chmod there only toggles the read-only bit).
 		if runtime.GOOS != "windows" && createdDir {
 			if err := os.Chmod(traceDir, 0o700); err != nil {
-				return nil, nil, nil, fmt.Errorf("shepherd: chmod dir %s: %w", traceDir, err)
+				return nil, nil, nil, fmt.Errorf("goatherd: chmod dir %s: %w", traceDir, err)
 			}
 		}
 	}
 	store, err := tracestore.Open(cfg)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("shepherd: open store (%s): %w", cfg.Describe(), err)
+		return nil, nil, nil, fmt.Errorf("goatherd: open store (%s): %w", cfg.Describe(), err)
 	}
 	// Tighten the store file itself (SQLite only) the same way: the trace
 	// carries prompts and tool-call details, so restrict it to the session
 	// owner, POSIX modes only.
 	if cfg.IsSQLite() && runtime.GOOS != "windows" {
 		if err := os.Chmod(cfg.DSN, 0o600); err != nil {
-			return nil, nil, nil, fmt.Errorf("shepherd: chmod store %s: %w", cfg.DSN, err)
+			return nil, nil, nil, fmt.Errorf("goatherd: chmod store %s: %w", cfg.DSN, err)
 		}
 	}
 	if busBuffer <= 0 {
 		busBuffer = defaultBusBuffer
 	}
-	bus := shepherdtrace.NewEffectBus(busBuffer)
+	bus := kerneltrace.NewEffectBus(busBuffer)
 	store.WithBus(bus)
 	mgr := goatherd.NewScopeManager(store)
 	return store, bus, mgr, nil
 }
 
-// CloseShepherdInfrastructure closes the session-wide shepherd trace store
+// CloseGoatherdInfrastructure closes the session-wide goatherd trace store
 // and its effect bus on a clean session end (plan 07, H2): the store first
 // — no more publishes reach the bus — then the bus, whose Close stops its
 // subscriber goroutines. Both are idempotent (the store's database Close
@@ -201,10 +201,10 @@ func InitShepherdInfrastructure(cfg tracestore.Config, busBuffer int) (*shepherd
 // propagate: the clean-exit path reports its teardown failures the same
 // way the workspace sandbox destroy does, and its callers have no error
 // contract to join into.
-func CloseShepherdInfrastructure(store TraceSink, bus *shepherdtrace.EffectBus) {
+func CloseGoatherdInfrastructure(store TraceSink, bus *kerneltrace.EffectBus) {
 	if !SinkIsNil(store) {
 		if err := store.Close(context.Background()); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: shepherd trace store close: %v\n", err)
+			fmt.Fprintf(os.Stderr, "warning: goatherd trace store close: %v\n", err)
 		}
 	}
 	if bus != nil {

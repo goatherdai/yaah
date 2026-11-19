@@ -34,7 +34,7 @@ func TestOwnedContainer(t *testing.T) {
 	if !ownedContainer(map[string]string{containerLabelCroft: "id"}) {
 		t.Error("croft.sandbox is an owned label")
 	}
-	if !ownedContainer(map[string]string{containerLabelShepherd: "id"}) {
+	if !ownedContainer(map[string]string{containerLabelLegacyGoatherd: "id"}) {
 		t.Error("shepherd.sandbox is a legacy owned label")
 	}
 	if ownedContainer(map[string]string{"other": "x"}) {

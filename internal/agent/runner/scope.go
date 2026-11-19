@@ -54,7 +54,7 @@ func subAgentSandbox(opts taskRunnerOpts, workdir string) goatherdsandbox.Sandbo
 // silently falling back to flat scopes.
 var ErrRootTerminal = errors.New("recovered root scope is terminal")
 
-// CreateRootScope creates the session's root scope (shepherd-adoption plan
+// CreateRootScope creates the session's root scope (goatherd-adoption plan
 // D1): the anchor every sub-agent scope forks from, owned by the session so
 // scope IDs and trace owners line up. Local mode gets the shared in-place
 // git sandbox — the same backend supervised sessions use, and never

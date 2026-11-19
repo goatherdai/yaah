@@ -35,7 +35,7 @@
 // proposal runtime. A document that declares `lane: proposal` is choosing the
 // retained lane, and refusing it would make the fanout_settle shape — the
 // speculative pattern the DSL exists for — unrunnable standalone. The runtime
-// is composed from the same facts a session composes it from (the shepherd
+// is composed from the same facts a session composes it from (the goatherd
 // trace store, a root scope over the working tree, and a per-run proposal
 // registry), created lazily once the first proposal-lane dispatch needs it,
 // and torn down in the cleanup the seam already returns. This is not an
@@ -126,7 +126,7 @@ func newStandaloneWorkflowRunner() (jobs.TaskRunner, func(), error) {
 	}
 
 	// The retained runtime, when the document needs one. Composed lazily —
-	// a report-only document never pays for the shepherd infrastructure —
+	// a report-only document never pays for the goatherd infrastructure —
 	// but composed HERE, before the run starts, so a composition failure
 	// is a named refusal at the door rather than a mid-run dispatch error.
 	retained, retainedCleanup, rterr := standaloneRetained(cfg, ws, run, sessionID)
@@ -180,7 +180,7 @@ func standaloneRetained(cfg *config.Config, ws *workspaceStage, run jobs.TaskRun
 	// door refuses by name when a proposal-lane node meets a nil runtime.
 	// Composing unconditionally also keeps the resume path honest: resume
 	// reads the runtime this process composed for the run it continues.
-	traceStore, traceBus, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.TraceStoreConfig(), 0)
+	traceStore, traceBus, mgr, serr := pipeline.InitGoatherdInfrastructure(cfg.Agent.Default.TraceStoreConfig(), 0)
 	if serr != nil {
 		return nil, nil, fmt.Errorf("workflow: retained lane unavailable: %w", serr)
 	}
@@ -190,7 +190,7 @@ func standaloneRetained(cfg *config.Config, ws *workspaceStage, run jobs.TaskRun
 	}
 	root, rerr := runner.CreateRootScope(mgr, sessionID, repoPath, false)
 	if rerr != nil {
-		pipeline.CloseShepherdInfrastructure(traceStore, traceBus)
+		pipeline.CloseGoatherdInfrastructure(traceStore, traceBus)
 		return nil, nil, fmt.Errorf("workflow: retained lane unavailable: root scope: %w", rerr)
 	}
 	rt := &dispatch.RetainedRuntime{
@@ -204,7 +204,7 @@ func standaloneRetained(cfg *config.Config, ws *workspaceStage, run jobs.TaskRun
 	}
 	rt.EnsureInFlight()
 	cleanup := func() {
-		pipeline.CloseShepherdInfrastructure(traceStore, traceBus)
+		pipeline.CloseGoatherdInfrastructure(traceStore, traceBus)
 	}
 	return rt, cleanup, nil
 }

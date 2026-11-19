@@ -12,7 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -46,7 +46,7 @@ type TraceSessionContext struct {
 //
 // The agent loop calls this for every model response, including the final
 // tool-free response, which never reaches PostModel.
-func (m *ShepherdTraceMiddleware) RecordAssistant(ctx context.Context, msg *types.Message, turn int) {
+func (m *GoatherdTraceMiddleware) RecordAssistant(ctx context.Context, msg *types.Message, turn int) {
 	if m.store == nil || m.sessionID == "" || msg == nil {
 		return
 	}
@@ -108,13 +108,13 @@ func (m *ShepherdTraceMiddleware) RecordAssistant(ctx context.Context, msg *type
 	}
 
 	intentID := fmt.Sprintf("%s:assistant:%d", m.sessionID, m.ordinal)
-	receipt, err := m.append(ctx, shepherdtrace.AppendBatch{
+	receipt, err := m.append(ctx, kerneltrace.AppendBatch{
 		AppendIntentID: intentID,
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
 			CausalParents: m.lastFactIDs,
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Capture,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Capture,
 				SchemaRef: "yaah.message.assistant.v1",
 				KindLabel: "assistant:message",
 				Payload:   payload,
@@ -122,7 +122,7 @@ func (m *ShepherdTraceMiddleware) RecordAssistant(ctx context.Context, msg *type
 		}},
 	})
 	if err != nil {
-		slog.Debug("shepherd_trace: assistant message failed", "err", err)
+		slog.Debug("goatherd_trace: assistant message failed", "err", err)
 		return
 	}
 	m.lastFactIDs = receipt.FactIDs
@@ -135,7 +135,7 @@ func (m *ShepherdTraceMiddleware) RecordAssistant(ctx context.Context, msg *type
 // The loop calls it every turn; the middleware records the first call only.
 // That keeps the fact a session baseline while allowing a caller that
 // re-constructs the pipeline mid-run to seed a new owner exactly once.
-func (m *ShepherdTraceMiddleware) RecordSessionContext(ctx context.Context, in TraceSessionContext) {
+func (m *GoatherdTraceMiddleware) RecordSessionContext(ctx context.Context, in TraceSessionContext) {
 	if m.store == nil || m.sessionID == "" || m.sessionContextRecorded {
 		return
 	}
@@ -183,13 +183,13 @@ func (m *ShepherdTraceMiddleware) RecordSessionContext(ctx context.Context, in T
 	}
 
 	intentID := fmt.Sprintf("%s:session_context:%d", m.sessionID, m.ordinal)
-	receipt, err := m.append(ctx, shepherdtrace.AppendBatch{
+	receipt, err := m.append(ctx, kerneltrace.AppendBatch{
 		AppendIntentID: intentID,
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
 			CausalParents: m.lastFactIDs,
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Capture,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Capture,
 				SchemaRef: "yaah.session.context.v1",
 				KindLabel: "session:context",
 				Payload:   payload,
@@ -197,7 +197,7 @@ func (m *ShepherdTraceMiddleware) RecordSessionContext(ctx context.Context, in T
 		}},
 	})
 	if err != nil {
-		slog.Debug("shepherd_trace: session context failed", "err", err)
+		slog.Debug("goatherd_trace: session context failed", "err", err)
 		return
 	}
 	m.sessionContextRecorded = true
@@ -256,7 +256,7 @@ func traceConfigDigest(in TraceSessionContext) (string, bool) {
 	return fmt.Sprintf("sha256:%x", sum), true
 }
 
-func retainedContextPayload(rc *shepherdtrace.RetainedContext) map[string]any {
+func retainedContextPayload(rc *kerneltrace.RetainedContext) map[string]any {
 	return map[string]any{
 		"substrate_ref":             rc.SubstrateRef,
 		"containment":               string(rc.Containment),

@@ -39,7 +39,7 @@ func tracer() trace.Tracer {
 // to-answer interaction. All agent.turn spans for this prompt are
 // children of this span. The prompt text is truncated to 200 chars as
 // an attribute so traces are self-documenting. sessionID and turnID
-// cross-link the span tree to `sessions`/`messages` rows and Shepherd
+// cross-link the span tree to `sessions`/`messages` rows and Goatherd
 // turn facts carrying the same turn_id.
 func StartPrompt(ctx context.Context, sessionID, turnID, prompt string) (context.Context, trace.Span) {
 	ctx, span := tracer().Start(ctx, "prompt")
@@ -60,7 +60,7 @@ func StartPrompt(ctx context.Context, sessionID, turnID, prompt string) (context
 // StartTurn creates a span for one agent loop iteration. The returned
 // context should flow into the LLM call and tool execution for that
 // turn so nested spans are children. turnID is the stable per-prompt ID
-// shared with the messages rows and Shepherd facts for this interaction.
+// shared with the messages rows and Goatherd facts for this interaction.
 func StartTurn(ctx context.Context, turnNum int, turnID, prompt string) (context.Context, trace.Span) {
 	ctx, span := tracer().Start(ctx, "agent.turn")
 	attrs := []attribute.KeyValue{

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/dispatch"
 	"github.com/goatherdai/yaah/internal/memory"
 	"github.com/spf13/cobra"
@@ -40,7 +40,7 @@ type conflictAggregate struct {
 	Warnings                    []string            `json:"warnings,omitempty"`
 }
 
-func newShepherdTraceConflictsCmd() *cobra.Command {
+func newGoatherdTraceConflictsCmd() *cobra.Command {
 	var asJSON bool
 	var session string
 
@@ -49,7 +49,7 @@ func newShepherdTraceConflictsCmd() *cobra.Command {
 		Short: "Aggregate conflict evidence for the prevention decision",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := openShepherdTraceStore()
+			store, err := openGoatherdTraceStore()
 			if err != nil {
 				return err
 			}
@@ -60,8 +60,8 @@ func newShepherdTraceConflictsCmd() *cobra.Command {
 			// reading all owner paths rather than as an owner prefix.
 			slice, err := store.ReadOwnerPrefix(
 				cmd.Context(),
-				shepherdtrace.TrustedReadContext,
-				"", 99999, shepherdtrace.ModeBoth,
+				kerneltrace.TrustedReadContext,
+				"", 99999, kerneltrace.ModeBoth,
 			)
 			if err != nil {
 				return fmt.Errorf("read conflict evidence: %w", err)
@@ -93,7 +93,7 @@ func newShepherdTraceConflictsCmd() *cobra.Command {
 // loadLegacyParents resolves pre-parent_session trace owners through the
 // durable subTraceID -> parent session mapping in state.db. New usage facts
 // carry parent_session directly; this keeps existing stores usable.
-func loadLegacyParents(slice shepherdtrace.Slice) (map[string]string, error) {
+func loadLegacyParents(slice kerneltrace.Slice) (map[string]string, error) {
 	owners := make([]string, 0)
 	for owner := range slice.OwnerPaths {
 		if strings.HasPrefix(owner, "sub-") {
@@ -106,7 +106,7 @@ func loadLegacyParents(slice shepherdtrace.Slice) (map[string]string, error) {
 	return memory.TraceOwnerParentsReadOnly(memory.DefaultPath(), owners)
 }
 
-func aggregateConflicts(slice shepherdtrace.Slice, session string, legacyParents map[string]string) conflictAggregate {
+func aggregateConflicts(slice kerneltrace.Slice, session string, legacyParents map[string]string) conflictAggregate {
 	window := "all retained trace facts"
 	if session != "" {
 		window = "session " + session
@@ -133,7 +133,7 @@ func aggregateConflicts(slice shepherdtrace.Slice, session string, legacyParents
 	for owner, factIDs := range slice.OwnerPaths {
 		for _, factID := range factIDs {
 			fact := slice.FactsByID[factID]
-			rec, ok := fact.(shepherdtrace.Record)
+			rec, ok := fact.(kerneltrace.Record)
 			if !ok || rec.Envelope.SchemaRef != "yaah.subagent.usage.v1" {
 				continue
 			}
@@ -180,7 +180,7 @@ func aggregateConflicts(slice shepherdtrace.Slice, session string, legacyParents
 	for owner, factIDs := range slice.OwnerPaths {
 		for _, factID := range factIDs {
 			fact := slice.FactsByID[factID]
-			rec, ok := fact.(shepherdtrace.Record)
+			rec, ok := fact.(kerneltrace.Record)
 			if !ok || rec.Envelope.SchemaRef == "yaah.subagent.usage.v1" {
 				continue
 			}

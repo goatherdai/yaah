@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/goatherd-runtime/effect"
 	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 )
@@ -29,7 +29,7 @@ func runScript(t *testing.T, s *Sandbox, script string, stdin []byte, args ...st
 	t.Helper()
 	res, err := s.Exec(context.Background(), goatherdsandbox.ExecRequest{
 		Command: "sh",
-		Args:    append([]string{"-c", script, "shepherd"}, args...),
+		Args:    append([]string{"-c", script, "goatherd"}, args...),
 		Cwd:     "/workspace",
 		Stdin:   stdin,
 	})
@@ -44,8 +44,8 @@ func TestCapabilitiesReportFullyIsolatedBackend(t *testing.T) {
 	if !c.Lifecycle || !c.Exec || !c.FileIO || !c.Diff || !c.Isolated {
 		t.Errorf("capabilities = %+v, want every capability true", c)
 	}
-	if c.Containment != shepherdtrace.ContainContained {
-		t.Errorf("containment = %q, want %q (matching the containerd backend)", c.Containment, shepherdtrace.ContainContained)
+	if c.Containment != kerneltrace.ContainContained {
+		t.Errorf("containment = %q, want %q (matching the containerd backend)", c.Containment, kerneltrace.ContainContained)
 	}
 }
 
@@ -388,14 +388,14 @@ func TestCaptureApplyRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Capture after Apply: %v", err)
 	}
-	d1, _ := shepherdtrace.CanonicalDigest(state.Data["files"])
-	d2, _ := shepherdtrace.CanonicalDigest(after.Data["files"])
+	d1, _ := kerneltrace.CanonicalDigest(state.Data["files"])
+	d2, _ := kerneltrace.CanonicalDigest(after.Data["files"])
 	if d1 != d2 {
 		t.Errorf("file digest drifted after apply: %q vs %q", d1, d2)
 	}
 
 	// Cross-backend state is refused.
-	if err := s.Apply(ctx, shepherdtrace.WorkspaceState{Backend: "containerd"}); err == nil {
+	if err := s.Apply(ctx, kerneltrace.WorkspaceState{Backend: "containerd"}); err == nil {
 		t.Error("a state from another backend must be refused")
 	}
 }

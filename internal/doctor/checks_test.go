@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 
 	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
@@ -223,7 +223,7 @@ func TestCheckWorkspace_Isolated(t *testing.T) {
 		"yaah",                                   // the namespace
 		"/workspace",                             // the containment root
 		"socket /run/containerd/containerd.sock", // the configured socket
-		"sandbox library: goatherd-runtime sandbox/croft (containerd), supervision: shepherd (git)",
+		"sandbox library: goatherd-runtime sandbox/croft (containerd), supervision: goatherd (git)",
 	} {
 		if !strings.Contains(check.Detail, want) {
 			t.Errorf("isolated report %q missing %q", check.Detail, want)
@@ -301,15 +301,15 @@ func TestCheckWorkspace_UnusableStanzaFails(t *testing.T) {
 	}
 }
 
-// TestCheckShepherd pins the R2 shepherd check's outcomes: a healthy
+// TestCheckGoatherd pins the R2 goatherd check's outcomes: a healthy
 // trace store reports the recovery counts, and a store that cannot open
 // fails loudly. Tracing is integral, so there is no "off" outcome.
-func TestCheckShepherd(t *testing.T) {
+func TestCheckGoatherd(t *testing.T) {
 	t.Setenv("YAAH_HOME", t.TempDir())
 
 	dir := t.TempDir()
 	tracePath := filepath.Join(dir, "trace.sqlite")
-	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
+	store, err := kerneltrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -327,8 +327,8 @@ func TestCheckShepherd(t *testing.T) {
 	store.Close(context.Background())
 
 	cfg := &config.Config{}
-	cfg.Agent.Default.ShepherdTracePath = tracePath
-	healthy := CheckShepherd(cfg, nil)
+	cfg.Agent.Default.GoatherdTracePath = tracePath
+	healthy := CheckGoatherd(cfg, nil)
 	if healthy.Status != "OK" || !strings.Contains(healthy.Detail, "2 scope(s) (1 root(s))") {
 		t.Errorf("healthy check = %+v, want OK with recovery counts", healthy)
 	}
@@ -337,8 +337,8 @@ func TestCheckShepherd(t *testing.T) {
 	if err := os.WriteFile(corrupt, []byte("not a sqlite database"), 0o644); err != nil {
 		t.Fatalf("write corrupt store: %v", err)
 	}
-	cfg.Agent.Default.ShepherdTracePath = corrupt
-	broken := CheckShepherd(cfg, nil)
+	cfg.Agent.Default.GoatherdTracePath = corrupt
+	broken := CheckGoatherd(cfg, nil)
 	if broken.Status != "FAIL" {
 		t.Errorf("corrupt-store check = %+v, want FAIL", broken)
 	}

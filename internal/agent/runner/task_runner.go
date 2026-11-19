@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
 	"github.com/goatherdai/yaah/internal/agent"
@@ -113,7 +113,7 @@ type taskRunnerOpts struct {
 	// substrate per session.
 	workspace tools.Workspace
 
-	// rootScopeID is the session's shepherd root scope (adoption plan
+	// rootScopeID is the session's goatherd root scope (adoption plan
 	// D1): sub-agent scopes fork from it. Empty falls back to the legacy
 	// flat per-dispatch scope.
 	rootScopeID string
@@ -140,8 +140,8 @@ type taskRunnerOpts struct {
 	// jobs.DispatchScopeCount. Nil when no recovery adopted anything.
 	resumedScopes map[string]bool
 
-	// traceStore is the session's Shepherd trace store (plan 07, H4),
-	// injected alongside the manager: the sub-agent loops' shepherd_trace
+	// traceStore is the session's Goatherd trace store (plan 07, H4),
+	// injected alongside the manager: the sub-agent loops' goatherd_trace
 	// middleware writes through it. Nil when tracing is off.
 	traceStore pipeline.TraceSink
 
@@ -402,7 +402,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		traceContext := subAgentRetainedContext(ctx, opts, role, params.Workdir, subConf, subReg)
 		traceCWD := subAgentTraceCWD(opts, params.Workdir)
 
-		// Persist the trace-owner mapping so Shepherd facts recorded under
+		// Persist the trace-owner mapping so Goatherd facts recorded under
 		// the synthetic sub-ID remain joinable to the parent session
 		// (consolidate-persistence Phase 0 / finding F4).
 		if opts.db != nil {
@@ -485,7 +485,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// tool's attempt-level checkpoints.
 		var turnCk agent.TurnCheckpointer
 		if opts.subCfg.Roles[string(role)].TurnCheckpoints && subScope != nil && subScope.Sandbox() != nil {
-			turnCk = NewShepherdTurnCheckpointer(pipeline.ScopeSourceOf(opts.scopeManager), subScope.ID(), subScope.Sandbox())
+			turnCk = NewGoatherdTurnCheckpointer(pipeline.ScopeSourceOf(opts.scopeManager), subScope.ID(), subScope.Sandbox())
 		}
 
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
@@ -639,23 +639,23 @@ func subAgentTraceCWD(opts taskRunnerOpts, workdir string) string {
 // substrate, containment, and role tool belt. The kernel stamps it into every
 // fact envelope, so authority provenance is digest-bound rather than living
 // only in the mutable sessions.workspace_backend/session_prompt columns.
-func subAgentRetainedContext(ctx context.Context, opts taskRunnerOpts, role subagent.SubAgentRole, workdir string, conf *subAgentConfinement, reg *tools.Registry) *shepherdtrace.RetainedContext {
+func subAgentRetainedContext(ctx context.Context, opts taskRunnerOpts, role subagent.SubAgentRole, workdir string, conf *subAgentConfinement, reg *tools.Registry) *kerneltrace.RetainedContext {
 	substrate := "yaah.substrate.host.v1"
-	containment := shepherdtrace.ContainUncontained
+	containment := kerneltrace.ContainUncontained
 	switch {
 	case tools.DispatchWorkspace(ctx) != nil, opts.workspace != nil:
 		substrate = "yaah.substrate.container.v1"
 		// Match the runtime's container backend, which reports contained
 		// (see sandboxfake's documented parity with containerd).
-		containment = shepherdtrace.ContainContained
+		containment = kerneltrace.ContainContained
 	case workdir != "":
 		substrate = "yaah.substrate.worktree.v1"
 		if conf != nil && conf.Enforced {
-			containment = shepherdtrace.ContainContained
+			containment = kerneltrace.ContainContained
 		}
 	}
-	if conf != nil && conf.Enforced && containment == shepherdtrace.ContainUncontained {
-		containment = shepherdtrace.ContainContained
+	if conf != nil && conf.Enforced && containment == kerneltrace.ContainUncontained {
+		containment = kerneltrace.ContainContained
 	}
 
 	var caps []string
@@ -667,7 +667,7 @@ func subAgentRetainedContext(ctx context.Context, opts taskRunnerOpts, role suba
 		}
 	}
 	sort.Strings(caps)
-	return &shepherdtrace.RetainedContext{
+	return &kerneltrace.RetainedContext{
 		SubstrateRef:          substrate,
 		Containment:           containment,
 		CapabilityWitnessRefs: caps,

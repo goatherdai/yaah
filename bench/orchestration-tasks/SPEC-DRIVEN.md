@@ -78,7 +78,7 @@ outputs, artifacts, warnings). `explain --from-trace --json` is the
 `yaah.workflow.trace.v1` record (`internal/workflow/trace`), which is what
 `_lib/orch_trace.py` asserts over — the same three layers `orch_assert.py`
 checks, with the trace layer read from the run's own record instead of the
-Shepherd store.
+Goatherd store.
 
 **`run` needs a runner.** `yaah workflow run` takes its sub-agent runner from
 the host composition (`workflowRunRunner` in `cmd/yaah/workflow_run.go`); the
@@ -120,7 +120,7 @@ record-shape change fails CI first.
   wiring described above, which the bead's constraints exclude (no new
   dispatcher, and the DSL spec is the dispatcher).
 - **`_lib/orch_trace.py` is a sibling of `orch_assert.py`, not an edit to it.**
-  `orch_assert.py` reads the Shepherd trace *store*; a spec-driven run's trace
+  `orch_assert.py` reads the Goatherd trace *store*; a spec-driven run's trace
   is a JSON document. The workspace layers (`APP`, `seed`,
   `assert_no_unexpected_changes`, `assert_byte_identical`) are imported from
   `orch_assert`, so nothing is forked — only the trace reader is new.
@@ -139,7 +139,7 @@ model-free the way `orch-fanout` runs (deterministic runners through the
 | `orch-guard` | loop (one supervised attempt per iteration) over a probe delegate, terminator on the child's own `outcome`, collect as the audit trail, summariser delegate, two emits | five probes + one summary, `answer.txt` with the attempt count and the quoted warning, `ok.txt`, `attempts=5` semantics |
 | `orch-quality-gate` | bounded repair: implement (proposal) → loop [fix (proposal), check (report/verdict)] until pass → settle `apply` where the check passed, `discard` where it failed, `discard` the superseded implement, emit report | the repaired `mathx.py` landed on the host repo exactly once (the passing proposal), all three dispositions settled, five dispatches |
 | `orch-escalation` | one delegate whose contract is the escalation block (refuse to fabricate), one emit writing it verbatim | `answer.txt` is the block byte-for-byte, refusing-to-fabricate is the run succeeding, one dispatch |
-| `orch-recovery` | delegate runs the `yaah shepherd` scan and reports the adopted path, emit writes `recovery.txt`; plus the resume-contract pin | the artifact, the prompt carrying the scan, and — at the command seam — `workflow resume` refusing a finished run by name with zero re-dispatch |
+| `orch-recovery` | delegate runs the `yaah goatherd` scan and reports the adopted path, emit writes `recovery.txt`; plus the resume-contract pin | the artifact, the prompt carrying the scan, and — at the command seam — `workflow resume` refusing a finished run by name with zero re-dispatch |
 
 Two honest boundaries, both stated in the specs' own headers:
 
@@ -149,7 +149,7 @@ Two honest boundaries, both stated in the specs' own headers:
   the retry loop across dispatches, the collect as the audit trail, the
   summariser — and the child's report carries the warning it saw.
 - **`orch-recovery`'s adoption is a pre-run lifecycle step, not a graph
-  edge** — it is `yaah shepherd`'s. The spec owns the reporting half, and the
+  edge** — it is `yaah goatherd`'s. The spec owns the reporting half, and the
   workflow surface's actual recovery story is durability: `--state` runs are
   resumable, and crash/resume idempotency (no re-dispatch, at most one
   settlement per proposal per life) is proven at the scheduler core

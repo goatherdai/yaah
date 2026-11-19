@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/goatherd-runtime"
 	"github.com/goatherdai/yaah/internal/jobs"
 )
@@ -16,7 +16,7 @@ import (
 // lanes fork from.
 func capTestManager(t *testing.T) (*goatherd.ScopeManager, string) {
 	t.Helper()
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}

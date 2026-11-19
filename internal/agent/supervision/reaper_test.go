@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/goatherd-runtime"
 	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 
@@ -20,7 +20,7 @@ import (
 // tests can cross the grace line with injected times.
 func newReaperFixture(t *testing.T) (*Reaper, *goatherd.ScopeManager, *Registry, string) {
 	t.Helper()
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}

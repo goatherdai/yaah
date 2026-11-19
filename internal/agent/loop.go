@@ -206,7 +206,7 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 // using the middleware pipeline.
 func (l *Loop) Run(ctx context.Context, userInput string) (response string, runErr error) {
 	// turnID is the stable per-interaction cross-link shared by the OTel
-	// spans, the persisted messages, and the Shepherd turn facts of this
+	// spans, the persisted messages, and the Goatherd turn facts of this
 	// prompt-to-answer exchange.
 	turnID := newTurnID()
 	if l.Config.OtelEnabled {
@@ -268,7 +268,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 	messages := l.State.Messages
 	defer func() { l.State.Messages = messages }()
 	pipe := l.buildPipeline()
-	traceMw := pipe.ShepherdTraceMiddleware()
+	traceMw := pipe.GoatherdTraceMiddleware()
 
 	for {
 		for iter := 0; iter < l.Config.MaxLoopCycles; iter++ {

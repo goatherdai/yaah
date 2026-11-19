@@ -19,7 +19,7 @@ import (
 // away and remove its worktree). A container proposal settles as a GitDelta
 // manifest: select (fast-forward onto the dispatch basis), apply (whole-path,
 // path-disjoint), release (export the manifest), or discard. The verbs mirror
-// Shepherd's run select | apply | release | discard.
+// Goatherd's run select | apply | release | discard.
 type ProposalTool struct {
 	// Proposals is the session's registry of open proposals, created by
 	// runner.NewDelegateTool alongside the retained runtime and passed to this

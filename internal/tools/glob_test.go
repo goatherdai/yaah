@@ -51,10 +51,10 @@ func TestGlobTool_returnsErrorForEmptyPattern(t *testing.T) {
 
 func TestGlobNative_directoryPrefixedPatterns(t *testing.T) {
 	tmp := t.TempDir()
-	nested := filepath.Join(tmp, "shepherd-ref", "workspace-handles")
+	nested := filepath.Join(tmp, "goatherd-ref", "workspace-handles")
 	os.MkdirAll(nested, 0o755)
 	os.WriteFile(filepath.Join(nested, "a.py"), []byte("x"), 0o644)
-	os.WriteFile(filepath.Join(tmp, "shepherd-ref", "b.py"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(tmp, "goatherd-ref", "b.py"), []byte("x"), 0o644)
 	os.WriteFile(filepath.Join(tmp, "top.py"), []byte("x"), 0o644)
 
 	tests := []struct {
@@ -65,13 +65,13 @@ func TestGlobNative_directoryPrefixedPatterns(t *testing.T) {
 	}{
 		{
 			name:    "recursive directory prefix",
-			pattern: "shepherd-ref/**/*.py",
+			pattern: "goatherd-ref/**/*.py",
 			want:    []string{"a.py", "b.py"},
 			notWant: []string{"top.py"},
 		},
 		{
 			name:    "single-level directory prefix",
-			pattern: "shepherd-ref/workspace-handles/*.py",
+			pattern: "goatherd-ref/workspace-handles/*.py",
 			want:    []string{"a.py"},
 			notWant: []string{"b.py", "top.py"},
 		},
@@ -82,7 +82,7 @@ func TestGlobNative_directoryPrefixedPatterns(t *testing.T) {
 		},
 		{
 			name:    "absolute pattern",
-			pattern: filepath.ToSlash(filepath.Join(tmp, "shepherd-ref", "**", "*.py")),
+			pattern: filepath.ToSlash(filepath.Join(tmp, "goatherd-ref", "**", "*.py")),
 			want:    []string{"a.py", "b.py"},
 			notWant: []string{"top.py"},
 		},

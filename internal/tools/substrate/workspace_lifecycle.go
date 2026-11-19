@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 	"github.com/goatherdai/yaah/internal/config"
 )
@@ -35,7 +35,7 @@ type SessionSandbox struct {
 	// and, where a bootstrap ran, the captured snapshot), the anchor for the
 	// session's diffs and apply-out. Nil when the session started without a
 	// bootstrap.
-	baseline *shepherdtrace.WorkspaceState
+	baseline *kerneltrace.WorkspaceState
 	// deny is the copy-in policy, retained so apply-out and proposal seals
 	// cannot copy a denied path back to the host after the agent creates it
 	// inside the container.
@@ -127,11 +127,11 @@ func (s *SessionSandbox) Workspace() Workspace { return s.ws }
 // other dispatch captures. The session task may be stopped and restarted by
 // the snapshot backend, so callers use this at a dispatch boundary rather than
 // in the middle of a foreground tool call.
-func (s *SessionSandbox) Capture(ctx context.Context) (shepherdtrace.WorkspaceState, error) {
+func (s *SessionSandbox) Capture(ctx context.Context) (kerneltrace.WorkspaceState, error) {
 	s.captureMu.Lock()
 	defer s.captureMu.Unlock()
 	if s.sb == nil {
-		return shepherdtrace.WorkspaceState{}, errors.New("workspace: session sandbox is not initialized")
+		return kerneltrace.WorkspaceState{}, errors.New("workspace: session sandbox is not initialized")
 	}
 	return s.sb.Capture(ctx)
 }
@@ -144,21 +144,21 @@ func (s *SessionSandbox) Releasable() bool {
 		return false
 	}
 	_, ok := s.sb.(interface {
-		ReleaseState(context.Context, shepherdtrace.WorkspaceState) error
+		ReleaseState(context.Context, kerneltrace.WorkspaceState) error
 	})
 	return ok
 }
 
 // ReleaseCapture drops a state captured by Capture, serialized with captures
 // so a release cannot race another dispatch's snapshot operation.
-func (s *SessionSandbox) ReleaseCapture(ctx context.Context, state shepherdtrace.WorkspaceState) error {
+func (s *SessionSandbox) ReleaseCapture(ctx context.Context, state kerneltrace.WorkspaceState) error {
 	s.captureMu.Lock()
 	defer s.captureMu.Unlock()
 	if s.sb == nil {
 		return errors.New("workspace: session sandbox is not initialized")
 	}
 	releaser, ok := s.sb.(interface {
-		ReleaseState(context.Context, shepherdtrace.WorkspaceState) error
+		ReleaseState(context.Context, kerneltrace.WorkspaceState) error
 	})
 	if !ok {
 		return fmt.Errorf("workspace: session backend %q does not expose ReleaseState", s.sb.Backend())
@@ -204,7 +204,7 @@ func (s *SessionSandbox) Sandbox() goatherdsandbox.Sandbox { return s.sb }
 // a copy: the top-level fields and the Data map are copied, so later mutation
 // of the caller's state (including Data entries) cannot move the anchor.
 // Nested values inside Data remain shared.
-func (s *SessionSandbox) SetBaseline(state *shepherdtrace.WorkspaceState) {
+func (s *SessionSandbox) SetBaseline(state *kerneltrace.WorkspaceState) {
 	if state == nil {
 		s.baseline = nil
 		return

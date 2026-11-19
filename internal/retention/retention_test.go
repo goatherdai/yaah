@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/memory"
 	"github.com/goatherdai/yaah/internal/tracestore"
 )
@@ -22,7 +22,7 @@ const throughMax = int(^uint(0) >> 1)
 type fixture struct {
 	t         *testing.T
 	db        *memory.DB
-	store     *shepherdtrace.SQLiteTraceStore
+	store     *kerneltrace.SQLiteTraceStore
 	tracePath string
 	evictor   *Evictor
 	subOwner  string
@@ -41,7 +41,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
+	store, err := kerneltrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		t.Fatalf("NewSQLiteTraceStore: %v", err)
 	}
@@ -65,12 +65,12 @@ func newFixture(t *testing.T) *fixture {
 
 func (f *fixture) appendFacts(intent, owner, parentSession string) []string {
 	f.t.Helper()
-	receipt, err := f.store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+	receipt, err := f.store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 		AppendIntentID: intent,
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID: owner,
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Capture,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Capture,
 				SchemaRef: "yaah.test.turn.v1",
 				Payload:   map[string]any{"session": parentSession},
 			}},
@@ -84,7 +84,7 @@ func (f *fixture) appendFacts(intent, owner, parentSession string) []string {
 
 func (f *fixture) wantEvicted(owner string) {
 	f.t.Helper()
-	if _, err := f.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, owner, throughMax, shepherdtrace.ModeBoth); !errors.Is(err, shepherdtrace.ErrOwnerEvicted) {
+	if _, err := f.store.ReadOwnerPrefix(context.Background(), kerneltrace.TrustedReadContext, owner, throughMax, kerneltrace.ModeBoth); !errors.Is(err, kerneltrace.ErrOwnerEvicted) {
 		f.t.Fatalf("path %s after delete: want ErrOwnerEvicted, got %v", owner, err)
 	}
 }
@@ -158,7 +158,7 @@ func TestDeleterIsRetryableAcrossCrashWindows(t *testing.T) {
 func TestSweepNowDefersToInflightSweep(t *testing.T) {
 	dir := t.TempDir()
 	tracePath := filepath.Join(dir, "trace.db")
-	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
+	store, err := kerneltrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		t.Fatalf("NewSQLiteTraceStore: %v", err)
 	}

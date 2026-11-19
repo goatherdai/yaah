@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -27,10 +27,10 @@ type TraceTranscript struct {
 // RebuildTranscript reads one owner's trace and reconstructs its messages.
 // A sub-agent owner works the same way: its synthetic ID is the owner, and
 // the parent/session mapping remains in memory.trace_owners.
-func RebuildTranscript(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, ownerID string) (*TraceTranscript, error) {
+func RebuildTranscript(ctx context.Context, store *kerneltrace.SQLiteTraceStore, ownerID string) (*TraceTranscript, error) {
 	// through is an ordinal bound, not a row count. Use the largest int so a
 	// long-lived owner never silently loses facts to an arbitrary ceiling.
-	slice, err := store.ReadOwnerPrefix(ctx, shepherdtrace.TrustedReadContext, ownerID, int(^uint(0)>>1), shepherdtrace.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(ctx, kerneltrace.TrustedReadContext, ownerID, int(^uint(0)>>1), kerneltrace.ModeBoth)
 	if err != nil {
 		return nil, fmt.Errorf("read trace %s: %w", ownerID, err)
 	}
@@ -39,7 +39,7 @@ func RebuildTranscript(ctx context.Context, store *shepherdtrace.SQLiteTraceStor
 
 // RebuildTranscriptFromSlice is the pure reconstruction over an already-read
 // slice, used by the CLI and tests.
-func RebuildTranscriptFromSlice(slice shepherdtrace.Slice, ownerID string) *TraceTranscript {
+func RebuildTranscriptFromSlice(slice kerneltrace.Slice, ownerID string) *TraceTranscript {
 	out := &TraceTranscript{SessionID: ownerID}
 	contextSeen := false
 	lastUserTurnID := ""
@@ -48,14 +48,14 @@ func RebuildTranscriptFromSlice(slice shepherdtrace.Slice, ownerID string) *Trac
 		if !ok {
 			continue
 		}
-		record, ok := fact.(shepherdtrace.Record)
+		record, ok := fact.(kerneltrace.Record)
 		if !ok {
 			continue
 		}
 		kind := record.View.KindLabel
 		payload := record.Body.Payload
 		switch {
-		case record.Envelope.Mode == shepherdtrace.Capture && kind == "session:context":
+		case record.Envelope.Mode == kerneltrace.Capture && kind == "session:context":
 			if !contextSeen {
 				contextSeen = true
 				out.SystemPrompt = payloadString(payload, "system_prompt")
@@ -64,7 +64,7 @@ func RebuildTranscriptFromSlice(slice shepherdtrace.Slice, ownerID string) *Trac
 				out.Provider = payloadString(payload, "provider")
 				out.ConfigDigest = payloadString(payload, "config_digest")
 			}
-		case record.Envelope.Mode == shepherdtrace.Declaration && kind == "turn:created":
+		case record.Envelope.Mode == kerneltrace.Declaration && kind == "turn:created":
 			prompt := payloadString(payload, "prompt")
 			turnID := payloadString(payload, "turn_id")
 			// StartTurn runs once per tool iteration with the same userInput.
@@ -81,7 +81,7 @@ func RebuildTranscriptFromSlice(slice shepherdtrace.Slice, ownerID string) *Trac
 				out.Messages = append(out.Messages, types.UserMsg(prompt))
 				lastUserTurnID = turnID
 			}
-		case record.Envelope.Mode == shepherdtrace.Capture && kind == "assistant:message":
+		case record.Envelope.Mode == kerneltrace.Capture && kind == "assistant:message":
 			msg := types.Message{
 				Role:               "assistant",
 				Content:            payloadString(payload, "content"),
@@ -91,7 +91,7 @@ func RebuildTranscriptFromSlice(slice shepherdtrace.Slice, ownerID string) *Trac
 			}
 			msg.ToolCalls = payloadToolCalls(payload["tool_calls"])
 			out.Messages = append(out.Messages, msg)
-		case record.Envelope.Mode == shepherdtrace.Capture && strings.HasSuffix(kind, ":result"):
+		case record.Envelope.Mode == kerneltrace.Capture && strings.HasSuffix(kind, ":result"):
 			callID := payloadString(payload, "tool_call_id")
 			if callID == "" {
 				// Legacy captures (pre-content facts) carry no call id and
@@ -117,7 +117,7 @@ func RebuildTranscriptFromSlice(slice shepherdtrace.Slice, ownerID string) *Trac
 	return out
 }
 
-func ownerFactIDs(slice shepherdtrace.Slice, ownerID string) []string {
+func ownerFactIDs(slice kerneltrace.Slice, ownerID string) []string {
 	if ids, ok := slice.OwnerPaths[ownerID]; ok {
 		return ids
 	}

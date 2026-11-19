@@ -194,7 +194,7 @@ match shape; `explain --from-trace --json` emits `yaah.workflow.trace.v1`
   killed process leaves a record that `resume` continues: no completed node
   is re-dispatched, and no proposal is ever settled twice.
 - **Adoption** of a crashed session's orphaned worktree is a host command,
-  not a graph edge: `yaah shepherd` scans the durable trace and reports the
+  not a graph edge: `yaah goatherd` scans the durable trace and reports the
   adopted worktrees. The workflow surface's part is reporting — the
   `orch-recovery` bench spec delegates the scan and emits `recovery.txt`.
 - **Replay** (`run --replay <run_id>`): re-run a completed run's orchestration

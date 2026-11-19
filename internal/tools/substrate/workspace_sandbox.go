@@ -15,7 +15,7 @@ import (
 )
 
 // SandboxWorkspace runs a tool's filesystem and process operations inside an
-// isolated substrate via shepherd's Sandbox interface.
+// isolated substrate via goatherd's Sandbox interface.
 //
 // There is no host path to open: the workspace lives in a snapshot or container,
 // so every read, write, stat, and command is executed in-band through the
@@ -170,7 +170,7 @@ func (w *SandboxWorkspace) WriteFile(ctx context.Context, p string, data []byte,
 
 	res, err := w.sb.Exec(ctx, goatherdsandbox.ExecRequest{
 		Command: "sh",
-		Args:    []string{"-c", writeFirstScript, "shepherd", p, base64.StdEncoding.EncodeToString(data[:first]), path.Dir(p)},
+		Args:    []string{"-c", writeFirstScript, "goatherd", p, base64.StdEncoding.EncodeToString(data[:first]), path.Dir(p)},
 		Cwd:     w.root,
 	})
 	if err != nil {
@@ -189,7 +189,7 @@ func (w *SandboxWorkspace) WriteFile(ctx context.Context, p string, data []byte,
 	cleanup := func() {
 		_, _ = w.sb.Exec(ctx, goatherdsandbox.ExecRequest{
 			Command: "sh",
-			Args:    []string{"-c", `rm -f -- "$1" "$1.b64"`, "shepherd", temp},
+			Args:    []string{"-c", `rm -f -- "$1" "$1.b64"`, "goatherd", temp},
 			Cwd:     w.root,
 		})
 	}
@@ -198,7 +198,7 @@ func (w *SandboxWorkspace) WriteFile(ctx context.Context, p string, data []byte,
 		end := min(off+sandboxWriteChunkBytes, len(data))
 		res, err := w.sb.Exec(ctx, goatherdsandbox.ExecRequest{
 			Command: "sh",
-			Args:    []string{"-c", writeChunkScript, "shepherd", temp, base64.StdEncoding.EncodeToString(data[off:end])},
+			Args:    []string{"-c", writeChunkScript, "goatherd", temp, base64.StdEncoding.EncodeToString(data[off:end])},
 			Cwd:     w.root,
 		})
 		if err != nil {
@@ -213,7 +213,7 @@ func (w *SandboxWorkspace) WriteFile(ctx context.Context, p string, data []byte,
 
 	res, err = w.sb.Exec(ctx, goatherdsandbox.ExecRequest{
 		Command: "sh",
-		Args:    []string{"-c", writeFinalScript, "shepherd", mode, temp, p},
+		Args:    []string{"-c", writeFinalScript, "goatherd", mode, temp, p},
 		Cwd:     w.root,
 	})
 	if err != nil {
@@ -292,7 +292,7 @@ func (w *SandboxWorkspace) ReadRange(ctx context.Context, p string, offset, leng
 	return append([]byte(nil), data[offset:end]...), nil
 }
 
-// Stat runs `stat` in the sandbox and maps the result to fs.FileInfo. shepherd's
+// Stat runs `stat` in the sandbox and maps the result to fs.FileInfo. goatherd's
 // Sandbox interface has no Stat, and adding one just for this would push a
 // POSIX-shaped detail into the kernel; a single in-band call keeps the kernel
 // surface smaller. It follows symlinks, matching os.Stat.
@@ -322,7 +322,7 @@ stat -L -c "$2" -- "$1"`
 	}
 	res, err := w.sb.Exec(ctx, goatherdsandbox.ExecRequest{
 		Command: "sh",
-		Args:    []string{"-c", script, "shepherd", p, format},
+		Args:    []string{"-c", script, "goatherd", p, format},
 		Cwd:     w.root,
 	})
 	if err != nil {
@@ -488,7 +488,7 @@ func (w *SandboxWorkspace) Move(ctx context.Context, src, dst string) error {
 	before, beforeErr := w.Lstat(ctx, dst)
 	res, execErr := w.sb.Exec(ctx, goatherdsandbox.ExecRequest{
 		Command: "sh",
-		Args:    []string{"-c", `mv -f -- "$1" "$2"`, "shepherd", src, dst},
+		Args:    []string{"-c", `mv -f -- "$1" "$2"`, "goatherd", src, dst},
 		Cwd:     w.root,
 	})
 	if execErr != nil {
@@ -618,7 +618,7 @@ func (w *SandboxWorkspace) run(ctx context.Context, script string, args ...strin
 func (w *SandboxWorkspace) runCapture(ctx context.Context, script string, args ...string) (string, error) {
 	res, err := w.sb.Exec(ctx, goatherdsandbox.ExecRequest{
 		Command: "sh",
-		Args:    append([]string{"-c", script, "shepherd"}, args...),
+		Args:    append([]string{"-c", script, "goatherd"}, args...),
 		Cwd:     w.root,
 	})
 	if err != nil {

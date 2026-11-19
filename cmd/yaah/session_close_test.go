@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
@@ -75,7 +75,7 @@ func TestSessionCloseKeepsFollowupsOpenThroughTheDrain(t *testing.T) {
 // Pruning is idempotent at the kernel level; the pin is that close()
 // calls it at all and that live scopes survive.
 func TestSessionClosePrunesTerminalScopes(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
+	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -129,14 +129,14 @@ func TestSessionClosePrunesTerminalScopes(t *testing.T) {
 	}
 }
 
-// TestSessionCloseClosesShepherdInfrastructure pins plan 07 H2's happy
-// exit: a session with the shepherd infrastructure tears the trace store
+// TestSessionCloseClosesGoatherdInfrastructure pins plan 07 H2's happy
+// exit: a session with the goatherd infrastructure tears the trace store
 // and its bus down on close — store first, then the bus — instead of
 // leaving both to the process exit. Post-close, the store refuses writes
 // and the bus's subscriber channels are closed.
-func TestSessionCloseClosesShepherdInfrastructure(t *testing.T) {
+func TestSessionCloseClosesGoatherdInfrastructure(t *testing.T) {
 	dir := t.TempDir()
-	store, bus, mgr, err := pipeline.InitShepherdInfrastructure(tracestore.Config{DSN: filepath.Join(dir, "trace.db")}, 0)
+	store, bus, mgr, err := pipeline.InitGoatherdInfrastructure(tracestore.Config{DSN: filepath.Join(dir, "trace.db")}, 0)
 	if err != nil {
 		t.Fatalf("init infrastructure: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestSessionCloseClosesShepherdInfrastructure(t *testing.T) {
 // close() says so.
 func TestSessionCloseLeavesInfraOpenOnDrainTimeout(t *testing.T) {
 	dir := t.TempDir()
-	store, bus, _, err := pipeline.InitShepherdInfrastructure(tracestore.Config{DSN: filepath.Join(dir, "trace.db")}, 0)
+	store, bus, _, err := pipeline.InitGoatherdInfrastructure(tracestore.Config{DSN: filepath.Join(dir, "trace.db")}, 0)
 	if err != nil {
 		t.Fatalf("init infrastructure: %v", err)
 	}
@@ -215,18 +215,18 @@ func TestSessionCloseLeavesInfraOpenOnDrainTimeout(t *testing.T) {
 	}
 }
 
-// TestCloseShepherdInfrastructureIdempotent pins the double-close no-op:
+// TestCloseGoatherdInfrastructureIdempotent pins the double-close no-op:
 // the store's database Close and the bus's closed guard make a second
 // close benign — a close that already happened (the wiring's
 // recovery-failure path) must not fabricate a failure.
-func TestCloseShepherdInfrastructureIdempotent(t *testing.T) {
+func TestCloseGoatherdInfrastructureIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	store, bus, _, err := pipeline.InitShepherdInfrastructure(tracestore.Config{DSN: filepath.Join(dir, "trace.db")}, 0)
+	store, bus, _, err := pipeline.InitGoatherdInfrastructure(tracestore.Config{DSN: filepath.Join(dir, "trace.db")}, 0)
 	if err != nil {
 		t.Fatalf("init infrastructure: %v", err)
 	}
 
-	pipeline.CloseShepherdInfrastructure(store, bus)
+	pipeline.CloseGoatherdInfrastructure(store, bus)
 
 	// The second close must be a silent no-op, not a close that warns:
 	// capture stderr for it and require silence.
@@ -236,7 +236,7 @@ func TestCloseShepherdInfrastructureIdempotent(t *testing.T) {
 		t.Fatalf("pipe: %v", perr)
 	}
 	os.Stderr = w
-	pipeline.CloseShepherdInfrastructure(store, bus)
+	pipeline.CloseGoatherdInfrastructure(store, bus)
 	os.Stderr = saved
 	_ = w.Close()
 	var buf bytes.Buffer
@@ -252,13 +252,13 @@ func TestCloseShepherdInfrastructureIdempotent(t *testing.T) {
 
 // storeAppendable reports whether the store still accepts a write — the
 // probe the close tests use to tell an open store from a closed one.
-func storeAppendable(store *shepherdtrace.SQLiteTraceStore) bool {
-	_, err := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+func storeAppendable(store *kerneltrace.SQLiteTraceStore) bool {
+	_, err := store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 		AppendIntentID: "appendable-probe",
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID: "probe",
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Declaration,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Declaration,
 				SchemaRef: "goatherd.probe.v1",
 				KindLabel: "probe",
 				Payload:   map[string]any{"probe": true},

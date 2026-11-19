@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
@@ -59,7 +59,7 @@ func TestReaperStartKeepsReadoptedWorktree(t *testing.T) {
 	repo := mustGitRepo(t)
 
 	storePath := filepath.Join(t.TempDir(), "trace.sqlite")
-	store, err := shepherdtrace.NewSQLiteTraceStore(storePath)
+	store, err := kerneltrace.NewSQLiteTraceStore(storePath)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestReaperStartKeepsReadoptedWorktree(t *testing.T) {
 	store.Close(ctx)
 
 	// The restart: recovery rebuilds the tree and re-adopts the worktree.
-	reopened, err := shepherdtrace.NewSQLiteTraceStore(storePath)
+	reopened, err := kerneltrace.NewSQLiteTraceStore(storePath)
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}

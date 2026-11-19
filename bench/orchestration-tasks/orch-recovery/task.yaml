@@ -4,7 +4,7 @@ instruction: |-
   durable supervision trace is at /app/.orch-trace/trace.sqlite and the stale
   worktree is under /app/.orch-worktree/.
 
-  Run `yaah shepherd` to scan and recover the supervision state. Then write
+  Run `yaah goatherd` to scan and recover the supervision state. Then write
   /app/recovery.txt containing exactly one line:
 
       adopted: <the absolute worktree path reported as adopted>

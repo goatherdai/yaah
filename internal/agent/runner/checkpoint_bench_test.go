@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
@@ -64,9 +64,9 @@ func benchRepo(b *testing.B, files int) string {
 	return repo
 }
 
-func benchCheckpointer(b *testing.B, repo string) *ShepherdTurnCheckpointer {
+func benchCheckpointer(b *testing.B, repo string) *GoatherdTurnCheckpointer {
 	b.Helper()
-	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
+	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		b.Fatalf("open store: %v", err)
 	}
@@ -77,7 +77,7 @@ func benchCheckpointer(b *testing.B, repo string) *ShepherdTurnCheckpointer {
 	if err != nil {
 		b.Fatalf("create scope: %v", err)
 	}
-	return NewShepherdTurnCheckpointer(pipeline.ScopeSourceOf(mgr), scope.ID(), sb)
+	return NewGoatherdTurnCheckpointer(pipeline.ScopeSourceOf(mgr), scope.ID(), sb)
 }
 
 // BenchmarkTurnCheckpoint_CleanTree measures the common case: the turn

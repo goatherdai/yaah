@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
 	"github.com/goatherdai/yaah/internal/permissions"
 	"github.com/goatherdai/yaah/internal/types"
@@ -80,16 +80,16 @@ type SubAgentConfig struct {
 	TurnCheckpointMax     int
 	MaxTurnRestores       int
 
-	// SessionID is the trace owner ID for this sub-agent's Shepherd
+	// SessionID is the trace owner ID for this sub-agent's Goatherd
 	// trace records (e.g. "sub-worker-sess-...-123"). The sub-agent
-	// pipeline's shepherd_trace middleware records under this owner via
+	// pipeline's goatherd_trace middleware records under this owner via
 	// the session-shared store, so the parent can inspect the sub-agent's
 	// execution history on failure. When empty, or when no shared store
 	// is configured, tracing is a no-op.
 	SessionID string
 
 	// SteerCh, when non-nil, is the supervision inject channel
-	// (shepherd-adoption plan A2): the supervisor tool's inject action
+	// (goatherd-adoption plan A2): the supervisor tool's inject action
 	// delivers guidance here, and the loop's steer middleware turns it
 	// into a high-priority user message between turns. Nil disables
 	// steering for this run — the run is unreachable by inject.
@@ -103,7 +103,7 @@ type SubAgentConfig struct {
 	SteerCh chan string
 
 	// DestructiveGuard, when non-nil, is the supervision service's
-	// blocking pre-dispatch check (shepherd-adoption plan B2): the
+	// blocking pre-dispatch check (goatherd-adoption plan B2): the
 	// loop's pipeline consults it before a tool call executes, and a
 	// non-empty reason denies the call with a synthesized result —
 	// sub-agent loops run at ApprovalMode "allow", so this is the only
@@ -111,9 +111,9 @@ type SubAgentConfig struct {
 	// guard is disabled in config; every call then dispatches.
 	DestructiveGuard func(ownerID, toolName, argsJSON string) string
 
-	// TraceStore is the session's Shepherd trace store (plan 07, H4),
+	// TraceStore is the session's Goatherd trace store (plan 07, H4),
 	// injected by the wiring through the task runner: the sub-agent
-	// pipeline's shepherd_trace middleware writes through it. Nil when
+	// pipeline's goatherd_trace middleware writes through it. Nil when
 	// tracing is disabled.
 	TraceStore TraceSink
 
@@ -124,7 +124,7 @@ type SubAgentConfig struct {
 	// RetainedContext binds the sub-agent's transcript to its dispatch
 	// substrate, containment, and role tool belt. The runner builds it from
 	// the resolved world and registry; nil leaves the kernel default.
-	RetainedContext *shepherdtrace.RetainedContext
+	RetainedContext *kerneltrace.RetainedContext
 }
 
 // NewSubAgentLoop creates a Loop optimized for sub-agent execution.

@@ -349,7 +349,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 // supervisorSvcGuardCheck extracts the blocking pre-dispatch check
 // (adoption plan B2) from the session's supervisor service. A nil
 // service — tracing off, the engine disabled, or a startup that never
-// reached the shepherd branch — means no guard: every sub-agent call
+// reached the goatherd branch — means no guard: every sub-agent call
 // dispatches, byte-identical to a tracing-off session.
 func supervisorSvcGuardCheck(svc *supervision.Service) func(ownerID, toolName, argsJSON string) string {
 	if svc == nil {

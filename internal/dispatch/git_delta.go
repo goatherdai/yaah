@@ -17,14 +17,14 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	"github.com/goatherdai/goatherd-runtime/effect"
 	"github.com/goatherdai/yaah/internal/agent/subagent"
 )
 
 // git_delta.go implements the cross-backend settlement artifact for a
-// container proposal (docs/shepherd-parity.md §Container settlement: GitDelta,
+// container proposal (docs/goatherd-parity.md §Container settlement: GitDelta,
 // decision D11). The parent world is a git sandbox and the dispatch world is a
 // container, so there is no shared state language to compare or merge. The
 // artifact is a change manifest of whole-path post-images, produced from the
@@ -484,8 +484,8 @@ func ensureProposalPathsExcluded(ctx context.Context, repoPath string) error {
 // against. Persisting it is what lets select re-check the premise after a
 // restart: the in-memory proposal cannot carry it across processes.
 type proposalBasis struct {
-	State  shepherdtrace.WorkspaceState `json:"state"`
-	Digest string                       `json:"digest"`
+	State  kerneltrace.WorkspaceState `json:"state"`
+	Digest string                     `json:"digest"`
 }
 
 // proposalMeta is the small, restart-surviving record beside the manifest. The
@@ -529,7 +529,7 @@ func persistGitDelta(
 	repoPath, id string,
 	delta *GitDelta,
 	review, result, runErr, sessionID, parentScopeID, target string,
-	basis shepherdtrace.WorkspaceState,
+	basis kerneltrace.WorkspaceState,
 	basisDigest string,
 ) (dir, digest string, err error) {
 	if err := validateDelta(delta); err != nil {

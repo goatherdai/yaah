@@ -1,5 +1,5 @@
 // Service bridges the kernel's advisory supervision rules to the D2
-// execution bridge (shepherd-adoption plan B1): the kernel supervisor
+// execution bridge (goatherd-adoption plan B1): the kernel supervisor
 // watches the trace's effect bus, and this service drains its
 // interventions into the run registry, so a rule firing becomes a
 // delivered steering message in the running loop — not just a trace
@@ -20,9 +20,9 @@ import (
 	"sync"
 	"time"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/goatherd-runtime"
-	shepherdsupervisor "github.com/goatherdai/goatherd-runtime/supervisor"
+	supervisor "github.com/goatherdai/goatherd-runtime/supervisor"
 
 	"github.com/goatherdai/yaah/internal/supervisionapi"
 	"github.com/goatherdai/yaah/internal/types"
@@ -72,11 +72,11 @@ type firingKey struct{ rule, scope, kind string }
 // Service owns the kernel supervisor for one session and the drain
 // goroutine that turns its interventions into steering.
 type Service struct {
-	sup         *shepherdsupervisor.Supervisor
-	guard       *shepherdsupervisor.Supervisor
+	sup         *supervisor.Supervisor
+	guard       *supervisor.Supervisor
 	mgr         *goatherd.ScopeManager
 	runs        *Registry
-	bus         *shepherdtrace.EffectBus
+	bus         *kerneltrace.EffectBus
 	rootScopeID string
 	haltRoot    bool
 
@@ -130,14 +130,14 @@ func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 				payload["cmd"] = args.Command
 			}
 		}
-		iv := s.guard.CheckCall(shepherdtrace.EffectEvent{
+		iv := s.guard.CheckCall(kerneltrace.EffectEvent{
 			TraceOwnerID: ownerID,
-			Mode:         shepherdtrace.Declaration,
+			Mode:         kerneltrace.Declaration,
 			SchemaRef:    "yaah.tool." + toolName + ".v1",
 			KindLabel:    toolName,
 			Payload:      payload,
 		})
-		if iv == nil || iv.Type != shepherdsupervisor.InterventionDeny {
+		if iv == nil || iv.Type != supervisor.InterventionDeny {
 			return ""
 		}
 		s.recordFiring("destructive_shell_guard", iv)
@@ -169,16 +169,16 @@ func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 //     intervention at the moment the rule acts — before dispatch
 //     policy, so a root-dropped or gate-refused firing still counts —
 //     keyed by the rule's name for `supervisor status`.
-func advisoryRule(rule shepherdsupervisor.SupervisionRule, onFiring func(rule string, iv *shepherdsupervisor.Intervention)) shepherdsupervisor.SupervisionRule {
+func advisoryRule(rule supervisor.SupervisionRule, onFiring func(rule string, iv *supervisor.Intervention)) supervisor.SupervisionRule {
 	innerMatch := rule.Match
 	innerAction := rule.Action
-	rule.Match = func(e shepherdtrace.EffectEvent) bool {
+	rule.Match = func(e kerneltrace.EffectEvent) bool {
 		if e.SchemaRef == goatherd.SchemaSupervisorInject {
 			return false
 		}
 		return innerMatch(e)
 	}
-	rule.Action = func(e shepherdtrace.EffectEvent) *shepherdsupervisor.Intervention {
+	rule.Action = func(e kerneltrace.EffectEvent) *supervisor.Intervention {
 		iv := innerAction(e)
 		if iv == nil {
 			return nil
@@ -220,9 +220,9 @@ const haltQuiesceTimeout = 10 * time.Second
 // overwrite (warn), false is first-time creation (pass), and a missing
 // field — a tool that attached nothing, or a Stat error other than
 // not-exist — stays conservative and warns.
-func destructiveFileRule() shepherdsupervisor.SupervisionRule {
-	kernel := shepherdsupervisor.DestructiveToolRule()
-	return shepherdsupervisor.SupervisionRule{
+func destructiveFileRule() supervisor.SupervisionRule {
+	kernel := supervisor.DestructiveToolRule()
+	return supervisor.SupervisionRule{
 		// The kernel's name, read from the rule itself: it is
 		// user-visible via `supervisor status` and must not diverge.
 		Name:   kernel.Name,
@@ -233,9 +233,9 @@ func destructiveFileRule() shepherdsupervisor.SupervisionRule {
 
 // destructiveMatch wraps a kernel matcher with yaah's write
 // classification.
-func destructiveMatch(kernelMatch func(shepherdtrace.EffectEvent) bool) func(shepherdtrace.EffectEvent) bool {
-	return func(e shepherdtrace.EffectEvent) bool {
-		if e.Mode != shepherdtrace.Declaration {
+func destructiveMatch(kernelMatch func(kerneltrace.EffectEvent) bool) func(kerneltrace.EffectEvent) bool {
+	return func(e kerneltrace.EffectEvent) bool {
+		if e.Mode != kerneltrace.Declaration {
 			return false
 		}
 		if e.SchemaRef == types.ToolSchemaRef("write") || e.KindLabel == "write" {
@@ -261,12 +261,12 @@ func destructiveMatch(kernelMatch func(shepherdtrace.EffectEvent) bool) func(she
 // cannot see" hazard, in a second door. Its read-only actions
 // (status, output) and stop pass: a command is the hazard, and only
 // the start action carries one.
-func shellGuardRule() shepherdsupervisor.SupervisionRule {
-	guard := shepherdsupervisor.DestructiveToolGuard()
-	return shepherdsupervisor.SupervisionRule{
+func shellGuardRule() supervisor.SupervisionRule {
+	guard := supervisor.DestructiveToolGuard()
+	return supervisor.SupervisionRule{
 		Name: "destructive_shell_guard",
-		Match: func(e shepherdtrace.EffectEvent) bool {
-			if e.Mode != shepherdtrace.Declaration {
+		Match: func(e kerneltrace.EffectEvent) bool {
+			if e.Mode != kerneltrace.Declaration {
 				return false
 			}
 			switch e.KindLabel {
@@ -296,7 +296,7 @@ func shellGuardRule() shepherdsupervisor.SupervisionRule {
 // opt-in, default off — a rule halting the interactive session is a
 // big hammer). The manual supervisor tool's root inject (A2) is
 // unaffected either way.
-func NewService(mgr *goatherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *Registry, rules AdvisoryRules, shellGuard, haltRoot bool, rootScopeID string) *Service {
+func NewService(mgr *goatherd.ScopeManager, bus *kerneltrace.EffectBus, runs *Registry, rules AdvisoryRules, shellGuard, haltRoot bool, rootScopeID string) *Service {
 	errorThreshold := rules.ErrorRateThreshold
 	if errorThreshold <= 0 {
 		errorThreshold = defaultErrorRateThreshold
@@ -312,18 +312,18 @@ func NewService(mgr *goatherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *
 		errorWindow = 0
 	}
 
-	sup := shepherdsupervisor.NewSupervisor(mgr, bus)
-	var guard *shepherdsupervisor.Supervisor
+	sup := supervisor.NewSupervisor(mgr, bus)
+	var guard *supervisor.Supervisor
 	svc := &Service{sup: sup, mgr: mgr, runs: runs, bus: bus, rootScopeID: rootScopeID, haltRoot: haltRoot}
 
 	if rules.DestructiveTool {
 		sup.AddRule(advisoryRule(destructiveFileRule(), svc.recordFiring))
 	}
 	if rules.HighErrorRate {
-		sup.AddRule(advisoryRule(shepherdsupervisor.HighErrorRateRule(errorThreshold, errorWindow), svc.recordFiring))
+		sup.AddRule(advisoryRule(supervisor.HighErrorRateRule(errorThreshold, errorWindow), svc.recordFiring))
 	}
 	if rules.StuckDetection {
-		sup.AddRule(advisoryRule(shepherdsupervisor.StuckDetectionRule(stuckRepeat), svc.recordFiring))
+		sup.AddRule(advisoryRule(supervisor.StuckDetectionRule(stuckRepeat), svc.recordFiring))
 	}
 
 	if shellGuard {
@@ -331,7 +331,7 @@ func NewService(mgr *goatherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *
 		// the bus, or every deny would also surface as an async
 		// intervention the advisory drain would have to drop. Its
 		// CheckCall is the whole surface.
-		guard = shepherdsupervisor.NewSupervisor(mgr, nil)
+		guard = supervisor.NewSupervisor(mgr, nil)
 		guard.AddRule(shellGuardRule())
 	}
 	svc.guard = guard
@@ -340,7 +340,7 @@ func NewService(mgr *goatherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *
 
 // recordFiring counts one rule firing for the status surface (adoption
 // plan B4).
-func (s *Service) recordFiring(rule string, iv *shepherdsupervisor.Intervention) {
+func (s *Service) recordFiring(rule string, iv *supervisor.Intervention) {
 	s.firingsMu.Lock()
 	if s.firings == nil {
 		s.firings = map[firingKey]int{}
@@ -448,7 +448,7 @@ func (s *Service) drain() {
 		}
 
 		switch iv.Type {
-		case shepherdsupervisor.InterventionInject:
+		case supervisor.InterventionInject:
 			if s.rootScopeID != "" && scopeID == s.rootScopeID {
 				// The parent's own calls already passed the approval
 				// middleware; rule-driven session steering is out of
@@ -462,7 +462,7 @@ func (s *Service) drain() {
 				continue
 			}
 			s.deliverInject(scopeID, guidance)
-		case shepherdsupervisor.InterventionHalt:
+		case supervisor.InterventionHalt:
 			s.deliverHalt(scopeID, guidance)
 		default:
 			// The enabled rules emit injects and (from B3) the drain

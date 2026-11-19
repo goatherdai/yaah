@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/dispatch"
 	"github.com/goatherdai/yaah/internal/memory"
 )
@@ -23,17 +23,17 @@ func TestTraceConflictsAggregate(t *testing.T) {
 	setTestTraceConfig(t, home, dir)
 
 	path := filepath.Join(dir, "trace.sqlite")
-	store, err := shepherdtrace.NewSQLiteTraceStore(path)
+	store, err := kerneltrace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	appendFact := func(owner, schema, kind string, mode shepherdtrace.RecordMode, payload map[string]any) {
+	appendFact := func(owner, schema, kind string, mode kerneltrace.RecordMode, payload map[string]any) {
 		t.Helper()
-		_, err := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		_, err := store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 			AppendIntentID: owner + ":" + schema + ":" + kind,
-			Groups: []shepherdtrace.AppendGroup{{
+			Groups: []kerneltrace.AppendGroup{{
 				TraceOwnerID: owner,
-				FactDrafts: []shepherdtrace.RecordDraft{{
+				FactDrafts: []kerneltrace.RecordDraft{{
 					Mode:      mode,
 					SchemaRef: schema,
 					KindLabel: kind,
@@ -46,14 +46,14 @@ func TestTraceConflictsAggregate(t *testing.T) {
 		}
 	}
 
-	appendFact("sub-a1", "yaah.subagent.usage.v1", "subagent:usage", shepherdtrace.Capture, map[string]any{"lane": "retained", "parent_session": "sess-a"})
-	appendFact("sub-a2", "yaah.subagent.usage.v1", "subagent:usage:2", shepherdtrace.Capture, map[string]any{"lane": "shared", "parent_session": "sess-a"})
-	appendFact("sess-a", dispatch.SchemaProposalSealed, "proposal", shepherdtrace.Declaration, map[string]any{"proposal_id": "p1"})
-	appendFact("sub-a1", "goatherd.merge.proposed.v1", "merge:proposed", shepherdtrace.Declaration, map[string]any{"proposal_id": "p1"})
-	appendFact("sess-a", dispatch.SchemaProposalConflict, "conflict", shepherdtrace.Declaration, map[string]any{
+	appendFact("sub-a1", "yaah.subagent.usage.v1", "subagent:usage", kerneltrace.Capture, map[string]any{"lane": "retained", "parent_session": "sess-a"})
+	appendFact("sub-a2", "yaah.subagent.usage.v1", "subagent:usage:2", kerneltrace.Capture, map[string]any{"lane": "shared", "parent_session": "sess-a"})
+	appendFact("sess-a", dispatch.SchemaProposalSealed, "proposal", kerneltrace.Declaration, map[string]any{"proposal_id": "p1"})
+	appendFact("sub-a1", "goatherd.merge.proposed.v1", "merge:proposed", kerneltrace.Declaration, map[string]any{"proposal_id": "p1"})
+	appendFact("sess-a", dispatch.SchemaProposalConflict, "conflict", kerneltrace.Declaration, map[string]any{
 		"kind": "same_path_divergent", "paths": []string{"a.txt", "b.txt"}, "proposals": []string{"p1", "p2"},
 	})
-	appendFact("sub-b1", "yaah.subagent.usage.v1", "subagent:usage", shepherdtrace.Capture, map[string]any{"lane": "shared", "parent_session": "sess-b"})
+	appendFact("sub-b1", "yaah.subagent.usage.v1", "subagent:usage", kerneltrace.Capture, map[string]any{"lane": "shared", "parent_session": "sess-b"})
 	db, err := memory.OpenDefault()
 	if err != nil {
 		t.Fatalf("open state db: %v", err)
@@ -64,15 +64,15 @@ func TestTraceConflictsAggregate(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatalf("close state db: %v", err)
 	}
-	appendFact("sub-old", "yaah.subagent.usage.v1", "subagent:usage:old", shepherdtrace.Capture, map[string]any{"lane": "shared"})
-	appendFact("sub-unmapped", "yaah.subagent.usage.v1", "subagent:usage:unmapped", shepherdtrace.Capture, map[string]any{"lane": "shared"})
-	appendFact("sess-b", dispatch.SchemaProposalConflict, "conflict", shepherdtrace.Declaration, map[string]any{
+	appendFact("sub-old", "yaah.subagent.usage.v1", "subagent:usage:old", kerneltrace.Capture, map[string]any{"lane": "shared"})
+	appendFact("sub-unmapped", "yaah.subagent.usage.v1", "subagent:usage:unmapped", kerneltrace.Capture, map[string]any{"lane": "shared"})
+	appendFact("sess-b", dispatch.SchemaProposalConflict, "conflict", kerneltrace.Declaration, map[string]any{
 		"kind": "delete_modify", "paths": []string{"a.txt"}, "proposals": []string{"p3", "p4"},
 	})
 	store.Close(context.Background())
 
 	var buf bytes.Buffer
-	cmd := newShepherdTraceConflictsCmd()
+	cmd := newGoatherdTraceConflictsCmd()
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--json"})
@@ -115,16 +115,16 @@ func TestTraceConflictsSessionWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	setTestTraceConfig(t, home, dir)
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+	_, err = store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
 		AppendIntentID: "one",
-		Groups: []shepherdtrace.AppendGroup{{
+		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID: "sub-only",
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode: shepherdtrace.Capture, SchemaRef: "yaah.subagent.usage.v1", KindLabel: "subagent:usage",
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode: kerneltrace.Capture, SchemaRef: "yaah.subagent.usage.v1", KindLabel: "subagent:usage",
 				Payload: map[string]any{"lane": "retained", "parent_session": "sess-only"},
 			}},
 		}},
@@ -135,7 +135,7 @@ func TestTraceConflictsSessionWindow(t *testing.T) {
 	store.Close(context.Background())
 
 	var buf bytes.Buffer
-	cmd := newShepherdTraceConflictsCmd()
+	cmd := newGoatherdTraceConflictsCmd()
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--session", "sess-only"})

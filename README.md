@@ -55,7 +55,7 @@ session gets a sibling container. `agents.subagent.mode: shared`, or a session
 without a trace store, runs dispatches directly on the host. Lane selection,
 world resolution, turn checkpoints, and settlement are documented in
 [sub-agents.md](docs/sub-agents.md#retention-and-isolation) and
-[shepherd-parity.md](docs/shepherd-parity.md#dispatch-worlds).
+[goatherd-parity.md](docs/goatherd-parity.md#dispatch-worlds).
 
 An open worktree proposal can be carried forward: `proposal continue` re-runs it
 with `extra_turns` more turns, seeded from its conversation and sealed
@@ -213,7 +213,7 @@ rewinds instead of losing the attempt.
 
 Resolution rules, platform mechanisms, and the isolation-vs-egress matrix are
 in [configuration.md](docs/configuration.md#sub-agent-dispatch-lane-and-confinement)
-and [shepherd-parity.md](docs/shepherd-parity.md#dispatch-worlds).
+and [goatherd-parity.md](docs/goatherd-parity.md#dispatch-worlds).
 
 ## Commands
 
@@ -237,8 +237,8 @@ yaah memory add|search|stats      # persistent memory
 yaah skill list|show|create|edit  # skills
 yaah mcp list|add|remove          # MCP servers
 yaah sessions list|show|delete    # inspect stored conversations
-yaah shepherd [containers | prune <path> | prune-container <id>]
-yaah shepherd-trace list|show|profile|conflicts|rebuild
+yaah goatherd [containers | prune <path> | prune-container <id>]
+yaah goatherd-trace list|show|profile|conflicts|rebuild
 yaah update [check]               # update the binary
 yaah version
 ```
@@ -248,7 +248,7 @@ yaah version
 | Doc | Contents |
 |---|---|
 | [architecture.md](./docs/architecture.md) | Agent loop, middleware pipeline, tool dispatch, context management, streaming, persistence, traces |
-| [shepherd-parity.md](./docs/shepherd-parity.md) | Shepherd parity ledger: full scorecard, dispatch worlds, settlement, intentional divergences |
+| [goatherd-parity.md](./docs/goatherd-parity.md) | Shepherd parity ledger: full scorecard, dispatch worlds, settlement, intentional divergences |
 | [acp.md](./docs/acp.md) | Agent Client Protocol server, methods, and editor integration |
 | [storage.md](./docs/storage.md) | `state.db` / `trace.db` ownership, intentional overlap, fidelity limits, retention |
 | [sub-agents.md](./docs/sub-agents.md) | Roles, budgets, escalation, quality gates, retained proposals, custom roles |

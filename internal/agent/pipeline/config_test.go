@@ -8,23 +8,23 @@ import (
 	"slices"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/tracestore"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
 func TestPipeline_OrchestratorTraceBuilder(t *testing.T) {
-	if _, ok := builtinBuilders["shepherd_trace"]; !ok {
-		t.Error("builtinBuilders is missing shepherd_trace — the orchestrator transcript is part of the trace (yaah-o86)")
+	if _, ok := builtinBuilders["goatherd_trace"]; !ok {
+		t.Error("builtinBuilders is missing goatherd_trace — the orchestrator transcript is part of the trace (yaah-o86)")
 	}
-	if !slices.Contains(defaultPipelineNames, "shepherd_trace") {
-		t.Error("defaultPipelineNames is missing shepherd_trace")
+	if !slices.Contains(defaultPipelineNames, "goatherd_trace") {
+		t.Error("defaultPipelineNames is missing goatherd_trace")
 	}
 }
 
 func TestPipeline_SubAgentPipelineNames(t *testing.T) {
 	names := SubAgentPipelineNames()
-	want := []string{"tool_concurrency", "shepherd_trace", "evidence_guard"}
+	want := []string{"tool_concurrency", "goatherd_trace", "evidence_guard"}
 	if len(names) != len(want) {
 		t.Fatalf("SubAgentPipelineNames() = %v, want %v", names, want)
 	}
@@ -46,16 +46,16 @@ func TestPipeline_SubAgentExcludesOrchestrator(t *testing.T) {
 }
 
 func TestSubAgentTrace_UsesConfiguredStore(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
 	pipe := NewSubAgentPipeline(PipelineConfig{SessionID: "sub-test", TraceStore: store})
-	tmw := pipe.ShepherdTraceMiddleware()
+	tmw := pipe.GoatherdTraceMiddleware()
 	if tmw == nil {
-		t.Fatal("expected a real ShepherdTraceMiddleware when the store is configured")
+		t.Fatal("expected a real GoatherdTraceMiddleware when the store is configured")
 	}
 	if tmw.Store() != store {
 		t.Error("sub-agent trace middleware should use the session-shared store")
@@ -77,37 +77,37 @@ func TestSubAgentTrace_UsesConfiguredStore(t *testing.T) {
 func TestSubAgentTrace_NoConfiguredStore(t *testing.T) {
 	pipe := NewSubAgentPipeline(PipelineConfig{SessionID: "sub-test"})
 
-	if pipe.ShepherdTraceMiddleware() != nil {
+	if pipe.GoatherdTraceMiddleware() != nil {
 		t.Error("expected no real trace middleware without a configured store")
 	}
-	mw := pipe.Find("shepherd_trace")
+	mw := pipe.Find("goatherd_trace")
 	if mw == nil {
-		t.Fatal("pipeline should still contain the shepherd_trace slot (noop)")
+		t.Fatal("pipeline should still contain the goatherd_trace slot (noop)")
 	}
-	if _, ok := mw.(*noopShepherdTraceMiddleware); !ok {
+	if _, ok := mw.(*noopGoatherdTraceMiddleware); !ok {
 		t.Errorf("expected noop trace middleware, got %T", mw)
 	}
 }
 
 func TestSubAgentTrace_EmptySessionIDIsNoop(t *testing.T) {
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
 	pipe := NewSubAgentPipeline(PipelineConfig{SessionID: "", TraceStore: store})
-	if _, ok := pipe.Find("shepherd_trace").(*noopShepherdTraceMiddleware); !ok {
+	if _, ok := pipe.Find("goatherd_trace").(*noopGoatherdTraceMiddleware); !ok {
 		t.Error("empty session ID should fall back to the noop trace middleware")
 	}
 }
 
-func TestInitShepherdInfrastructure(t *testing.T) {
+func TestInitGoatherdInfrastructure(t *testing.T) {
 	dir := t.TempDir()
 
-	store, bus, mgr, err := InitShepherdInfrastructure(tracestore.Config{DSN: filepath.Join(dir, "trace.db")}, 0)
+	store, bus, mgr, err := InitGoatherdInfrastructure(tracestore.Config{DSN: filepath.Join(dir, "trace.db")}, 0)
 	if err != nil {
-		t.Fatalf("InitShepherdInfrastructure: %v", err)
+		t.Fatalf("InitGoatherdInfrastructure: %v", err)
 	}
 	defer store.Close(context.Background())
 
@@ -125,24 +125,24 @@ func TestInitShepherdInfrastructure(t *testing.T) {
 	}
 }
 
-func TestInitShepherdInfrastructure_UnwritableDir(t *testing.T) {
+func TestInitGoatherdInfrastructure_UnwritableDir(t *testing.T) {
 	// A path that cannot be created (a regular file blocks the directory).
 	blocker := filepath.Join(t.TempDir(), "blocker")
 	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
 		t.Fatalf("write blocker file: %v", err)
 	}
 
-	_, _, _, err := InitShepherdInfrastructure(tracestore.Config{DSN: filepath.Join(blocker, "traces")}, 0)
+	_, _, _, err := InitGoatherdInfrastructure(tracestore.Config{DSN: filepath.Join(blocker, "traces")}, 0)
 	if err == nil {
 		t.Error("expected an error when the trace directory cannot be created")
 	}
 }
 
-func TestNoopShepherdTraceMiddleware(t *testing.T) {
-	m := &noopShepherdTraceMiddleware{}
+func TestNoopGoatherdTraceMiddleware(t *testing.T) {
+	m := &noopGoatherdTraceMiddleware{}
 
-	if m.Name() != "shepherd_trace" {
-		t.Errorf("Name() = %q, want shepherd_trace", m.Name())
+	if m.Name() != "goatherd_trace" {
+		t.Errorf("Name() = %q, want goatherd_trace", m.Name())
 	}
 
 	step := &Step{Messages: []types.Message{{Role: "user", Content: "hi"}}}
@@ -206,13 +206,13 @@ func TestPipeline_ToolConcurrencyNilFallsBackToConfig(t *testing.T) {
 	}
 }
 
-func TestNewFromConfig_ShepherdTraceNoopWithoutStore(t *testing.T) {
+func TestNewFromConfig_GoatherdTraceNoopWithoutStore(t *testing.T) {
 	pipe := NewFromConfig(PipelineConfig{SessionID: "test-session"})
-	if tmw := pipe.ShepherdTraceMiddleware(); tmw != nil {
+	if tmw := pipe.GoatherdTraceMiddleware(); tmw != nil {
 		t.Error("without a trace store the orchestrator slot should be a noop")
 	}
-	if pipe.Find("shepherd_trace") == nil {
-		t.Error("orchestrator pipeline should still carry the shepherd_trace slot")
+	if pipe.Find("goatherd_trace") == nil {
+		t.Error("orchestrator pipeline should still carry the goatherd_trace slot")
 	}
 	// The rest of the default pipeline is intact.
 	for _, name := range []string{"steer", "followup", "compaction", "approval", "inline_limit", "tool_concurrency", "loop_detection", "evidence_guard", "conflict_detect"} {

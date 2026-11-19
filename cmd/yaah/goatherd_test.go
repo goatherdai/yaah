@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/goatherdai/goatherd-kernel"
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	goatherd "github.com/goatherdai/goatherd-runtime"
 	goatherdsandbox "github.com/goatherdai/goatherd-runtime/sandbox"
 
@@ -17,19 +17,19 @@ import (
 	"github.com/goatherdai/yaah/internal/agent/recovery"
 )
 
-// shepherdOrphanEnv builds the crash-window state the prune tests
+// goatherdOrphanEnv builds the crash-window state the prune tests
 // need: one orphaned worktree (a discarded scope whose directory was
 // restored by hand — the crash window between the discard record and
 // the teardown) and one adopted (live) worktree, both recorded and
 // recovered. It returns the recovery report.
-func shepherdOrphanEnv(t *testing.T) (*recovery.Report, string, string) {
+func goatherdOrphanEnv(t *testing.T) (*recovery.Report, string, string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary not available")
 	}
 	repo := newCmdGitRepo(t)
 	tracePath := filepath.Join(t.TempDir(), "trace.sqlite")
-	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
+	store, err := kerneltrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -75,7 +75,7 @@ func shepherdOrphanEnv(t *testing.T) (*recovery.Report, string, string) {
 	}
 	store.Close(context.Background())
 
-	store2, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
+	store2, err := kerneltrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -87,15 +87,15 @@ func shepherdOrphanEnv(t *testing.T) (*recovery.Report, string, string) {
 	return report, orphanWT, liveWT
 }
 
-// TestShepherd_ListMatchesOrphanReport pins the R3 list: the command
+// TestGoatherd_ListMatchesOrphanReport pins the R3 list: the command
 // reports the recovery's own orphan classification — the orphaned
 // worktree is listed with its scope and prunable hint, the live one
 // as adopted.
-func TestShepherd_ListMatchesOrphanReport(t *testing.T) {
-	report, orphanWT, liveWT := shepherdOrphanEnv(t)
+func TestGoatherd_ListMatchesOrphanReport(t *testing.T) {
+	report, orphanWT, liveWT := goatherdOrphanEnv(t)
 
 	var out strings.Builder
-	printShepherdReport(&out, report)
+	printGoatherdReport(&out, report)
 	listed := out.String()
 	if !strings.Contains(listed, "orphaned "+orphanWT) {
 		t.Errorf("the list must name the orphaned worktree:\n%s", listed)
@@ -103,16 +103,16 @@ func TestShepherd_ListMatchesOrphanReport(t *testing.T) {
 	if !strings.Contains(listed, "adopted   "+liveWT) {
 		t.Errorf("the list must name the adopted worktree:\n%s", listed)
 	}
-	if !strings.Contains(listed, "yaah shepherd prune \""+orphanWT+"\"") {
+	if !strings.Contains(listed, "yaah goatherd prune \""+orphanWT+"\"") {
 		t.Errorf("the orphan line must carry the prune hint:\n%s", listed)
 	}
 }
 
-// TestShepherd_PruneRequiresExactName pins the R3 contract: only an
+// TestGoatherd_PruneRequiresExactName pins the R3 contract: only an
 // exact path from the orphan report prunes — a near miss refuses, and
 // an adopted (live) worktree refuses explicitly.
-func TestShepherd_PruneRequiresExactName(t *testing.T) {
-	report, orphanWT, liveWT := shepherdOrphanEnv(t)
+func TestGoatherd_PruneRequiresExactName(t *testing.T) {
+	report, orphanWT, liveWT := goatherdOrphanEnv(t)
 
 	// A near miss (the orphan path plus a suffix) refuses and deletes
 	// nothing.
@@ -146,9 +146,9 @@ func TestShepherd_PruneRequiresExactName(t *testing.T) {
 	}
 }
 
-// TestShepherd_PruneNilReport pins the off-tracing refusal: nothing
+// TestGoatherd_PruneNilReport pins the off-tracing refusal: nothing
 // to prune, stated plainly.
-func TestShepherd_PruneNilReport(t *testing.T) {
+func TestGoatherd_PruneNilReport(t *testing.T) {
 	err := pruneOrphan(io.Discard, nil, "/tmp/whatever")
 	if err == nil || !strings.Contains(err.Error(), "nothing to prune") {
 		t.Errorf("pruning with tracing off must refuse, got: %v", err)
@@ -183,12 +183,12 @@ func newCmdGitRepo(t *testing.T) string {
 	return dir
 }
 
-// TestShepherd_PruneRefusesReplacedDirectory pins the ownership check
+// TestGoatherd_PruneRefusesReplacedDirectory pins the ownership check
 // (review finding): git's registry can keep stale entries and a
 // directory can be replaced with unrelated data — a user-supplied
 // exact path is not ownership verification, so a listed orphan whose
 // occupant is no longer a worktree of its recorded repository refuses.
-func TestShepherd_PruneRefusesReplacedDirectory(t *testing.T) {
+func TestGoatherd_PruneRefusesReplacedDirectory(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary not available")
 	}
@@ -214,11 +214,11 @@ func TestShepherd_PruneRefusesReplacedDirectory(t *testing.T) {
 	}
 }
 
-// TestShepherd_PruneRefusesBrokenRegistry pins the registry-failure
+// TestGoatherd_PruneRefusesBrokenRegistry pins the registry-failure
 // refusal (review finding): a git lookup failure must not fall back
 // to deleting the directory — the registry is unverifiable, so the
 // deletion refuses.
-func TestShepherd_PruneRefusesBrokenRegistry(t *testing.T) {
+func TestGoatherd_PruneRefusesBrokenRegistry(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary not available")
 	}

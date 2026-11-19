@@ -96,13 +96,13 @@ agents:
     directives:                        # orchestrator prompt policy
       - "always run tests after implementation"
 
-    shepherd_trace_path: ""             # DEPRECATED flat form; "" = ~/.yaah/trace.db; tracing is always on
-    shepherd_trace:                     # where traces live (overrides shepherd_trace_path's DSN role)
+    goatherd_trace_path: ""             # DEPRECATED flat form; "" = ~/.yaah/trace.db; tracing is always on
+    goatherd_trace:                     # where traces live (overrides goatherd_trace_path's DSN role)
       backend: ""                       # "" or "sqlite" = local file; "postgres" = server ledger
       dsn: ""                           # sqlite: file path; postgres: connection URL (required for postgres)
 
     retained_repo_path: ""             # "" = cwd
-    retained_worktree_root: ""         # "" = ./.yaah/shepherd-worktrees
+    retained_worktree_root: ""         # "" = ./.yaah/goatherd-worktrees
     retained_worktree_bootstrap: ""    # e.g. "npm ci"
     turn_checkpoint_max: 0             # 0 = unlimited live checkpoints
     max_turn_restores: 3               # 0 = default 3
@@ -143,7 +143,7 @@ agents:
     mode: retained                     # retained | shared; per-role routing
                                        # comes from each role's `output` field
     world: auto                        # auto | worktree | container
-                                       # (see shepherd-parity.md)
+                                       # (see goatherd-parity.md)
     # grants:                            # narrow the dispatch world's writes
     #   - path: src                      # world-relative, disjoint roots
     #     access: readwrite
@@ -316,10 +316,12 @@ rather than retrying a request that cannot succeed.
 | `consolidate_iters_interval` | 0 (off) | Same nudge, counted in tool results |
 | `consolidate_deep_every` | 1 | Run the deep consolidator fork on every Nth nudge (0 or 1 = every nudge); intervening nudges take the light path |
 | `directives` | — | Policy statements injected into the orchestrator prompt only |
-| `shepherd_trace_path` | ~/.yaah/trace.db | DEPRECATED flat form of `shepherd_trace.dsn` (SQLite): path to the Shepherd trace store **file**. Still resolves exactly as before. Tracing is always on — this only relocates the store. Facts include the session context (system prompt, cwd, model/config fingerprint), assistant content plus reasoning signature, and tool output bodies capped at 64KiB with truncation markers/spill refs |
-| `shepherd_trace` | — | Where traces live: `backend` (`""`/`sqlite` = local file, `postgres` = server ledger via [goatherd-kernel](https://github.com/goatherdai/goatherd-kernel)'s backend seam) and `dsn` (SQLite: file path, falling back to `shepherd_trace_path` then the default; PostgreSQL: connection URL, **required** for that backend). Record and context ids are backend-independent, but contents do not migrate automatically — moving an existing ledger between backends needs a deliberate export/import |
+| `goatherd_trace_path` | ~/.yaah/trace.db | DEPRECATED flat form of `goatherd_trace.dsn` (SQLite): path to the Goatherd trace store **file**. Still resolves exactly as before. Tracing is always on — this only relocates the store. Facts include the session context (system prompt, cwd, model/config fingerprint), assistant content plus reasoning signature, and tool output bodies capped at 64KiB with truncation markers/spill refs |
+| `goatherd_trace` | — | Where traces live: `backend` (`""`/`sqlite` = local file, `postgres` = server ledger via [goatherd-kernel](https://github.com/goatherdai/goatherd-kernel)'s backend seam) and `dsn` (SQLite: file path, falling back to `goatherd_trace_path` then the default; PostgreSQL: connection URL, **required** for that backend). Record and context ids are backend-independent, but contents do not migrate automatically — moving an existing ledger between backends needs a deliberate export/import |
+
+The trace keys were renamed from `shepherd_trace{,_path}` to `goatherd_trace{,_path}` in the goatherd naming pass; the old spellings still resolve (new values win) and emit a one-time deprecation warning.
 | `retained_repo_path` | cwd | Repository retained worktrees are cut from |
-| `retained_worktree_root` | .yaah/shepherd-worktrees | Parent directory for retained worktrees |
+| `retained_worktree_root` | .yaah/goatherd-worktrees | Parent directory for retained worktrees |
 | `retained_worktree_bootstrap` | — | Command run inside each retained worktree, e.g. `npm ci` |
 | `turn_checkpoint_max` | 0 (unlimited) | Live turn checkpoints per run |
 | `max_turn_restores` | 3 | Turn-level restores per run |
@@ -366,7 +368,7 @@ Sub-agents use their own curated pipeline and per-role directives.
 | `output_limit` | 51200 | Byte cap on sub-agent reports; 0 = built-in 50 KiB cap |
 | `json_mode` | false | Force structured JSON output |
 | `mode` | `retained` | Dispatch lane — `retained` (isolated worktree + proposal) or `shared` (direct to host) |
-| `world` | `auto` | Dispatch world — `auto` (per-dispatch container for report and proposal dispatches in a host session when `workspace.containerd.image` is set on Linux, else the worktree, recording any degradation; in a container session, report and proposal lanes use a sibling container; a proposal settles into the session container), `worktree` (never container), `container` (fails closed if unavailable). A proposal seals a GitDelta manifest and destroys its container at seal; a report never seals. Orthogonal to `mode`. See [shepherd-parity.md](./shepherd-parity.md#dispatch-worlds) |
+| `world` | `auto` | Dispatch world — `auto` (per-dispatch container for report and proposal dispatches in a host session when `workspace.containerd.image` is set on Linux, else the worktree, recording any degradation; in a container session, report and proposal lanes use a sibling container; a proposal settles into the session container), `worktree` (never container), `container` (fails closed if unavailable). A proposal seals a GitDelta manifest and destroys its container at seal; a report never seals. Orthogonal to `mode`. See [goatherd-parity.md](./goatherd-parity.md#dispatch-worlds) |
 | `roles.<name>.world` | — | Per-role world override (`auto` / `worktree` / `container`); empty inherits `agents.subagent.world` |
 | `grants` | `[]` | Per-dispatch write authority — a list of `{path, access}` roots relative to the dispatch world. `readwrite` roots are writable, `readonly` roots are declared but denied writes; roots must be disjoint. Empty = the whole world (legacy). Both the jail and a shaped container lower them; an all-read-only set masks the container workspace |
 | `roles.<name>.grants` | — | Per-role grant set; empty inherits `agents.subagent.grants` |
@@ -466,7 +468,7 @@ safety net (compaction, the evidence/loop/intent guards, and the approval
 pipeline, which is the only layer that can prompt), required plumbing (the
 steer/followup channels and tracing), or inert until its own knob turns it
 on. The orchestrator order is
-`steer → followup → compaction → soft_prune → approval → inline_limit → tool_concurrency → shepherd_trace → loop_detection → intent_loop → evidence_guard → conflict_detect → consolidate`.
+`steer → followup → compaction → soft_prune → approval → inline_limit → tool_concurrency → goatherd_trace → loop_detection → intent_loop → evidence_guard → conflict_detect → consolidate`.
 
 | Middleware | Purpose |
 |---|---|
@@ -477,7 +479,7 @@ on. The orchestrator order is
 | `approval` | Gate dangerous tools |
 | `inline_limit` | Cap tool calls dispatched per turn (0 = unlimited) |
 | `tool_concurrency` | Cap concurrent tool goroutines |
-| `shepherd_trace` | Record the session transcript and tool facts |
+| `goatherd_trace` | Record the session transcript and tool facts |
 | `loop_detection` | Halt identical tool+result loops |
 | `intent_loop` | Steer (3 turns) and halt (8 turns) when the assistant re-announces the same plan without changing files — catches the paraphrased, read-only loops `loop_detection` cannot see |
 | `evidence_guard` | Steer/halt when repeated calls or unchanged re-reads produce no new evidence |
@@ -492,7 +494,7 @@ by a pipeline list:
 - `agents.default.consolidate_turns_interval` / `consolidate_iters_interval`
   enable the memory nudge.
 
-Sub-agent loops run a curated subset (`tool_concurrency`, `shepherd_trace`,
+Sub-agent loops run a curated subset (`tool_concurrency`, `goatherd_trace`,
 `evidence_guard`, plus `steer` when a supervision channel is wired and
 `supervisor_guard` when supervision is active).
 
@@ -713,7 +715,7 @@ worktree and settlement writes the host tree; with `containerd.image` set,
 `auto` may use a container proposal that still settles onto the host. In a
 container session the world is a sibling container and settlement writes the
 **session container**, leaving the host untouched until `apply_out`. Retained mode is available whenever the
-shepherd root scope exists and the lane can provide a world; otherwise use
+goatherd root scope exists and the lane can provide a world; otherwise use
 `agents.subagent.mode: shared` or expect the direct lane.
 
 ```yaml
@@ -729,7 +731,7 @@ agents:
 | Key | Default | Meaning |
 |---|---|---|
 | `retained_repo_path` | `""` | Repository sub-agent worktrees are cut from, and where per-turn checkpoints operate. Empty uses yaah's working directory. |
-| `retained_worktree_root` | `""` | Parent directory for sub-agent worktrees. Empty uses a `.yaah/shepherd-worktrees` directory inside the repository. |
+| `retained_worktree_root` | `""` | Parent directory for sub-agent worktrees. Empty uses a `.yaah/goatherd-worktrees` directory inside the repository. |
 | `retained_worktree_bootstrap` | `""` | Shell command run inside each fresh worktree — see below. |
 | `turn_checkpoint_max` | `0` | Live turn checkpoints per sub-agent run; reaching the cap prunes/resets all live checkpoints. `0` = unlimited. |
 | `max_turn_restores` | `3` | Turn-level restores per run, so a deterministically failing turn cannot rewind forever. |

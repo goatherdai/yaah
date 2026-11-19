@@ -14,7 +14,7 @@ import (
 )
 
 // fakeCheckpointer is an in-memory TurnCheckpointer for loop tests.
-// Checkpoints are single-use, mirroring the shepherd git checkpoints.
+// Checkpoints are single-use, mirroring the goatherd git checkpoints.
 type fakeCheckpointer struct {
 	mu            sync.Mutex
 	snapshots     map[string][]byte

@@ -23,7 +23,7 @@ var deferralPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?is)\breserved for the P[0-9]\b`),
 }
 
-var falsifiableReference = regexp.MustCompile(`\b(?:yaah|croft|shepherd-runtime-go|goatherd-runtime)-[a-z0-9]+\b`)
+var falsifiableReference = regexp.MustCompile(`\b(?:yaah|croft|goatherd-runtime-go|goatherd-runtime)-[a-z0-9]+\b`)
 
 func TestDeferralCommentsNameFalsifiableReference(t *testing.T) {
 	root := filepath.Clean("../..")
