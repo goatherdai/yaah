@@ -2,6 +2,7 @@ package host
 
 import (
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -30,7 +31,10 @@ func TestResolveArtifact(t *testing.T) {
 		}
 	})
 	t.Run("absolute path refused", func(t *testing.T) {
-		abs := filepath.Join(string(filepath.Separator), "etc", "passwd")
+		abs := "/etc/passwd"
+		if runtime.GOOS == "windows" {
+			abs = `C:\etc\passwd`
+		}
 		_, err := resolveArtifact(root, abs)
 		if err == nil || !strings.Contains(err.Error(), "is absolute") {
 			t.Errorf("err = %v, want the absolute path named", err)
