@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.197.0](https://github.com/goatherdai/yaah/compare/v0.196.0...v0.197.0) (2026-11-19)
+
+
+### Features
+
+* **deps:** bump goatherd-kernel to the tagged v0.22.0 ([816e379](https://github.com/goatherdai/yaah/commit/816e379d9b9ac48b5a7f089afccbcb6a3d84d482))
+* **deps:** bump goatherd-kernel to the tagged v0.22.0 ([ef32622](https://github.com/goatherdai/yaah/commit/ef326229a0f3f88dcfb33c14732b91a96e19aff5))
+
+
+### Documentation
+
+* workflow subsystem architecture audit ([c3fc397](https://github.com/goatherdai/yaah/commit/c3fc39742b86a8ee118d013735dd2794f60012ad))
+
 ## [0.196.0](https://github.com/goatherdai/yaah/compare/v0.195.6...v0.196.0) (2026-11-19)
 
 
