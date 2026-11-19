@@ -317,6 +317,73 @@ func TestRetryCeilingStopsTheRun(t *testing.T) {
 	}
 }
 
+// TestPromptRenderBudgetPinsTheHandleBoundary pins the door's prompt budget
+// from both sides. A follower that interpolates an output under the 1 MiB
+// prompt budget dispatches with the full value; one that interpolates an
+// output over it is refused at the door — the door has no dereference, so a
+// handle would dispatch a cut instruction, and a silently weaker meaning is
+// the failure the door refuses rather than runs.
+func TestPromptRenderBudgetPinsTheHandleBoundary(t *testing.T) {
+	underLimit := strings.Repeat("x", 1<<20-100) // just under the 1 MiB budget
+	overLimit := strings.Repeat("x", 1<<20+100)  // just over it
+
+	t.Run("under the budget dispatches full text", func(t *testing.T) {
+		y := strings.Replace(specHead, "%s", "underbudget", 1) + `  steps:
+    - id: big
+      kind: delegate
+      role: developer
+      output: report
+      prompt: produce
+    - id: uses
+      kind: delegate
+      role: developer
+      needs: [big]
+      prompt: review {{ steps.big.output }}
+`
+		rec := &recorder{results: []string{underLimit}}
+		res, err := Execute(context.Background(), Options{Graph: graphFromYAML(t, y), Runner: rec.run})
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if res.Run.Status != exec.RunSucceeded {
+			t.Fatalf("status = %s want succeeded: %s", res.Run.Status, logOf(res.Run))
+		}
+		uses := nodeState(t, res.Run, "steps.uses")
+		if uses.State != exec.StateSucceeded {
+			t.Errorf("uses = %s reason %q, want dispatched with the full value in its prompt", uses.State, uses.Reason)
+		}
+	})
+
+	t.Run("over the budget is refused at the door", func(t *testing.T) {
+		y := strings.Replace(specHead, "%s", "overbudget", 1) + `  steps:
+    - id: big
+      kind: delegate
+      role: developer
+      output: report
+      prompt: produce
+    - id: uses
+      kind: delegate
+      role: developer
+      needs: [big]
+      prompt: review {{ steps.big.output }}
+`
+		rec := &recorder{results: []string{overLimit}}
+		res, err := Execute(context.Background(), Options{Graph: graphFromYAML(t, y), Runner: rec.run})
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		uses := nodeState(t, res.Run, "steps.uses")
+		if uses.State != exec.StateFailed || !strings.Contains(uses.Reason, "prompt budget") {
+			t.Fatalf("uses = %s reason %q, want a refusal naming the oversized interpolation", uses.State, uses.Reason)
+		}
+		// The refusal names the value and its size, so the fix is in the
+		// author's hands rather than a debugging session.
+		if !strings.Contains(uses.Reason, "no dereference") {
+			t.Errorf("reason = %q, want the refusal to name the missing dereference", uses.Reason)
+		}
+	})
+}
+
 // TestProposalLaneIsDeclinedAtTheDoor pins that a node this lane cannot honor
 // is refused with the owning bead named, and that nothing was dispatched.
 // TestProposalLaneIsDeclinedAtTheDoor pins the honest refusal that survives
