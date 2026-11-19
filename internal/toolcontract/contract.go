@@ -9,6 +9,9 @@ package toolcontract
 import (
 	"context"
 	"encoding/json"
+	"reflect"
+
+	"github.com/goatherdai/yaah/internal/conflictapi"
 )
 
 // Tool is the interface every built-in and MCP tool satisfies.
@@ -23,4 +26,27 @@ type Tool interface {
 // consults for argument-level danger.
 type DangerClassifier interface {
 	IsDangerous(argsJSON string) bool
+}
+
+// ConflictDetector is the engine's view of the post-dispatch conflict
+// tracker. The report type is neutral so the loop and its pipeline can read
+// conflicts without importing the built-in tool surface.
+type ConflictDetector interface {
+	DetectAndResetReport() *conflictapi.ConflictReport
+}
+
+// IsNil reports whether an interface-valued dependency is absent, including
+// a typed-nil pointer stored in it. Ports are satisfied by concrete pointers,
+// so a nil *tools.ConflictTracker assigned to a ConflictDetector is a non-nil
+// interface that would otherwise pass a plain == nil check.
+func IsNil(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return rv.IsNil()
+	}
+	return false
 }

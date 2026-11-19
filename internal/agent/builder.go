@@ -7,7 +7,7 @@ import (
 	"github.com/goatherdai/yaah/internal/jobs"
 	"github.com/goatherdai/yaah/internal/observability"
 	"github.com/goatherdai/yaah/internal/permissions"
-	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/toolcontract"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -75,7 +75,7 @@ type LoopBuilder struct {
 	// BackgroundJobs manages background sub-agent dispatch.
 	BackgroundJobs *jobs.BackgroundJobs
 	// ConflictTracker detects parallel sub-agent file conflicts.
-	ConflictTracker *tools.ConflictTracker
+	ConflictTracker toolcontract.ConflictDetector
 	// Cfg holds the tuning parameters typically derived from config.yaml.
 	Cfg AgentConfig
 	// FallbackProvider and FallbackModel are used on primary failure.

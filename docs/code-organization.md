@@ -34,6 +34,7 @@ yaah/
 │   │   └── supervision/        # advisory rules and destructive guard
 │   ├── atomicfile/             # atomic file replace, with a Windows replace-retry
 │   ├── banner/                 # startup/status banner rendering
+│   ├── conflictapi/            # neutral conflict evidence shared by tools and the engine
 │   ├── config/                 # config load/validate
 │   ├── control/                # control-plane message types
 │   ├── cwdpath/                # cwd canonicalization

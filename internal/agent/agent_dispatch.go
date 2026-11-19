@@ -14,7 +14,7 @@ import (
 	"github.com/goatherdai/yaah/internal/jobs"
 	"github.com/goatherdai/yaah/internal/observability"
 	"github.com/goatherdai/yaah/internal/permissions"
-	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/toolcontract"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -138,7 +138,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	if callID == "" {
 		callID = fmt.Sprintf("t%d", d.toolID)
 	}
-	runCtx = tools.WithToolCallID(runCtx, callID)
+	runCtx = toolcontract.WithToolCallID(runCtx, callID)
 
 	if allowed && d.isDelegate && !d.isBackground {
 		runCtx = d.setupSubAgent(runCtx)
@@ -152,7 +152,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	}
 
 	var supervisionMeta map[string]any
-	runCtx = tools.WithSupervisionMeta(runCtx, &supervisionMeta)
+	runCtx = toolcontract.WithSupervisionMeta(runCtx, &supervisionMeta)
 	var res string
 	var err error
 	if allowed {
