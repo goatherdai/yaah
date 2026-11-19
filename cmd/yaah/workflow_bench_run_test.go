@@ -542,7 +542,25 @@ func TestExampleArchitectureReviewRestrictedExecutionFromTheDocument(t *testing.
 		case strings.Contains(prompt, "Audit one architectural concern"):
 			return `{"aspect": "reviewed", "findings": [{"anchor": "internal/workflow/host/host.go:1", "note": "posture applied"}], "summary": "read-only review"}`, nil
 		case strings.Contains(prompt, "Synthesize"):
-			return `{"headline": "verdict", "findings": []}`, nil
+			// The synthesis prompt asks for a markdown document with the
+			// four sections; the fixture models exactly that shape.
+			return strings.Join([]string{
+				"## Verdict",
+				"",
+				"The reviewed seams hold; the one defect found is the coupling noted below.",
+				"",
+				"## Findings",
+				"",
+				"- **high** `internal/workflow/host/host.go:1` — posture applied",
+				"",
+				"## Disagreements",
+				"",
+				"none",
+				"",
+				"## Coverage",
+				"",
+				"boundaries, error-handling; docs and dependencies not reached.",
+			}, "\n"), nil
 		}
 		return "", fmt.Errorf("example runner got an unknown prompt: %q", prompt)
 	}
