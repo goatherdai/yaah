@@ -120,17 +120,33 @@ spec:
         reviews disagree on rather than averaging over it. Do not introduce
         findings the reviews did not make.
 
+        The reviews you received:
+
         {{ steps.reviews.collect }}
 
-        Return ONLY a JSON object (no prose, no code fence):
+        Return a markdown document with exactly these sections, no code
+        fences around the whole document:
 
-            {"headline": "one line verdict",
-             "findings": [{"anchor": "path:line", "note": "one line",
-                           "severity": "high|medium|low"}]}
+            ## Verdict
+            <two or three sentences: the overall architectural verdict>
+            ## Findings
+            <one bullet per finding, ranked by risk, highest first:
+            - **<severity>** `<path:line>` — <what is wrong, why it matters,
+              and which review(s) raised it>
+            ## Disagreements
+            <findings the reviews conflicted on, or "none">
+            ## Coverage
+            <which aspects the reviews covered, and any aspect of the
+            vocabulary the review set did not reach>
+
+        Do not summarize the findings away: every finding a review raised
+        appears in Findings (deduplicated, not dropped), with its anchor.
 
     - id: report
       kind: emit
       needs: [synthesize]
       value: |
-        architecture review: {{ steps.synthesize.output }}
+        # Architecture review
+
+        {{ steps.synthesize.output }}
       path: artifacts/architecture-review.md

@@ -38,7 +38,17 @@ func (r *Run) settleValueStep(n *ir.Node, st *NodeState) error {
 	)
 	if n.Value != nil {
 		var res ir.RenderResult
-		res, err = n.Value.Render(r.snapshot(n.Path, 1), ir.RenderOptions{})
+		res, err = n.Value.Render(r.snapshot(n.Path, 1), ir.RenderOptions{
+			// The value template may interpolate a whole collected report
+			// (steps.<id>.output can carry a full review document — 16 KB in
+			// the session that surfaced this). The agent loop's handle
+			// defaults (8 KiB/512 B) are sized for the conversation lane; the
+			// door's one-shot prompt needs headroom instead, because a
+			// truncated review is exactly the failure mode the run exists to
+			// surface.
+			HandleThreshold: 1 << 20,
+			PreviewBytes:    32 << 10,
+		})
 		if err != nil {
 			return r.failTerminal(n.Path, ReasonEmitValueFailed+": "+err.Error())
 		}

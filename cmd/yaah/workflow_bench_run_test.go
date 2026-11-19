@@ -542,7 +542,25 @@ func TestExampleArchitectureReviewRestrictedExecutionFromTheDocument(t *testing.
 		case strings.Contains(prompt, "Audit one architectural concern"):
 			return `{"aspect": "reviewed", "findings": [{"anchor": "internal/workflow/host/host.go:1", "note": "posture applied"}], "summary": "read-only review"}`, nil
 		case strings.Contains(prompt, "Synthesize"):
-			return `{"headline": "verdict", "findings": []}`, nil
+			// The synthesis prompt asks for a markdown document with the
+			// four sections; the fixture models exactly that shape.
+			return strings.Join([]string{
+				"## Verdict",
+				"",
+				"The reviewed seams hold; the one defect found is the coupling noted below.",
+				"",
+				"## Findings",
+				"",
+				"- **high** `internal/workflow/host/host.go:1` — posture applied",
+				"",
+				"## Disagreements",
+				"",
+				"none",
+				"",
+				"## Coverage",
+				"",
+				"boundaries, error-handling; docs and dependencies not reached.",
+			}, "\n"), nil
 		}
 		return "", fmt.Errorf("example runner got an unknown prompt: %q", prompt)
 	}
@@ -588,8 +606,14 @@ func TestExampleArchitectureReviewRestrictedExecutionFromTheDocument(t *testing.
 	if rerr != nil {
 		t.Fatalf("the final artifact never landed: %v\n%s", rerr, rep)
 	}
-	if !strings.Contains(string(landed), "architecture review") {
-		t.Errorf("artifact head = %q, want the synthesized report", headOf(string(landed)))
+	// The report renders as a readable markdown document: the synthesized
+	// verdict as a heading, and the machine-readable payload as a JSON
+	// block — not the bare synthesis blob the earlier shape wrote.
+	body := string(landed)
+	for _, want := range []string{"# Architecture review", "## Verdict"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("artifact missing %q; head = %q", want, headOf(body))
+		}
 	}
 }
 
