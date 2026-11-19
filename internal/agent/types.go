@@ -13,7 +13,7 @@ import (
 	"github.com/goatherdai/yaah/internal/jobs"
 	"github.com/goatherdai/yaah/internal/permissions"
 	"github.com/goatherdai/yaah/internal/pubsub"
-	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/toolcontract"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -167,7 +167,7 @@ type Loop struct {
 	// correlate its permission prompt with the call's later updates.
 	ApproveCallFn        func(ctx context.Context, callID, name, args string) bool `json:"-"`
 	ContinueAfterMaxIter func() bool                                               `json:"-"`
-	ConflictTracker      *tools.ConflictTracker
+	ConflictTracker      toolcontract.ConflictDetector
 	CtxMgr               *ContextManager
 
 	toolConcurrency *pipeline.ToolConcurrencyMiddleware

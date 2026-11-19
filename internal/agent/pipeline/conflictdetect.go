@@ -3,7 +3,7 @@ package pipeline
 import (
 	"context"
 
-	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/toolcontract"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -17,7 +17,7 @@ import (
 // step.Messages after RunPostTool — the loop adopts it as the new
 // conversation tail at the end of the iteration.
 type ConflictDetectMiddleware struct {
-	tracker *tools.ConflictTracker
+	tracker toolcontract.ConflictDetector
 	// onCheck fires once per PostTool when a tracker is present (even
 	// when no report is produced), mirroring the original inline check.
 	onCheck func(ctx context.Context, model string, turn int)
@@ -28,7 +28,7 @@ type ConflictDetectMiddleware struct {
 }
 
 func NewConflictDetectMiddleware(
-	tracker *tools.ConflictTracker,
+	tracker toolcontract.ConflictDetector,
 	onCheck func(ctx context.Context, model string, turn int),
 	onFound func(ctx context.Context, model string, turn int, report string, fileCount int),
 	persistMsg func(msg types.Message),
@@ -47,7 +47,7 @@ func (m *ConflictDetectMiddleware) PostModel(ctx context.Context, msg *types.Mes
 }
 
 func (m *ConflictDetectMiddleware) PostTool(ctx context.Context, results []ToolResult, step *Step) (*Step, error) {
-	if m.tracker == nil {
+	if toolcontract.IsNil(m.tracker) {
 		return step, nil
 	}
 	if m.onCheck != nil {

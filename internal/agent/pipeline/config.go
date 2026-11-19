@@ -6,7 +6,7 @@ import (
 
 	shepherdtrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/config"
-	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/toolcontract"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -76,7 +76,7 @@ type PipelineConfig struct {
 	// callbacks fire hook events, decorate the turn span, and persist
 	// the injected report message. When ConflictTracker is nil the
 	// middleware is inert.
-	ConflictTracker *tools.ConflictTracker
+	ConflictTracker toolcontract.ConflictDetector
 	ConflictOnCheck func(ctx context.Context, model string, turn int)
 	ConflictOnFound func(ctx context.Context, model string, turn int, report string, fileCount int)
 	ConflictPersist func(msg types.Message)

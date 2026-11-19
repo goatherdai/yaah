@@ -125,3 +125,14 @@ func TestTypedNilRegistryBehavesAsAbsent(t *testing.T) {
 		t.Errorf("direct field: read-only tools = %v, want nil", got)
 	}
 }
+
+// TestTypedNilConflictTrackerIsNormalized pins the same typed-nil rule for
+// the other engine port: a nil *tools.ConflictTracker must leave the loop's
+// conflict detector truly nil, so the conflict middleware stays inert.
+func TestTypedNilConflictTrackerIsNormalized(t *testing.T) {
+	var nilTracker *tools.ConflictTracker
+	loop := NewLoop(nil, nil, WithConflictTracker(nilTracker))
+	if loop.ConflictTracker != nil {
+		t.Errorf("ConflictTracker = %v, want nil after normalizing a typed nil", loop.ConflictTracker)
+	}
+}

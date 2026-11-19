@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"reflect"
 
 	"github.com/goatherdai/yaah/internal/toolcontract"
 )
@@ -25,20 +24,9 @@ type ToolRegistry interface {
 }
 
 // registryNil reports whether the registry is absent. A nil *tools.Registry
-// stored in a ToolRegistry is a non-nil interface, so a plain `== nil` check
-// misses it and the tool-definition and plan-mode listing paths panic. This
-// keeps the no-registry behavior the concrete pointer field had.
-func registryNil(r ToolRegistry) bool {
-	if r == nil {
-		return true
-	}
-	v := reflect.ValueOf(r)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return v.IsNil()
-	}
-	return false
-}
+// stored in a ToolRegistry is a non-nil interface, so a plain == nil check
+// misses it and the tool-definition and plan-mode listing paths panic.
+func registryNil(r ToolRegistry) bool { return toolcontract.IsNil(r) }
 
 // normalizeRegistry folds a typed-nil registry to a nil interface so every
 // consumer, including dispatch paths with no explicit guard, sees the same

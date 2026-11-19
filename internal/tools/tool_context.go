@@ -1,37 +1,27 @@
 package tools
 
-import "context"
+import (
+	"context"
 
-type toolCallIDKey struct{}
+	"github.com/goatherdai/yaah/internal/toolcontract"
+)
 
-// WithToolCallID attaches the provider tool-call id to the dispatch context.
-// Workspaces can use it to correlate a client-side terminal with the tool-call
-// row the view already announced.
+// The tool-call and tool-name context keys live in toolcontract so the agent
+// dispatch path and the tools side share one key identity. These wrappers keep
+// the tools package's public surface unchanged.
+
 func WithToolCallID(ctx context.Context, id string) context.Context {
-	if id == "" {
-		return ctx
-	}
-	return context.WithValue(ctx, toolCallIDKey{}, id)
+	return toolcontract.WithToolCallID(ctx, id)
 }
 
-// ToolCallIDFromContext returns the dispatch tool-call id, or "".
 func ToolCallIDFromContext(ctx context.Context) string {
-	id, _ := ctx.Value(toolCallIDKey{}).(string)
-	return id
+	return toolcontract.ToolCallIDFromContext(ctx)
 }
 
-type toolNameKey struct{}
-
-// WithToolName attaches the executing tool's name to the context.
 func WithToolName(ctx context.Context, name string) context.Context {
-	if name == "" {
-		return ctx
-	}
-	return context.WithValue(ctx, toolNameKey{}, name)
+	return toolcontract.WithToolName(ctx, name)
 }
 
-// ToolNameFromContext returns the executing tool's name, or "".
 func ToolNameFromContext(ctx context.Context) string {
-	name, _ := ctx.Value(toolNameKey{}).(string)
-	return name
+	return toolcontract.ToolNameFromContext(ctx)
 }

@@ -5,7 +5,7 @@ import (
 
 	"github.com/goatherdai/yaah/internal/jobs"
 	"github.com/goatherdai/yaah/internal/permissions"
-	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/toolcontract"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -160,8 +160,13 @@ func WithTitleHook(onTitle func(title string, updatedAt int64)) Option {
 }
 
 // WithConflictTracker sets the file conflict tracker.
-func WithConflictTracker(t *tools.ConflictTracker) Option {
-	return func(l *Loop) { l.ConflictTracker = t }
+func WithConflictTracker(t toolcontract.ConflictDetector) Option {
+	return func(l *Loop) {
+		if toolcontract.IsNil(t) {
+			t = nil
+		}
+		l.ConflictTracker = t
+	}
 }
 
 // WithToolsLevel sets the tool visibility level.

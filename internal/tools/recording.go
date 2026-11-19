@@ -10,19 +10,17 @@ import (
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
+
+	"github.com/goatherdai/yaah/internal/conflictapi"
 )
 
 type contextKey string
 
 const conflictLabelKey contextKey = "yaah-conflict-label"
 
-// ConflictDispatch identifies one delegate call for conflict evidence. The ID
-// is unique per dispatch; the label is the human-readable role/description.
-type ConflictDispatch struct {
-	ID    string
-	Label string
-	Lane  string
-}
+// ConflictDispatch identifies one delegate call for conflict evidence.
+// The type lives in conflictapi so the engine can name it without tools.
+type ConflictDispatch = conflictapi.ConflictDispatch
 
 var conflictDispatchSeq atomic.Uint64
 
