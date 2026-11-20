@@ -43,6 +43,7 @@ yaah/
 │   ├── envelopecheck/          # result-envelope/doc parity gate shared by tools + dispatch
 │   ├── instructions/           # AGENTS.md/CLAUDE.md discovery
 │   ├── jail/                   # per-platform containment selection
+│   ├── janitor/                # dispatch-residue classifier + reclaimer: trace lifecycle + registry + filesystem
 │   ├── janitor/                # dispatch-residue classifier: trace lifecycle + registry + filesystem
 │   ├── jobs/                   # background sub-agent jobs + I/O contract
 │   ├── mcp/                    # MCP client + server (stdio + HTTP)

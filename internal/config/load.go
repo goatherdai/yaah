@@ -266,6 +266,18 @@ type Defaults struct {
 		DSN string `yaml:"dsn"`
 	} `yaml:"goatherd_trace"`
 
+	// Janitor configures the dispatch-residue reclaimer (`yaah janitor`).
+	// The zero value reclaims only the always-safe scratch; worktree
+	// reclamation is opt-in via the age threshold — the human-review
+	// window a landed delta deserves before its shadow is swept.
+	Janitor struct {
+		// SettledWorktreeAge is how long a settled worktree must be
+		// untouched before `janitor run` reclaims it (a duration, e.g.
+		// "168h"). Empty disables worktree reclamation — only scratch is
+		// swept, which is safe unconditionally.
+		SettledWorktreeAge string `yaml:"settled_worktree_age"`
+	} `yaml:"janitor"`
+
 	// Supervisor configures the advisory supervision rules engine
 	// (adoption plan B1). It is not gated on tracing: tracing is always
 	// on.

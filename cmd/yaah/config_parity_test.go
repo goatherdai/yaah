@@ -40,6 +40,7 @@ func TestConfigAgentConfigParity(t *testing.T) {
 		"ReasoningProtect":      true, // → AgentConfig.ReasoningProtectTurns (renamed)
 		"GoatherdTracePath":     true, // → session-level goatherd init in wiring
 		"GoatherdTrace":         true, // → session-level goatherd init in wiring (backend+DSN for TraceStoreConfig)
+		"Janitor":               true, // → `yaah janitor` CLI config (settled-worktree age threshold), not an agent-loop knob
 		"Supervisor":            true, // → advisory rules engine in wiring (adoption plan B1)
 		"SupervisorHaltRoot":    true, // → supervisor tool's root-halt gate in wiring
 

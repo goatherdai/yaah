@@ -28,7 +28,6 @@ package janitor
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -273,39 +272,32 @@ func worktreeFinding(index lifecycleIndex, scopeID, path string, size int64, ter
 	return f
 }
 
-// looksLikeWorktree is a cheap, conservative shape check for "this
-// directory is a dispatch worktree": the exact repo root (its .git), with
-// optionally the confinement scratch beside it. An unrelated occupant
-// (a home directory, a build tree) fails the shape, so it can never reach
-// the safe set — provenance, not the settle fact alone, decides.
+// looksLikeWorktree is a conservative shape check for "this directory is
+// a git worktree of some repo": it carries a .git entry (a file in a
+// linked worktree, a directory in a main checkout). The check is
+// deliberately minimal — a checkout's tracked files (README, source
+// trees) are normal worktree content, and inventing a stricter shape
+// would refuse real worktrees. What it does refuse is the dangerous
+// impostor: a directory with no .git at all (a home directory, a build
+// tree) that happens to sit at a recorded path.
+//
+// Provenance beyond the shape is the caller's job: the collector only
+// reclaims settled worktrees that git's registry no longer lists.
 func looksLikeWorktree(path string) bool {
 	if path == "" {
 		return false
 	}
-	if fi, err := os.Stat(filepath.Join(path, ".git")); err == nil && fi.IsDir() {
-		return true
-	}
 	entries, err := os.ReadDir(path)
-	if err != nil || len(entries) > 2 {
+	if err != nil {
 		return false
 	}
-	hasRepo := false
 	for _, e := range entries {
 		if e.Name() == ".git" {
-			hasRepo = true
+			// Either shape marks a git worktree root.
+			return true
 		}
 	}
-	if !hasRepo {
-		return false
-	}
-	// Exactly the repo plus optionally .yaah-scratch: the dispatch shape.
-	for _, e := range entries {
-		if e.Name() == ".git" || e.Name() == ScratchDirName {
-			continue
-		}
-		return false
-	}
-	return true
+	return false
 }
 
 // ScanScratch reports the confinement scratch directories inside the
@@ -448,7 +440,3 @@ func sortFindings(findings []Finding) {
 		return findings[i].Path < findings[j].Path
 	})
 }
-
-// ErrNotATraceStore marks a store that cannot serve classification, so
-// callers can distinguish a mispointed viewer from a real fault.
-var ErrNotATraceStore = errors.New("janitor: not a trace store")
