@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.199.0](https://github.com/goatherdai/yaah/compare/v0.198.1...v0.199.0) (2026-11-20)
+
+
+### Features
+
+* **janitor:** reclamation mode (`janitor run`) + doctor integration (J2+J3) ([4adf06e](https://github.com/goatherdai/yaah/commit/4adf06e4d01e8755d44b423994523007f6635670))
+
+
+### Bug Fixes
+
+* **janitor:** address review — TOCTOU re-verification, safe defaults, audit trail ([55519e0](https://github.com/goatherdai/yaah/commit/55519e08b56f2f59fd57040777cde89cd381d576))
+* **janitor:** age test fixtures via the directory, not the .git file ([adab70d](https://github.com/goatherdai/yaah/commit/adab70dcdbe4546c9a24c75b68fb85fb8d79d0a2))
+* **janitor:** decide worktree ownership by filesystem identity, not path strings ([b3a03c3](https://github.com/goatherdai/yaah/commit/b3a03c30a4322fc1b958aac7ee38a4fc21f936d1))
+* **janitor:** re-verify liveness through symlinked-platform orphan case ([c86f360](https://github.com/goatherdai/yaah/commit/c86f3604d295e060b35df04577242451daa46787))
+
 ## [0.198.1](https://github.com/goatherdai/yaah/compare/v0.198.0...v0.198.1) (2026-11-20)
 
 
