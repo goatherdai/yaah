@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.199.2](https://github.com/goatherdai/yaah/compare/v0.199.1...v0.199.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **tui:** make the : command menu show the full palette ([#334](https://github.com/goatherdai/yaah/issues/334)) ([704e801](https://github.com/goatherdai/yaah/commit/704e801694a43ccdb958d50c5c96223399e7592b))
+
 ## [0.199.1](https://github.com/goatherdai/yaah/compare/v0.199.0...v0.199.1) (2026-11-20)
 
 
