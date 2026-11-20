@@ -33,7 +33,11 @@ func CommandLines(entries []command.Entry) []string {
 		if u := command.Usage(e.Cmd); u != "" {
 			spec = u
 		}
-		lines = append(lines, fmt.Sprintf("  [white]%-22s[-] [dim]%s[-]", spec, e.Desc))
+		// Usage forms contain literal brackets (":model [name]",
+		// ":mode [read-only|full]"). The text view has dynamic colours
+		// on, so an unescaped "[name]" would be consumed as a style
+		// tag and the argument hint would vanish on screen.
+		lines = append(lines, fmt.Sprintf("  [white]%-22s[-] [dim]%s[-]", tview.Escape(spec), e.Desc))
 	}
 	return lines
 }

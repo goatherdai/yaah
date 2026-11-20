@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/goatherdai/yaah/internal/tui/components/command"
+	"github.com/rivo/tview"
 )
 
 // TestCommandLinesMatchPalette pins the help overlay's ":command" menu to
@@ -29,18 +30,38 @@ func TestCommandLinesMatchPalette(t *testing.T) {
 }
 
 func TestCommandLinesUseAccurateUsage(t *testing.T) {
-	lines := strings.Join(CommandLines(command.DefaultEntries()), "\n")
+	// The rendered lines carry tview style tags and escaped brackets;
+	// unescape first so the assertion checks what the user actually sees.
+	rendered := strings.Join(CommandLines(command.DefaultEntries()), "\n")
+	lines := tview.Unescape(rendered)
 	for _, want := range []string{
 		":steer <text>", ":followup <text>", ":search <query>",
 		":model [name]", ":agent [name]", ":mode [read-only|full]",
 	} {
 		if !strings.Contains(lines, want) {
-			t.Errorf("help menu is missing usage %q", want)
+			t.Errorf("help menu is missing usage %q (rendered %q)", want, rendered)
 		}
 	}
 	// The old hand-maintained list rendered ":model <name>" as if the
 	// argument were required; Usage says it is optional.
 	if strings.Contains(lines, ":model <name>") {
 		t.Error("help menu still shows the inaccurate ':model <name>' usage")
+	}
+}
+
+// TestCommandLinesEscapeUsageTags pins the tview-tag escape: without it a
+// dynamic-colour TextView consumes "[name]" as a style tag and the help
+// overlay shows ":model" / ":agent" with no argument hint at all.
+func TestCommandLinesEscapeUsageTags(t *testing.T) {
+	rendered := strings.Join(CommandLines(command.DefaultEntries()), "\n")
+	for _, raw := range []string{":model [name]", ":agent [name]"} {
+		if strings.Contains(rendered, raw) {
+			t.Errorf("usage %q was not escaped for tview: %q", raw, rendered)
+		}
+	}
+	for _, escaped := range []string{":model [name[]", ":agent [name[]"} {
+		if !strings.Contains(rendered, escaped) {
+			t.Errorf("help menu did not escape %q: %q", escaped, rendered)
+		}
 	}
 }
