@@ -121,3 +121,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+replace github.com/goatherdai/goatherd-runtime => github.com/goatherdai/goatherd-runtime v0.24.1-0.20261120011543-a3a6b9d70736
