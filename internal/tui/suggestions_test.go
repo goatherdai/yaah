@@ -169,6 +169,34 @@ func TestGlobalInputCapture_EnterOnArgCommandLeavesComposer(t *testing.T) {
 	}
 }
 
+// The exact-match ranking must reach the actual Enter path. The uppercase
+// case is the one that really depends on it: ":MODE" is not a literal label,
+// so acceptSuggestionOnEnter completes from the highlighted row — which
+// must be "mode" after ranking, not "model". (Lowercase ":mode" dispatches
+// directly and only its highlight assertion depends on ordering.)
+func TestGlobalInputCapture_EnterExactMatchSelectsExactCommand(t *testing.T) {
+	for _, text := range []string{":mode", ":MODE"} {
+		t.Run(text, func(t *testing.T) {
+			ui := newColonUI(t)
+			ui.OnModeSelect = func(string) {}
+			typeText(ui, text)
+
+			if got := ui.suggestions[0].Label; got != "mode" {
+				t.Fatalf("highlight = %q, want mode", got)
+			}
+			enter := tcell.NewEventKey(tcell.KeyEnter, '\r', tcell.ModNone)
+			ui.globalInputCapture(enter)
+
+			if ui.Pages.HasPage("modelpicker_modal") {
+				t.Errorf("Enter on %s opened the model picker", text)
+			}
+			if !ui.Pages.HasPage("agentpicker_modal") {
+				t.Errorf("Enter on %s did not open the mode picker", text)
+			}
+		})
+	}
+}
+
 // A fully typed command is untouched: Enter still dispatches it directly
 // rather than first rewriting the composer and needing a second Enter.
 func TestGlobalInputCapture_EnterOnFullCommandDispatchesDirectly(t *testing.T) {

@@ -20,7 +20,7 @@ func Complete(text string, entries []Entry) []Completion {
 		return nil
 	}
 	prefix := strings.ToLower(body)
-	var out []Completion
+	var out, exact []Completion
 	for _, e := range entries {
 		if e.Label == "" || !strings.HasPrefix(strings.ToLower(e.Label), prefix) {
 			continue
@@ -30,7 +30,16 @@ func Complete(text string, entries []Entry) []Completion {
 			// Leave the cursor where the argument starts.
 			insert += " "
 		}
-		out = append(out, Completion{Label: e.Label, Desc: e.Desc, Insert: insert})
+		c := Completion{Label: e.Label, Desc: e.Desc, Insert: insert}
+		// An exact name match outranks longer commands that merely share
+		// the prefix: ":mode" must select "mode", not "model", even
+		// though the palette lists "model" first. This is the standard
+		// typeahead rule — finishing a name should not shadow it.
+		if strings.EqualFold(e.Label, body) {
+			exact = append(exact, c)
+		} else {
+			out = append(out, c)
+		}
 	}
-	return out
+	return append(exact, out...)
 }

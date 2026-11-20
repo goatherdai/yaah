@@ -42,6 +42,34 @@ func TestComplete_LoneColonOffersCommands(t *testing.T) {
 }
 
 // An argument in progress is not completed: ":steer keep" has nothing to offer.
+// An exact command name must outrank longer commands sharing its prefix:
+// ":mode" selects "mode", not "model", even though the palette lists
+// "model" first. Typing the full name should never shadow it.
+func TestComplete_ExactMatchRanksFirst(t *testing.T) {
+	tests := []struct {
+		text, wantFirst string
+	}{
+		{":mode", "mode"},
+		{":model", "model"},
+		{":MODE", "mode"}, // case-insensitive exact match
+	}
+	for _, tt := range tests {
+		got := Complete(tt.text, DefaultEntries())
+		if len(got) == 0 || got[0].Label != tt.wantFirst {
+			var labels []string
+			for _, c := range got {
+				labels = append(labels, c.Label)
+			}
+			t.Errorf("Complete(%q) = %v, want first %q", tt.text, labels, tt.wantFirst)
+		}
+	}
+	// Both remain offered for the ambiguous prefix; only the order changes.
+	got := Complete(":mode", DefaultEntries())
+	if len(got) < 2 || got[1].Label != "model" {
+		t.Errorf("Complete(:mode) = %v, want mode then model", got)
+	}
+}
+
 func TestComplete_NoSuggestionsOnceArgumentStarted(t *testing.T) {
 	for _, text := range []string{":steer keep", ":steer ", ": search"} {
 		if got := Complete(text, DefaultEntries()); len(got) != 0 {
