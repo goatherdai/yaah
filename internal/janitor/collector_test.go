@@ -77,6 +77,18 @@ func deregisterWorktree(t *testing.T, repo, path string) {
 	}
 }
 
+// ageWorktree backdates a worktree directory's mtime without touching the
+// .git file inside it: os.Chtimes follows symlinks (macOS t.TempDir is a
+// symlink), and WorktreeOwnedBy requires the .git file to keep its own
+// mtime — only the directory's age gates the sweep.
+func ageWorktree(t *testing.T, path string, age time.Duration) {
+	t.Helper()
+	old := time.Now().Add(-age)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestCollectorReclaimsSettledWorktree: the prime scenario — a settled
 // proposal whose worktree is still registered (teardown missed), past the
 // age threshold, must be reclaimed with its bytes counted.
@@ -90,11 +102,7 @@ func TestCollectorReclaimsSettledWorktree(t *testing.T) {
 	// Teardown missed: the directory survives, git's registry does not
 	// know it — the collector must reclaim it.
 	deregisterWorktree(t, repo, wt)
-	// Give the worktree an old mtime so the age gate passes.
-	old := time.Now().Add(-72 * time.Hour)
-	if err := os.Chtimes(wt, old, old); err != nil {
-		t.Fatal(err)
-	}
+	ageWorktree(t, wt, 72*time.Hour)
 
 	appendProposalFact(t, store, "scope:proposal:777:1", dispatch.SchemaProposalSealed, "proposal:777:1")
 	appendProposalFact(t, store, "scope:proposal:777:1", dispatch.SchemaProposalSettled, "proposal:777:1")
@@ -169,8 +177,7 @@ func TestCollectorRefusesLiveWorktrees(t *testing.T) {
 	gitRepo(t, repo)
 	wt := filepath.Join(dir, "wt-live")
 	makeRealWorktree(t, repo, wt)
-	old := time.Now().Add(-72 * time.Hour)
-	os.Chtimes(wt, old, old)
+	ageWorktree(t, wt, 72*time.Hour)
 
 	appendProposalFact(t, store, "scope:proposal:999:1", dispatch.SchemaProposalSealed, "proposal:999:1")
 	appendProposalFact(t, store, "scope:proposal:999:1", dispatch.SchemaProposalSettled, "proposal:999:1")
@@ -280,8 +287,7 @@ func TestCollectorRefusesReplacedPath(t *testing.T) {
 	wt := filepath.Join(dir, "wt-settled")
 	makeRealWorktree(t, repo, wt)
 	deregisterWorktree(t, repo, wt)
-	old := time.Now().Add(-72 * time.Hour)
-	os.Chtimes(wt, old, old)
+	ageWorktree(t, wt, 72*time.Hour)
 
 	appendProposalFact(t, store, "scope:proposal:555:1", dispatch.SchemaProposalSealed, "proposal:555:1")
 	appendProposalFact(t, store, "scope:proposal:555:1", dispatch.SchemaProposalSettled, "proposal:555:1")
@@ -298,7 +304,7 @@ func TestCollectorRefusesReplacedPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wt, "precious.txt"), []byte("data"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	os.Chtimes(wt, old, old)
+	ageWorktree(t, wt, 72*time.Hour)
 
 	registry := &recovery.Report{
 		Orphans: []recovery.Orphan{{ScopeID: "scope:proposal:555:1", Path: wt, Repo: repo}},
