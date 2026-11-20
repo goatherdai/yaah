@@ -414,8 +414,44 @@ func WorktreeOwnedBy(repoPath, path string) bool {
 	gitdirClean := filepath.Clean(gitdir)
 	if resolved, rerr := filepath.EvalSymlinks(gitdirClean); rerr == nil {
 		gitdirClean = resolved
+	} else if fixed, ok := resolveMissingAncestors(gitdirClean); ok {
+		// Orphan case: the worktree was deregistered and its admin entry
+		// removed, so the gitdir path no longer exists and cannot
+		// resolve. On symlinked-temp-dir platforms (macOS /var →
+		// /private/var, Windows short-name roots), the unresolvable tail
+		// then fails the lexical prefix check even though the occupant
+		// is the worktree this repo provisions. Resolve the longest
+		// existing ancestor and reattach the missing tail — the same
+		// physical form git writes on those platforms.
+		gitdirClean = fixed
 	}
 	return strings.HasPrefix(gitdirClean+string(filepath.Separator), owned+string(filepath.Separator))
+}
+
+// resolveMissingAncestors returns the path p with its nonexistent tail
+// replaced by p's deepest existing ancestor resolved through symlinks.
+// ok is false when no ancestor exists at all.
+func resolveMissingAncestors(p string) (resolved string, ok bool) {
+	var tail []string
+	cur := p
+	for {
+		if _, err := os.Stat(cur); err == nil {
+			break
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", false
+		}
+		tail = append([]string{filepath.Base(cur)}, tail...)
+		cur = parent
+	}
+	base, err := filepath.EvalSymlinks(cur)
+	if err != nil {
+		return "", false
+	}
+	out := []string{base}
+	out = append(out, tail...)
+	return filepath.Clean(filepath.Join(out...)), true
 }
 
 // IsRegisteredWorktree reports whether path is currently registered as
