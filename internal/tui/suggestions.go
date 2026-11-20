@@ -110,6 +110,37 @@ func (t *App) acceptSuggestion() bool {
 	return true
 }
 
+// acceptSuggestionOnEnter lets a user type only the first characters of a
+// command and press Enter to use the highlighted typeahead row. It reports
+// whether Enter was consumed:
+//
+//   - a fully typed command (":stop") is left alone, so the normal submit
+//     path dispatches it exactly as before;
+//   - a prefix (":st") is replaced by the highlighted completion. If that
+//     command takes an argument the composer keeps ":name " and Enter is
+//     consumed so the user can type the argument; otherwise the completed
+//     text falls through to the normal submit and dispatches immediately.
+//
+// A bare ":" is left alone too — it is not a command name.
+func (t *App) acceptSuggestionOnEnter() bool {
+	if !t.hasSuggestions() {
+		return false
+	}
+	body, ok := strings.CutPrefix(t.Input.GetText(), ":")
+	if !ok || body == "" {
+		return false
+	}
+	for _, s := range t.suggestions {
+		if s.Label == body {
+			return false // already a complete command name
+		}
+	}
+	insert := t.suggestions[t.suggestionIdx].Insert
+	t.Input.SetText(insert, true)
+	t.hideSuggestions()
+	return strings.HasSuffix(insert, " ") // argument pending: consume Enter
+}
+
 // dismissSuggestions hides the strip. It reports whether anything was hidden, so
 // Escape can dismiss typeahead without also stopping the turn.
 func (t *App) dismissSuggestions() bool {

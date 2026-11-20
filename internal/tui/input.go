@@ -45,6 +45,13 @@ func (t *App) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 		if t.App.GetFocus() != t.Input {
 			return ev
 		}
+		// A partial ":command" prefix is completed from the highlighted
+		// typeahead row on Enter; a fully typed command still dispatches
+		// as before. Argument-taking completions consume Enter and leave
+		// ":name " in the composer for the argument.
+		if t.acceptSuggestionOnEnter() {
+			return nil
+		}
 		// Gate on the run, not on the token stream. isStreaming is only true
 		// between the first content token and the next flush, so it is false
 		// while the model is thinking, while tools run, and between
