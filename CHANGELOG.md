@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.199.3](https://github.com/goatherdai/yaah/compare/v0.199.2...v0.199.3) (2026-11-20)
+
+
+### Bug Fixes
+
+* **tui:** let Enter accept the highlighted :command typeahead row ([#336](https://github.com/goatherdai/yaah/issues/336)) ([a12cd6f](https://github.com/goatherdai/yaah/commit/a12cd6fa06a6c497de81cb6f9835d66ff40cdcd5))
+
 ## [0.199.2](https://github.com/goatherdai/yaah/compare/v0.199.1...v0.199.2) (2026-11-20)
 
 
