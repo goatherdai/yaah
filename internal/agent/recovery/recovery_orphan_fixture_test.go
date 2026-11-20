@@ -1,13 +1,11 @@
 package recovery
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func gitForTest(t *testing.T, dir string) {
@@ -34,9 +32,16 @@ func gitForTest(t *testing.T, dir string) {
 }
 
 // TestWorktreeOwnedByRealFixture mirrors the janitor's
-// TestCollectorReclaimsSettledWorktree fixture (real git repo, real
-// worktree, deregistered admin dir, aged directory) and asserts ownership,
-// dumping every intermediate the comparison uses when it fails.
+// TestCollectorReclaimsSettledWorktree fixture (a real git repo, a real
+// worktree, then a deregistered admin dir) and asserts ownership still holds.
+//
+// This is the cross-platform regression that a synthetic test cannot cover:
+// git writes the worktree's gitdir in the physical/canonical form, while the
+// recorded repo path comes from t.TempDir — a symlinked path on macOS
+// (/var -> /private/var) and an 8.3 short-name path on Windows. The two
+// spellings differ, so ownership must be decided by filesystem identity,
+// not a string-prefix compare. If WorktreeOwnedBy regresses to a lexical
+// check, this test fails on macOS/Windows while passing on Linux.
 func TestWorktreeOwnedByRealFixture(t *testing.T) {
 	dir := t.TempDir()
 	repo := filepath.Join(dir, "repo")
@@ -47,7 +52,9 @@ func TestWorktreeOwnedByRealFixture(t *testing.T) {
 		t.Fatalf("git worktree add: %v\n%s", err, out)
 	}
 
-	// Deregister: remove the admin dir, keep the checkout.
+	// Deregister: remove the worktree's admin entry, keep the checkout and
+	// its .git file (the teardown-missed orphan). Read the gitdir from the
+	// .git file so we remove exactly the entry git created.
 	data, err := os.ReadFile(filepath.Join(wt, ".git"))
 	if err != nil {
 		t.Fatal(err)
@@ -64,47 +71,7 @@ func TestWorktreeOwnedByRealFixture(t *testing.T) {
 		t.Fatalf("git worktree prune: %v\n%s", err, out)
 	}
 
-	dump := func(msg string) {
-		t.Logf("DEBUG %s", msg)
-	}
-
-	// Age the worktree directory. Note: os.Chtimes follows symlinks, so on
-	// macOS this sets the mtime of the worktree's real directory —
-	// matching what the janitor sees (its own os.Stat also follows
-	// symlinks). The .git file's mtime is irrelevant to the ownership
-	// check; nothing sets it deliberately.
-	old := time.Now().Add(-72 * time.Hour)
-	if err := os.Chtimes(wt, old, old); err != nil {
-		t.Fatal(err)
-	}
-	if st, err := os.Stat(wt); err == nil {
-		dump(fmt.Sprintf("wt stat: mtime set %v ago", time.Since(st.ModTime()).Round(time.Second)))
-	}
-
-	dump(".git file: " + string(data))
-	dump("gitdir: " + gitdir)
-	if st, err := os.Stat(gitdir); err != nil {
-		dump("gitdir stat: " + err.Error())
-	} else {
-		dump(fmt.Sprintf("gitdir stat: exists (mtime set %v ago)", time.Since(st.ModTime()).Round(time.Second)))
-	}
-	if resolved, err := filepath.EvalSymlinks(gitdir); err != nil {
-		dump("gitdir EvalSymlinks: " + err.Error())
-	} else {
-		dump("gitdir EvalSymlinks: " + resolved)
-	}
-	owned0 := filepath.Clean(filepath.Join(repo, ".git", "worktrees"))
-	if resolved, err := filepath.EvalSymlinks(owned0); err == nil {
-		owned0 = resolved
-	}
-	dump("owned (resolved): " + owned0)
-	if resolved, ok := resolveMissingAncestors(filepath.Clean(gitdir)); ok {
-		dump("gitdir fallback: " + resolved)
-	} else {
-		dump("gitdir fallback: none")
-	}
-
 	if !WorktreeOwnedBy(repo, wt) {
-		t.Errorf("WorktreeOwnedBy(repo, wt) = false; see DEBUG dumps above")
+		t.Errorf("WorktreeOwnedBy(repo, wt) = false, want true (deregistered orphan; gitdir spelling may differ from repo path)")
 	}
 }

@@ -3,86 +3,41 @@ package recovery
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-// TestWorktreeOwnedByOrphanSymlinkedPath is the macOS/Windows regression
-// scenario: git wrote the worktree's gitdir in the symlinked form while
-// the recorded paths pass through a symlinked root (macOS /var ->
-// /private/var, Windows temp-dir short names). When the worktree is
-// deregistered and its admin entry removed (the teardown-missed orphan),
-// the gitdir no longer resolves, so a lexical prefix compare — where
-// `owned` resolves through symlinks but `gitdir` cannot — refuses a true
-// owner. Ownership must accept it via ancestor resolution.
+// TestWorktreeOwnedByOrphanSymlinkedPath is the macOS regression scenario:
+// git wrote the worktree's gitdir in the PHYSICAL form while the recorded
+// repo path passes through a symlinked root (macOS /var -> /private/var).
+// The worktree is deregistered (admin entry removed), so the gitdir no
+// longer resolves; a lexical path-prefix compare — where the two sides are
+// spelled differently — refuses a true owner. Ownership is decided by
+// filesystem identity instead, so it must accept this case.
 func TestWorktreeOwnedByOrphanSymlinkedPath(t *testing.T) {
-	base := t.TempDir()
-	// A symlinked root standing in for the symlinked platform temp dir:
-	// git writes physical paths, the recorded repo path is the symlinked
-	// form.
+	base := t.TempDir() // physical form
 	link := filepath.Join(t.TempDir(), "link")
 	if err := os.Symlink(base, link); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
+	// The repository is provisioned and recorded through the symlinked
+	// root; git writes the worktree's gitdir through the physical root.
 	repo := filepath.Join(link, "repo")
 	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	// The worktrees admin dir, then a fake orphan worktree: a .git file
-	// written in the SYMLINKED form (the failing case), nothing else.
-	admin := filepath.Join(repo, ".git", "worktrees")
-	if err := os.MkdirAll(admin, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	wt := filepath.Join(link, "wt-orphan")
 	if err := os.MkdirAll(wt, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// gitdir: <symlinked repo>/.git/worktrees/wt-orphan — and we then
-	// remove the admin entry, leaving the checkout and the .git file.
+	// gitdir: <physical repo>/.git/worktrees/wt-orphan. The admin dir is
+	// then removed (deregistered orphan), leaving the checkout + .git file.
 	if err := os.WriteFile(filepath.Join(wt, ".git"),
-		[]byte("gitdir: "+filepath.Join(link, "repo", ".git", "worktrees", "wt-orphan")+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.RemoveAll(filepath.Join(repo, ".git", "worktrees", "wt-orphan")); err != nil {
+		[]byte("gitdir: "+filepath.Join(base, "repo", ".git", "worktrees", "wt-orphan")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	if !WorktreeOwnedBy(repo, wt) {
-		t.Errorf("WorktreeOwnedBy(repo, orphan) = false, want true (symlinked-form gitdir, unresolvable after removal)")
-	}
-}
-
-// TestWorktreeOwnedByResolveMissingAncestors exercises the ancestor
-// resolution helper directly: a missing tail over an existing physical
-// ancestor resolves; a fully missing chain does not.
-func TestWorktreeOwnedByResolveMissingAncestors(t *testing.T) {
-	base := t.TempDir()
-	existing := filepath.Join(base, "a", "b")
-	if err := os.MkdirAll(existing, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	missingTail := filepath.Join(existing, "c", "d")
-	got, ok := resolveMissingAncestors(missingTail)
-	if !ok {
-		t.Fatalf("resolveMissingAncestors(%q) ok=false, want true", missingTail)
-	}
-	if got != missingTail {
-		t.Errorf("resolveMissingAncestors = %q, want %q (existing physical ancestor + tail)", got, missingTail)
-	}
-
-	// The deepest-existing-ancestor rule: walk until a component exists,
-	// resolve it, reattach the tail.
-	missing2 := filepath.Join(existing, "x", "y")
-	got2, ok := resolveMissingAncestors(missing2)
-	if !ok {
-		t.Fatalf("resolveMissingAncestors(%q) ok=false, want true", missing2)
-	}
-	if got2 != missing2 {
-		t.Errorf("resolveMissingAncestors = %q, want %q", got2, missing2)
-	}
-	if _, err := os.Stat(missing2); err == nil {
-		t.Fatalf("test setup: %q should not exist", missing2)
+		t.Errorf("WorktreeOwnedBy(repo, orphan) = false, want true (physical-form gitdir vs symlinked repo path)")
 	}
 }
 
@@ -104,7 +59,7 @@ func TestWorktreeOwnedByNegativeCases(t *testing.T) {
 		t.Errorf("WorktreeOwnedBy(plain) = true, want false")
 	}
 
-	// .git file not in the worktrees admin namespace.
+	// .git file pointing outside any worktrees admin namespace.
 	sneaky := filepath.Join(dir, "sneaky")
 	if err := os.MkdirAll(sneaky, 0o700); err != nil {
 		t.Fatal(err)
@@ -116,13 +71,42 @@ func TestWorktreeOwnedByNegativeCases(t *testing.T) {
 		t.Errorf("WorktreeOwnedBy(outside-admin) = true, want false")
 	}
 
-	// main repo root is not owned (the prefix check must exclude the
-	// repository's own .git directory root).
-	if WorktreeOwnedBy(repo, repo) {
-		t.Errorf("WorktreeOwnedBy(repo, repo) = true, want false")
+	// Impostor pointing into the SAME repo's .git but not under worktrees:
+	// filesystem identity alone would accept it (same .git dir), so the
+	// shape check must reject it. This is why ownership is identity AND
+	// shape, not just one of them.
+	insideGit := filepath.Join(dir, "inside-git")
+	if err := os.MkdirAll(insideGit, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(insideGit, ".git"),
+		[]byte("gitdir: "+filepath.Join(repo, ".git", "refs", "heads", "main")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if WorktreeOwnedBy(repo, insideGit) {
+		t.Errorf("WorktreeOwnedBy(inside-.git-not-worktrees) = true, want false")
 	}
 
-	if !strings.HasPrefix(filepath.Join(repo, ".git", "worktrees")+string(filepath.Separator), filepath.Join(repo, ".git", "worktrees")+string(filepath.Separator)) {
-		t.Fatal("prefix identity invariant broken")
+	// A different repository's worktree admin dir must not count as owned,
+	// even though the shape is identical.
+	otherRepo := filepath.Join(dir, "other-repo")
+	if err := os.MkdirAll(filepath.Join(otherRepo, ".git", "worktrees"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(dir, "foreign")
+	if err := os.MkdirAll(foreign, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(foreign, ".git"),
+		[]byte("gitdir: "+filepath.Join(otherRepo, ".git", "worktrees", "wt-x")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if WorktreeOwnedBy(repo, foreign) {
+		t.Errorf("WorktreeOwnedBy(other repo's worktree) = true, want false")
+	}
+
+	// The main repo root is not a worktree of itself (no .git file there).
+	if WorktreeOwnedBy(repo, repo) {
+		t.Errorf("WorktreeOwnedBy(repo, repo) = true, want false")
 	}
 }

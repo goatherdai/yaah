@@ -400,58 +400,40 @@ func WorktreeOwnedBy(repoPath, path string) bool {
 	if !filepath.IsAbs(gitdir) {
 		gitdir = filepath.Join(path, gitdir)
 	}
-	// The recorded repository's worktree administration is the only
-	// acceptable owner. .git may itself be a file in exotic setups;
-	// the main-repo shape is the one yaah provisions. Both sides are
-	// resolved through symlinks first: git writes the gitdir in the
-	// physical form (macOS temp dirs resolve /var through
-	// /private/var), while the recorded repo path may be the symlinked
-	// form — a lexical compare would refuse a true owner.
-	owned := filepath.Clean(filepath.Join(repoPath, ".git", "worktrees"))
-	if resolved, rerr := filepath.EvalSymlinks(owned); rerr == nil {
-		owned = resolved
-	}
-	gitdirClean := filepath.Clean(gitdir)
-	if resolved, rerr := filepath.EvalSymlinks(gitdirClean); rerr == nil {
-		gitdirClean = resolved
-	} else if fixed, ok := resolveMissingAncestors(gitdirClean); ok {
-		// Orphan case: the worktree was deregistered and its admin entry
-		// removed, so the gitdir path no longer exists and cannot
-		// resolve. On symlinked-temp-dir platforms (macOS /var →
-		// /private/var, Windows short-name roots), the unresolvable tail
-		// then fails the lexical prefix check even though the occupant
-		// is the worktree this repo provisions. Resolve the longest
-		// existing ancestor and reattach the missing tail — the same
-		// physical form git writes on those platforms.
-		gitdirClean = fixed
-	}
-	return strings.HasPrefix(gitdirClean+string(filepath.Separator), owned+string(filepath.Separator))
-}
+	gitdir = filepath.Clean(gitdir)
 
-// resolveMissingAncestors returns the path p with its nonexistent tail
-// replaced by p's deepest existing ancestor resolved through symlinks.
-// ok is false when no ancestor exists at all.
-func resolveMissingAncestors(p string) (resolved string, ok bool) {
-	var tail []string
-	cur := p
-	for {
-		if _, err := os.Stat(cur); err == nil {
-			break
-		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return "", false
-		}
-		tail = append([]string{filepath.Base(cur)}, tail...)
-		cur = parent
+	// Ownership is a filesystem-identity question, not a string-prefix
+	// one. Git writes the gitdir in the physical form (macOS temp dirs
+	// resolve /var through /private/var; Windows git writes the long
+	// path while the recorded repo path may be the 8.3 short-name form),
+	// so the two paths we compare are routinely spelled differently.
+	// No amount of filepath.EvalSymlinks fixes that: EvalSymlinks fails
+	// once the deregistered worktree's admin dir is gone, and on Windows
+	// it does not expand 8.3 aliases at all. A lexical prefix check is
+	// therefore unsound on both platforms.
+	//
+	// Instead, assert two things:
+	//   1. shape: the gitdir is a worktree admin entry, i.e. of the form
+	//      <gitdir-parent>/.git/worktrees/<name> — its parent directory
+	//      is literally named "worktrees".
+	//   2. identity: that "worktrees" directory's parent (the repository's
+	//      .git directory) IS the same directory as repoPath/.git, compared
+	//      by os.SameFile (device+inode on Unix, volume+file-index on
+	//      Windows). Both .git directories still exist for a deregistered
+	//      orphan — only the worktrees/<name> admin entry is removed — so
+	//      this stays checkable and is spelling-independent.
+	admin := filepath.Dir(gitdir)
+	if filepath.Base(admin) != "worktrees" {
+		return false // gitdir does not point into a git worktrees admin dir
 	}
-	base, err := filepath.EvalSymlinks(cur)
-	if err != nil {
-		return "", false
+	gitDirOfWorktree := filepath.Dir(admin)
+	wantGitDir := filepath.Join(repoPath, ".git")
+	gotInfo, gerr := os.Stat(gitDirOfWorktree)
+	wantInfo, werr := os.Stat(wantGitDir)
+	if gerr != nil || werr != nil {
+		return false // the owning .git dir is gone: no longer a worktree of repoPath
 	}
-	out := []string{base}
-	out = append(out, tail...)
-	return filepath.Clean(filepath.Join(out...)), true
+	return os.SameFile(gotInfo, wantInfo)
 }
 
 // IsRegisteredWorktree reports whether path is currently registered as
