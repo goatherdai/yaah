@@ -121,6 +121,84 @@ func TestAcceptSuggestion_CompletesCommandAndHides(t *testing.T) {
 	}
 }
 
+// Enter completes a partial command from the highlighted typeahead row.
+// ":st" matches stop and steer; the first is stop, which takes no argument,
+// so the completed text falls through and dispatches in the same keystroke.
+func TestGlobalInputCapture_EnterCompletesPartialCommand(t *testing.T) {
+	ui := newColonUI(t)
+	stopped := false
+	ui.OnStop = func() { stopped = true }
+	typeText(ui, ":st")
+	if !ui.hasSuggestions() {
+		t.Fatal("precondition: suggestions for :st")
+	}
+
+	enter := tcell.NewEventKey(tcell.KeyEnter, '\r', tcell.ModNone)
+	if ret := ui.globalInputCapture(enter); ret != nil {
+		t.Fatal("Enter not consumed")
+	}
+	if !stopped {
+		t.Fatalf("Enter did not dispatch the completed command; composer = %q, ephemeral = %q", ui.Input.GetText(), ui.ephemeralMsg)
+	}
+	if got := ui.Input.GetText(); got != "" {
+		t.Fatalf("composer = %q, want cleared after dispatch", got)
+	}
+}
+
+// A completion that needs an argument keeps ":name " in the composer and
+// consumes Enter, so the user can type the argument instead of getting an
+// "unknown command :sea" error.
+func TestGlobalInputCapture_EnterOnArgCommandLeavesComposer(t *testing.T) {
+	ui := newColonUI(t)
+	submitted := false
+	ui.OnSubmit = func(string) { submitted = true }
+	typeText(ui, ":sea")
+
+	enter := tcell.NewEventKey(tcell.KeyEnter, '\r', tcell.ModNone)
+	if ret := ui.globalInputCapture(enter); ret != nil {
+		t.Fatal("Enter not consumed while an argument is pending")
+	}
+	if got := ui.Input.GetText(); got != ":search " {
+		t.Fatalf("composer = %q, want %q", got, ":search ")
+	}
+	if submitted || ui.hasSuggestions() {
+		t.Fatal("arg completion should neither submit nor keep the strip open")
+	}
+	if strings.Contains(ui.ephemeralMsg, "unknown command") {
+		t.Fatalf("prefix was treated as an unknown command: %q", ui.ephemeralMsg)
+	}
+}
+
+// A fully typed command is untouched: Enter still dispatches it directly
+// rather than first rewriting the composer and needing a second Enter.
+func TestGlobalInputCapture_EnterOnFullCommandDispatchesDirectly(t *testing.T) {
+	ui := newColonUI(t)
+	stopped := false
+	ui.OnStop = func() { stopped = true }
+	typeText(ui, ":stop")
+
+	enter := tcell.NewEventKey(tcell.KeyEnter, '\r', tcell.ModNone)
+	ui.globalInputCapture(enter)
+	if !stopped {
+		t.Fatalf("Enter did not dispatch :stop; composer = %q", ui.Input.GetText())
+	}
+}
+
+// A bare ":" is not a command name: Enter must not silently accept the first
+// suggestion. It falls through to the ordinary prompt path as before.
+func TestGlobalInputCapture_EnterOnBareColonDoesNotComplete(t *testing.T) {
+	ui := newColonUI(t)
+	var submitted string
+	ui.OnSubmit = func(s string) { submitted = s }
+	typeText(ui, ":")
+
+	enter := tcell.NewEventKey(tcell.KeyEnter, '\r', tcell.ModNone)
+	ui.globalInputCapture(enter)
+	if submitted != ":" {
+		t.Fatalf("submitted = %q, want %q", submitted, ":")
+	}
+}
+
 func TestCycleSuggestion_WrapsBothWays(t *testing.T) {
 	ui := newColonUI(t)
 	typeText(ui, ":s")
