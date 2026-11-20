@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.199.1](https://github.com/goatherdai/yaah/compare/v0.199.0...v0.199.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **janitor:** make --force lift the age gate instead of disabling reclamation ([#332](https://github.com/goatherdai/yaah/issues/332)) ([7fb35ea](https://github.com/goatherdai/yaah/commit/7fb35eaca57d4f4861bf74d078b0d403639f8600))
+
 ## [0.199.0](https://github.com/goatherdai/yaah/compare/v0.198.1...v0.199.0) (2026-11-20)
 
 
