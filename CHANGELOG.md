@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.199.4](https://github.com/goatherdai/yaah/compare/v0.199.3...v0.199.4) (2026-11-20)
+
+
+### Bug Fixes
+
+* **tui:** rank exact command matches first in the : typeahead ([#338](https://github.com/goatherdai/yaah/issues/338)) ([ef2e6d6](https://github.com/goatherdai/yaah/commit/ef2e6d6c4b88b6f4444f14aefec7521710fbdec3))
+
 ## [0.199.3](https://github.com/goatherdai/yaah/compare/v0.199.2...v0.199.3) (2026-11-20)
 
 
