@@ -79,11 +79,11 @@ func (r *Run) disposeOnAbort(status RunStatus) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	for _, id := range r.openProposals() {
-		if _, asked := r.abortAsked[id]; asked {
+	for _, id := range r.proposals.openProposals() {
+		if _, asked := r.proposals.abortAsked[id]; asked {
 			continue // asked once in this run or a previous life of it
 		}
-		producer := r.open[id]
+		producer := r.proposals.open[id]
 		if err := r.Apply(AbortAskedEvent{ProposalID: id, Action: verb}); err != nil {
 			return err
 		}
@@ -129,13 +129,13 @@ func (r *Run) onAbortAsked(e AbortAskedEvent) error {
 	if e.ProposalID == "" {
 		return fmt.Errorf("workflow/exec: abort_asked with no proposal id")
 	}
-	if _, open := r.open[e.ProposalID]; !open {
+	if _, open := r.proposals.open[e.ProposalID]; !open {
 		return fmt.Errorf("workflow/exec: abort_asked for proposal %s the run does not hold open", e.ProposalID)
 	}
-	if _, asked := r.abortAsked[e.ProposalID]; asked {
+	if _, asked := r.proposals.abortAsked[e.ProposalID]; asked {
 		return fmt.Errorf("workflow/exec: abort_asked for proposal %s twice; a proposal has exactly one disposition", e.ProposalID)
 	}
-	r.abortAsked[e.ProposalID] = e.Action
+	r.proposals.abortAsked[e.ProposalID] = e.Action
 	return nil
 }
 
@@ -150,17 +150,17 @@ func (r *Run) onAbortSettled(e AbortSettledEvent) error {
 	if s.ProposalID == "" {
 		return fmt.Errorf("workflow/exec: abort_settled with no proposal id")
 	}
-	if _, asked := r.abortAsked[s.ProposalID]; !asked {
+	if _, asked := r.proposals.abortAsked[s.ProposalID]; !asked {
 		return fmt.Errorf("workflow/exec: abort_settled for proposal %s that was never asked for", s.ProposalID)
 	}
-	delete(r.claims, s.ProposalID)
+	delete(r.proposals.claims, s.ProposalID)
 	switch {
 	case s.Status == SettlementStatusSettled && !s.LeftOpen:
-		r.settled[s.ProposalID] = "on_abort"
-		delete(r.open, s.ProposalID)
+		r.proposals.settled[s.ProposalID] = "on_abort"
+		delete(r.proposals.open, s.ProposalID)
 	default:
-		if _, seen := r.open[s.ProposalID]; !seen {
-			r.open[s.ProposalID] = s.Producer
+		if _, seen := r.proposals.open[s.ProposalID]; !seen {
+			r.proposals.open[s.ProposalID] = s.Producer
 		}
 	}
 	return nil

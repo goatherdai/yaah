@@ -44,45 +44,21 @@ type Run struct {
 	dependents map[string][]string // node path -> paths of the nodes that need it
 	params     map[string]any
 
-	// Fan-out instances (yaah-0u0v.14). instances holds every body node one
-	// item minted, keyed by its instance path; instanceOf lists a container's
-	// instance paths in creation order (item order, then body order), which is
-	// the order the result reports; itemInFlight counts in-flight dispatches per
-	// fan-out node path — the nested max_parallel tally, which the global cap
-	// does not replace.
-	instances    map[string]*instance
-	instanceOf   map[string][]string
-	itemInFlight map[string]int
-	// arms is the ROUTING relation a branch owns (yaah-0u0v.15): an arm path
-	// maps to the branches that may decide about it. It is kept beside the
-	// dependency graph rather than inside it, because an arm may declare its
-	// branch as a need and then it is both, while a branch that names an arm is
-	// not a dependency of it.
-	arms map[string]map[string]bool
+	// inst owns the fan-out instance and branch-routing relations (see
+	// instanceLedger). They are kept beside the dependency graph rather than
+	// inside it: an arm may be both a routing target and a dependency.
+	inst instanceLedger
 
 	ready   []string // node paths in canonical order; the launch order
 	current map[string]*Attempt
 	backoff map[string]time.Duration
 
-	// The settlement ledger. open holds the proposals this run sealed and has
-	// not disposed of, claims the proposals a settle node is working through
-	// right now, and settled the ones that reached a disposition — each keyed
-	// proposal id -> the node path that owns or owned it.
-	//
-	// They live in the reducer because the linearity guards they serve must
-	// hold under any event ordering: a double settle is refused from the
-	// ledger, not from a scan of the graph, and a run that would end with a
-	// proposal still in open is refused by the close itself.
-	open    map[string]string
-	claims  map[string]string
-	settled map[string]string
-	// abortAsked is the abort pass's permanent ask record: every proposal the
-	// run has asked an abort-time disposition for, keyed proposal id -> the
-	// verb it was asked with (yaah-0u0v.24). Unlike a settle node's Asked it is
-	// never cleared — the answered proposals leave `open` on a settled answer
-	// and stay in `open` on any other, so the pair (open, abortAsked) is what a
-	// resumed run reads to ask the rest without ever asking twice.
-	abortAsked map[string]string
+	// proposals owns the proposal bookkeeping (see settlementLedger). It lives
+	// in the reducer because the linearity guards it serves must hold under any
+	// event ordering: a double settle is refused from the ledger, not from a
+	// scan of the graph, and a run that would end with a proposal still open is
+	// refused by the close itself.
+	proposals settlementLedger
 
 	// warned keys the run warnings that must be stated once per graph.
 	warned map[string]bool
@@ -140,26 +116,20 @@ func New(g *ir.Graph, rt Runtime, cfg Config) (*Run, error) {
 		return nil, err
 	}
 	r := &Run{
-		cfg:          cfg,
-		rt:           rt,
-		graph:        g,
-		params:       params,
-		byPath:       map[string]*ir.Node{},
-		byID:         map[string]*ir.Node{},
-		state:        map[string]*NodeState{},
-		dependents:   map[string][]string{},
-		instances:    map[string]*instance{},
-		instanceOf:   map[string][]string{},
-		itemInFlight: map[string]int{},
-		arms:         map[string]map[string]bool{},
-		current:      map[string]*Attempt{},
-		backoff:      map[string]time.Duration{},
-		open:         map[string]string{},
-		claims:       map[string]string{},
-		settled:      map[string]string{},
-		abortAsked:   map[string]string{},
-		warned:       map[string]bool{},
-		status:       RunRunning,
+		cfg:        cfg,
+		rt:         rt,
+		graph:      g,
+		params:     params,
+		byPath:     map[string]*ir.Node{},
+		byID:       map[string]*ir.Node{},
+		state:      map[string]*NodeState{},
+		dependents: map[string][]string{},
+		inst:       newInstanceLedger(),
+		current:    map[string]*Attempt{},
+		backoff:    map[string]time.Duration{},
+		proposals:  newSettlementLedger(),
+		warned:     map[string]bool{},
+		status:     RunRunning,
 	}
 	for i, n := range g.Steps {
 		if n == nil {
@@ -206,7 +176,7 @@ func New(g *ir.Graph, rt Runtime, cfg Config) (*Run, error) {
 	// dependency graph is: an arm is named by step id, and a path is the one
 	// identity every node and every instance has.
 	for _, n := range r.nodes {
-		r.registerArms(n)
+		r.inst.registerArms(n, r.byID)
 	}
 	sort.Strings(r.paths)
 	for id := range r.dependents {
@@ -320,11 +290,11 @@ func (r *Run) commit(ev Event, external bool) error {
 		// proposal it sealed is still undisposed. The check is made here, on
 		// the close, and not only in the driver's disposition, so it holds
 		// whoever submitted the event and whatever order the events came in.
-		if e.Status == RunSucceeded && !r.cfg.OpenProposals && len(r.open) > 0 {
+		if e.Status == RunSucceeded && !r.cfg.OpenProposals && len(r.proposals.open) > 0 {
 			e = RunFinishedEvent{
 				Status: RunFailed,
 				Reason: fmt.Sprintf("%s: %d proposal(s) left without a disposition (%s); declare the disposition with a settle node",
-					ReasonOpenProposalsAtExit, len(r.open), r.openProposalDetail()),
+					ReasonOpenProposalsAtExit, len(r.proposals.open), r.proposals.detail()),
 			}
 			ev = e
 		}
@@ -334,9 +304,9 @@ func (r *Run) commit(ev Event, external bool) error {
 		// sweeping policy could not dispose of, or an ask whose answer a
 		// crash took with it. halt is the loud disposition by design: the
 		// cleanup is the operator's, so the operator gets the list.
-		if e.Status != RunSucceeded && len(r.open) > 0 {
+		if e.Status != RunSucceeded && len(r.proposals.open) > 0 {
 			e.Reason += fmt.Sprintf("; on_abort: %s leaves %d proposal(s) open (%s)",
-				r.onAbortPolicy(), len(r.open), r.openProposalDetail())
+				r.onAbortPolicy(), len(r.proposals.open), r.proposals.detail())
 			ev = e
 		}
 		// Everything that has not terminated is terminated by the close, so
@@ -501,7 +471,7 @@ func (r *Run) settle(n *ir.Node) error {
 	// problem the run never had to face. An arm whose branch has not terminated yet
 	// is a WAIT — the driver holds it instead of starting it — so nothing is decided
 	// here and the question is asked again when the branch terminates.
-	if selected, undecided := r.armRouting(n.Path); undecided {
+	if selected, undecided := r.inst.armRouting(n.Path, r.state); undecided {
 		return nil
 	} else if !selected {
 		return r.derive(NodeSkippedEvent{NodePath: n.Path, Reason: r.armSkipReason(n.Path)})
@@ -578,12 +548,12 @@ func (r *Run) onDispatchStarted(e DispatchStartedEvent) error {
 	// The nested cap is the same kind of invariant for a fan-out's items: the
 	// container's own max_parallel bounds its in-flight dispatches whether or
 	// not the global cap has room.
-	if inst := r.instances[a.NodePath]; inst != nil {
-		if max := r.itemMaxParallel(a.NodePath); max > 0 && r.itemInFlight[inst.owner]+1 > max {
+	if inst := r.inst.instances[a.NodePath]; inst != nil {
+		if max := r.inst.itemMaxParallel(a.NodePath, r.byPath); max > 0 && r.inst.itemInFlight[inst.owner]+1 > max {
 			return fmt.Errorf("workflow/exec: starting %s would exceed %s max_parallel=%d",
 				a.DispatchID, inst.owner, max)
 		}
-		r.itemInFlight[inst.owner]++
+		r.inst.itemInFlight[inst.owner]++
 	}
 	if a.StartedAt.IsZero() {
 		a.StartedAt = r.rt.Now()
@@ -724,7 +694,7 @@ func (r *Run) onTerminal(path string, to State, reason string, ev Event) error {
 	}
 	r.retire(path)
 	r.dropReady(path)
-	r.releaseClaims(path)
+	r.proposals.releaseClaims(r.state[path], path)
 	st.State = to
 	st.Reason = reason
 	switch e := ev.(type) {
@@ -756,7 +726,7 @@ func (r *Run) onNodeCancelled(e NodeCancelledEvent) error {
 	}
 	r.retire(e.NodePath)
 	r.dropReady(e.NodePath)
-	r.releaseClaims(e.NodePath)
+	r.proposals.releaseClaims(r.state[e.NodePath], e.NodePath)
 	st.State = StateCancelled
 	st.Reason = e.Reason
 	// A cancelled need still terminates: join-all releases the dependent, and
@@ -789,7 +759,7 @@ func (r *Run) failTerminal(path, reason string) error {
 		if err := r.derive(NodeFailedEvent{NodePath: path, Reason: reason}); err != nil {
 			return err
 		}
-		if r.instances[path] != nil {
+		if r.inst.instances[path] != nil {
 			return nil
 		}
 		r.stopping = true
@@ -842,7 +812,7 @@ func (r *Run) needPaths(n *ir.Node) ([]string, bool) {
 	if n == nil || len(n.Needs) == 0 {
 		return nil, true
 	}
-	inst := r.instances[n.Path]
+	inst := r.inst.instances[n.Path]
 	out := make([]string, 0, len(n.Needs))
 	for _, ref := range n.Needs {
 		if inst != nil {
@@ -874,11 +844,11 @@ func (r *Run) retire(path string) {
 	}
 	r.inFlight--
 	delete(r.current, path)
-	if inst := r.instances[path]; inst != nil {
-		if n := r.itemInFlight[inst.owner]; n > 1 {
-			r.itemInFlight[inst.owner] = n - 1
+	if inst := r.inst.instances[path]; inst != nil {
+		if n := r.inst.itemInFlight[inst.owner]; n > 1 {
+			r.inst.itemInFlight[inst.owner] = n - 1
 		} else {
-			delete(r.itemInFlight, inst.owner)
+			delete(r.inst.itemInFlight, inst.owner)
 		}
 	}
 }
@@ -937,7 +907,7 @@ func (r *Run) finishAttempt(a *Attempt, e AttemptCompletedEvent) {
 			Lane:       c.Lane,
 			DispatchID: a.DispatchID,
 		}
-		r.open[c.ProposalID] = st.Path
+		r.proposals.open[c.ProposalID] = st.Path
 	}
 }
 

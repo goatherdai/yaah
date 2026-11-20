@@ -385,14 +385,14 @@ func (r *Run) nextStartable() (string, bool) {
 		if !dispatched(r.byPath[p]) {
 			continue
 		}
-		if !r.itemSlotFree(p) {
+		if !r.inst.itemSlotFree(p, r.byPath) {
 			continue
 		}
 		// A branch arm is startable only once the branch that names it has
 		// decided: the routing decision cannot be overtaken by the ready queue's
 		// path order, which would otherwise start an arm named early in the
 		// document before its branch ran at all.
-		if _, undecided := r.armRouting(p); undecided {
+		if _, undecided := r.inst.armRouting(p, r.state); undecided {
 			continue
 		}
 		// A select that dispatches its judge is startable only once its candidate
@@ -482,7 +482,7 @@ func (r *Run) dispositionReason() string {
 // than an abort. The two cases are different declarations, and the reason says
 // which one was made.
 func (r *Run) exposedFailureReason(path string) string {
-	if inst := r.instances[path]; inst != nil {
+	if inst := r.inst.instances[path]; inst != nil {
 		return path + ": fan-out item failed under on_item_failure: " + itemFailureString(r.byPath[inst.owner]) +
 			" — " + r.state[path].Reason
 	}
@@ -507,11 +507,11 @@ func (r *Run) unresolved() int {
 // so a graph yields one order everywhere and no scan can quietly miss an
 // instance.
 func (r *Run) allPaths() []string {
-	out := make([]string, 0, len(r.paths)+len(r.instances))
+	out := make([]string, 0, len(r.paths)+len(r.inst.instances))
 	var emit func(path string)
 	emit = func(path string) {
 		out = append(out, path)
-		for _, ip := range r.instanceOf[path] {
+		for _, ip := range r.inst.of[path] {
 			emit(ip)
 		}
 	}
@@ -549,7 +549,7 @@ func (r *Run) snapshot(path string, attempt int) ir.Scope {
 		// Only a top-level step id is reachable by `steps.<id>`: an instance's
 		// id is body-local, so two items can share one and only the item's own
 		// scope may resolve it (locals, below).
-		if n.ID != "" && r.instances[p] == nil {
+		if n.ID != "" && r.inst.instances[p] == nil {
 			s.ids[n.ID] = p
 		}
 		// A closed container's collect is part of the state a later node
@@ -561,7 +561,7 @@ func (r *Run) snapshot(path string, attempt int) ir.Scope {
 			s.collect[p] = st.Collect
 		}
 	}
-	if inst := r.instances[path]; inst != nil {
+	if inst := r.inst.instances[path]; inst != nil {
 		s.locals = inst.locals
 		s.items = r.itemBindings(path)
 	}

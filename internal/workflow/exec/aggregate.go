@@ -83,7 +83,7 @@ func (r *Run) aggregateStepOnce() (bool, error) {
 		if st == nil || st.State != StateReady {
 			continue
 		}
-		if len(r.instanceOf[p]) > 0 {
+		if len(r.inst.of[p]) > 0 {
 			// The combine body is already running; its completion closes the
 			// aggregate (noteAggregateInstance).
 			continue
@@ -243,7 +243,7 @@ func (r *Run) instantiateCombineBody(n *ir.Node, st *NodeState) error {
 // dispatching it. A failed body fails the aggregate through the aggregate's own
 // on_failure.
 func (r *Run) noteAggregateInstance(n *ir.Node, st *NodeState) error {
-	paths := r.instanceOf[n.Path]
+	paths := r.inst.of[n.Path]
 	if len(paths) == 0 || !r.scopeTerminal(paths) {
 		return nil
 	}

@@ -217,7 +217,7 @@ func templatePath(path string) string {
 func (r *Run) itemBindings(path string) []itemBinding {
 	var chain []itemBinding
 	for p := path; ; {
-		inst := r.instances[p]
+		inst := r.inst.instances[p]
 		if inst == nil {
 			break
 		}
@@ -228,30 +228,6 @@ func (r *Run) itemBindings(path string) []itemBinding {
 		chain[i], chain[j] = chain[j], chain[i]
 	}
 	return chain
-}
-
-// itemMaxParallel is the nested ceiling that governs one instance: its
-// fan-out's declared max_parallel, 0 when unbounded or when the path is not an
-// instance.
-func (r *Run) itemMaxParallel(path string) int {
-	inst := r.instances[path]
-	if inst == nil {
-		return 0
-	}
-	return maxParallelOf(r.byPath[inst.owner])
-}
-
-// itemSlotFree reports whether the fan-out that owns path has room under its
-// nested cap. The tally counts the fan-out's in-flight DISPATCHES, which is at
-// least as strict as counting items that have one in flight: a body of several
-// parallel nodes is throttled by dispatch, so no reading of "max_parallel
-// items" can be exceeded by the looser one either.
-func (r *Run) itemSlotFree(path string) bool {
-	max := r.itemMaxParallel(path)
-	if max <= 0 {
-		return true
-	}
-	return r.itemInFlight[r.instances[path].owner] < max
 }
 
 // fanoutStepOnce drives one fan-out cycle: it expands the first ready fan-out
@@ -543,7 +519,7 @@ func (r *Run) instantiateItem(n *ir.Node, st *NodeState, j int, bound any) error
 
 // allItemsTerminal reports whether every instance of one fan-out has terminated.
 func (r *Run) allItemsTerminal(owner string) bool {
-	return r.scopeTerminal(r.instanceOf[owner])
+	return r.scopeTerminal(r.inst.of[owner])
 }
 
 // noteItemOutcome is the container's reaction to one of its instances
@@ -555,7 +531,7 @@ func (r *Run) allItemsTerminal(owner string) bool {
 // runs inside Apply, after the instance's own terminal transition, and is a no-op
 // when the container is already terminal or the run is closing.
 func (r *Run) noteItemOutcome(path string) error {
-	inst := r.instances[path]
+	inst := r.inst.instances[path]
 	if inst == nil || r.closing {
 		return nil
 	}

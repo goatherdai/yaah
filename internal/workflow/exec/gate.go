@@ -273,7 +273,7 @@ func (r *Run) gateSubject(n *ir.Node) (value any, deferred bool, refusal string)
 // its own item — and accepting the path as well keeps a hand-built graph
 // usable.
 func (r *Run) gateSubjectPath(n *ir.Node, from string) (string, bool) {
-	if inst := r.instances[n.Path]; inst != nil {
+	if inst := r.inst.instances[n.Path]; inst != nil {
 		if p, ok := inst.locals[from]; ok {
 			return p, true
 		}
