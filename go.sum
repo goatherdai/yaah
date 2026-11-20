@@ -120,8 +120,8 @@ github.com/goatherdai/croft v0.9.3-0.20261118191751-716dbb80a6dd h1:eRtFPA5tCUek
 github.com/goatherdai/croft v0.9.3-0.20261118191751-716dbb80a6dd/go.mod h1:Kb/gefSfqv0i9foqYumDDmHdegTX2g+uy4hbR/R/6e0=
 github.com/goatherdai/goatherd-kernel v0.22.0 h1:Q++ltY59nP/8vf1c/02lT/os3cPz3AEj6wPFLhvxxFI=
 github.com/goatherdai/goatherd-kernel v0.22.0/go.mod h1:PM4X3c307K1s8xWHxms0fFsC93edBkZmlLIrDlr4L3s=
-github.com/goatherdai/goatherd-runtime v0.24.1-0.20261120011543-a3a6b9d70736 h1:hmbS5X+CGX//rbgfZilTmLQX3rL7AoZceyYCYxDCt24=
-github.com/goatherdai/goatherd-runtime v0.24.1-0.20261120011543-a3a6b9d70736/go.mod h1:vbKSBy5yv8SAllIoU4Xie+ESJlQGkrRy/Vj6Rd7nL4Q=
+github.com/goatherdai/goatherd-runtime v0.24.1-0.20261120033226-a4480ce6969e h1:TGk3KiTGSXs+fRx+jHHw8rM85SEqf+JX6PX+vf27TUc=
+github.com/goatherdai/goatherd-runtime v0.24.1-0.20261120033226-a4480ce6969e/go.mod h1:vbKSBy5yv8SAllIoU4Xie+ESJlQGkrRy/Vj6Rd7nL4Q=
 github.com/goatherdai/goatherd-runtime/sandbox/croft v0.2.1-0.20261118192512-b4d03a8d225a h1:SqfozrjGdPktDXdzBlzqKnO/WYRyqC9zE4NZXhNhhvI=
 github.com/goatherdai/goatherd-runtime/sandbox/croft v0.2.1-0.20261118192512-b4d03a8d225a/go.mod h1:0JPLZtr3fhSRngBTX81dct/w4H0xgo+PQ67K5uC+NAc=
 github.com/goatherdai/goatherd-runtime/sandbox/landlock v0.1.3-0.20261118192512-b4d03a8d225a h1:aF/+EFZw2d/GgfCYeb5XOI9nboPqiTiFEr31KGw2iSg=
