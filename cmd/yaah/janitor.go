@@ -104,7 +104,8 @@ func janitorScan(ctx context.Context) (*janitor.Report, func(), error) {
 		return report.Findings[i].Path < report.Findings[j].Path
 	})
 	// Classify totals: the worktree finding already owns the scratch bytes
-	// inside it, so scratch findings are breakdown, not a second claim.
+	// inside it, so scratch findings are breakdown, not a second claim —
+	// skip them in the totals entirely (they carry no SafeToDelete).
 	report.ReclaimableBytes, report.TotalBytes = 0, 0
 	for _, f := range report.Findings {
 		if f.Kind == janitor.KindScratch {
@@ -157,6 +158,12 @@ func janitorRun(ctx context.Context, w io.Writer, dryRun, force bool) error {
 			if derr != nil {
 				return fmt.Errorf("janitor: settled_worktree_age %q: %w", cfg.Agent.Default.Janitor.SettledWorktreeAge, derr)
 			}
+			// A negative duration is a config error, not "reclaim
+			// immediately": refuse it loudly instead of silently
+			// disabling the review window.
+			if d < 0 {
+				return fmt.Errorf("janitor: settled_worktree_age %q is negative; use 0 or omit to disable worktree reclamation", cfg.Agent.Default.Janitor.SettledWorktreeAge)
+			}
 			opts.SettledWorktreeAge = d
 		}
 	}
@@ -202,7 +209,11 @@ func janitorRun(ctx context.Context, w io.Writer, dryRun, force bool) error {
 	fmt.Fprintf(w, "reclaimed %s: %d worktree(s), %d scratch dir(s)",
 		humanBytes(res.ReclaimedBytes), res.DeletedWorktrees, res.DeletedScratch)
 	if len(res.Failed) > 0 {
+		// Incomplete reclamation is a failure for automation: exit
+		// non-zero so scripts and supervisors see it.
 		fmt.Fprintf(w, "; %d failed (see logs, retried next run)", len(res.Failed))
+		fmt.Fprintln(w)
+		return fmt.Errorf("janitor: %d deletion(s) failed", len(res.Failed))
 	}
 	fmt.Fprintln(w)
 	return nil

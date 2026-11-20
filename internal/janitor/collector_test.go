@@ -266,3 +266,118 @@ func TestSweepResultCarriesEvidence(t *testing.T) {
 		t.Errorf("sweep result lost its evidence: %+v", res)
 	}
 }
+
+// TestCollectorRefusesReplacedPath pins the TOCTOU contract: a target
+// classified as a settled orphan must be re-verified immediately before
+// deletion. A directory that replaced the worktree (no longer owned by
+// the repo's administration) is refused — the raw-tree fallback must
+// never erase an unproven occupant.
+func TestCollectorRefusesReplacedPath(t *testing.T) {
+	store := newTestStore(t)
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	gitRepo(t, repo)
+	wt := filepath.Join(dir, "wt-settled")
+	makeRealWorktree(t, repo, wt)
+	deregisterWorktree(t, repo, wt)
+	old := time.Now().Add(-72 * time.Hour)
+	os.Chtimes(wt, old, old)
+
+	appendProposalFact(t, store, "scope:proposal:555:1", dispatch.SchemaProposalSealed, "proposal:555:1")
+	appendProposalFact(t, store, "scope:proposal:555:1", dispatch.SchemaProposalSettled, "proposal:555:1")
+
+	// The occupant changed between classification and deletion: a plain
+	// directory (a user's data, a different checkout) now sits at the
+	// recorded path.
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(wt, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "precious.txt"), []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.Chtimes(wt, old, old)
+
+	registry := &recovery.Report{
+		Orphans: []recovery.Orphan{{ScopeID: "scope:proposal:555:1", Path: wt, Repo: repo}},
+	}
+	c := NewCollector(store, registry, repo, SweepOptions{
+		Now:                time.Now,
+		SettledWorktreeAge: 24 * time.Hour,
+	})
+	targets, err := c.Targets(context.Background())
+	if err != nil {
+		t.Fatalf("Targets: %v", err)
+	}
+	if len(targets) != 0 {
+		t.Fatalf("targets = %d, want 0 — the replaced path is not even a worktree shape anymore (classify-time provenance catches it)", len(targets))
+	}
+
+	// The deletion-time re-verification is the second line of defense:
+	// exercise it directly, the way Execute would after a classify→delete
+	// window in which the occupant changed.
+	res := c.Execute(context.Background(), []SweepTarget{{
+		Kind: KindSettledWorktree, Path: wt, ScopeID: "scope:proposal:555:1", Terminal: true,
+	}})
+	if res.DeletedWorktrees != 0 || len(res.Failed) != 1 {
+		t.Fatalf("execute = %+v; want the replaced path refused at delete time", res)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "precious.txt")); err != nil {
+		t.Errorf("the replacement's data was destroyed: %v", err)
+	}
+}
+
+// TestCollectorRefusesScratchOfReplacedCheckout pins the scratch
+// provenance contract: scratch inside a directory that replaced the
+// recorded worktree (no longer owned by the repo) must not be swept.
+func TestCollectorRefusesScratchOfReplacedCheckout(t *testing.T) {
+	store := newTestStore(t)
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	gitRepo(t, repo)
+	wt := filepath.Join(dir, "wt-scratch")
+	makeRealWorktree(t, repo, wt)
+
+	appendProposalFact(t, store, "scope:proposal:666:1", dispatch.SchemaProposalSealed, "proposal:666:1")
+	appendProposalFact(t, store, "scope:proposal:666:1", dispatch.SchemaProposalSettled, "proposal:666:1")
+
+	// Replace the worktree with an unrelated checkout that has its own
+	// .yaah-scratch (another project's housekeeping).
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+	otherRepo := filepath.Join(dir, "other")
+	gitRepo(t, otherRepo)
+	makeRealWorktree(t, otherRepo, wt)
+	otherScratch := filepath.Join(wt, ScratchDirName)
+	if err := os.MkdirAll(otherScratch, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := &recovery.Report{
+		Orphans: []recovery.Orphan{{ScopeID: "scope:proposal:666:1", Path: wt, Repo: repo}},
+	}
+	c := NewCollector(store, registry, repo, SweepOptions{})
+	targets, err := c.Targets(context.Background())
+	if err != nil {
+		t.Fatalf("Targets: %v", err)
+	}
+	var scratchTargets []SweepTarget
+	for _, tg := range targets {
+		if tg.Kind == KindScratch {
+			scratchTargets = append(scratchTargets, tg)
+		}
+	}
+	if len(scratchTargets) != 1 {
+		t.Fatalf("scratch targets = %d, want 1", len(scratchTargets))
+	}
+	res := c.Execute(context.Background(), scratchTargets)
+	if res.DeletedScratch != 0 || len(res.Failed) != 1 {
+		t.Fatalf("execute = %+v; want the other checkout's scratch refused", res)
+	}
+	if _, err := os.Stat(otherScratch); err != nil {
+		t.Errorf("the other checkout's scratch was destroyed: %v", err)
+	}
+}

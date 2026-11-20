@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	shepherdtrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
@@ -884,8 +885,16 @@ func CheckGoatherd(cfg *config.Config, cfgErr error) Check {
 	// The janitor classifies the same recovery report into reclaimable
 	// residue (settled worktrees past teardown, scratch). It is
 	// informational: the doctor never deletes, it just tells the operator
-	// the sweep exists and what it would take.
-	if n, totalBytes := janitorReclaimable(context.Background(), store, report); n > 0 {
+	// the sweep exists and what it would take. The configured age
+	// threshold must match `janitor run`'s — the doctor and the command
+	// must agree on what is reclaimable.
+	age := time.Duration(0)
+	if d := strings.TrimSpace(cfg.Agent.Default.Janitor.SettledWorktreeAge); d != "" {
+		if parsed, perr := time.ParseDuration(d); perr == nil && parsed > 0 {
+			age = parsed
+		}
+	}
+	if n, totalBytes := janitorReclaimable(context.Background(), store, report, age); n > 0 {
 		warns = append(warns, fmt.Sprintf("%d reclaimable residue target(s) (%s): run `yaah janitor scan`", n, humanBytesDoctor(totalBytes)))
 	}
 	if len(warns) > 0 {
@@ -900,7 +909,7 @@ func CheckGoatherd(cfg *config.Config, cfgErr error) Check {
 // never deletes: it reports the count and bytes so the operator knows the
 // sweep is pending. Classification failure is non-fatal — the doctor's
 // tracing row is about the store, not the janitor.
-func janitorReclaimable(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, report *recovery.Report) (targets int, totalBytes int64) {
+func janitorReclaimable(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, report *recovery.Report, age time.Duration) (targets int, totalBytes int64) {
 	defer func() {
 		if r := recover(); r != nil {
 			targets, totalBytes = 0, 0 // classification must never crash the doctor
@@ -920,7 +929,7 @@ func janitorReclaimable(ctx context.Context, store *shepherdtrace.SQLiteTraceSto
 	if repoPath == "" {
 		return 0, 0
 	}
-	collector := janitor.NewCollector(store, report, repoPath, janitor.SweepOptions{})
+	collector := janitor.NewCollector(store, report, repoPath, janitor.SweepOptions{SettledWorktreeAge: age})
 	found, err := collector.Targets(ctx)
 	if err != nil {
 		return 0, 0
