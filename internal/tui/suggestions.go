@@ -6,17 +6,12 @@ import (
 	"github.com/goatherdai/yaah/internal/tui/components/command"
 )
 
-// suggestionMaxRows caps how tall the typeahead strip may grow.
-const suggestionMaxRows = 6
-
 // updateSuggestions recomputes the typeahead strip from the composer text and
 // shows, resizes or hides it. It is a no-op when the match set is unchanged so
-// that typing an argument does not churn the layout.
+// that typing an argument does not churn the layout. Every matching command
+// is shown — a bare ":" offers the full palette, not just its first few.
 func (t *App) updateSuggestions() {
 	matches := command.Complete(t.Input.GetText(), command.DefaultEntries())
-	if len(matches) > suggestionMaxRows {
-		matches = matches[:suggestionMaxRows]
-	}
 	if sameSuggestions(matches, t.suggestions) {
 		return
 	}

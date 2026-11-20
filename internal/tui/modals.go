@@ -3,6 +3,7 @@ package tui
 import (
 	"github.com/goatherdai/yaah/internal/tui/components/agentpicker"
 	"github.com/goatherdai/yaah/internal/tui/components/approval"
+	"github.com/goatherdai/yaah/internal/tui/components/command"
 	"github.com/goatherdai/yaah/internal/tui/components/errdialog"
 	"github.com/goatherdai/yaah/internal/tui/components/help"
 	"github.com/goatherdai/yaah/internal/tui/components/modelpicker"
@@ -94,7 +95,7 @@ func (t *App) ShowHelp() {
 		bindings = append(bindings, help.Binding{Label: b.Label, HelpText: b.HelpText})
 	}
 	t.beginModal()
-	help.Show(t.App, t.Pages, bindings, t.endModal)
+	help.Show(t.App, t.Pages, bindings, command.DefaultEntries(), t.endModal)
 }
 
 // showErrorDialog displays an error dialog using tvxwidgets.MessageDialog.

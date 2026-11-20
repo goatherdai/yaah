@@ -37,6 +37,25 @@ func TestUpdateSuggestions_ShowsMatchesAndSizesStrip(t *testing.T) {
 	}
 }
 
+// TestUpdateSuggestions_LoneColonShowsEveryEntry pins the strip (the visible
+// ":" menu) to the full palette. It used to truncate Complete's matches to
+// six rows, hiding most commands until enough prefix was typed.
+func TestUpdateSuggestions_LoneColonShowsEveryEntry(t *testing.T) {
+	ui := newColonUI(t)
+	typeText(ui, ":")
+
+	entries := command.DefaultEntries()
+	if len(ui.suggestions) != len(entries) {
+		t.Fatalf("strip shows %d suggestions, want all %d palette entries", len(ui.suggestions), len(entries))
+	}
+	text := ui.suggestionsView.GetText(true)
+	for _, e := range entries {
+		if !strings.Contains(text, ":"+e.Label) {
+			t.Errorf("strip is missing :%s", e.Label)
+		}
+	}
+}
+
 func TestUpdateSuggestions_HidesWhenNotApplicable(t *testing.T) {
 	ui := newColonUI(t)
 	typeText(ui, ":st")

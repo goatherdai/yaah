@@ -2,9 +2,6 @@ package command
 
 import "strings"
 
-// maxCompletions caps how many suggestions the composer offers at once.
-const maxCompletions = 8
-
 // Completion is one typeahead suggestion for the composer.
 type Completion struct {
 	Label  string // command name, without the leading ':'
@@ -34,9 +31,6 @@ func Complete(text string, entries []Entry) []Completion {
 			insert += " "
 		}
 		out = append(out, Completion{Label: e.Label, Desc: e.Desc, Insert: insert})
-		if len(out) == maxCompletions {
-			break
-		}
 	}
 	return out
 }

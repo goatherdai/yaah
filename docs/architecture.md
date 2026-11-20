@@ -1328,7 +1328,7 @@ The TUI is a [tview](https://github.com/rivo/tview)/[tcell](https://github.com/g
 
 **Layout:** Pages → Flex hierarchy with a conversation view (collapsible tool/reasoning blocks rendered by components under `internal/tui/components/`), an info pane (session/context/MCP/config sections), a dedicated Subagents pane for active dispatches, a todo sidebar, and a multi-line input. All colors come from the shared theme in `internal/tui/colors/theme.go`.
 
-**Command palette:** typing `:` in the composer shows a typeahead strip of matching commands (Tab completes, Up/Down cycle, Esc dismisses); `ctrl+p` opens the same set as a command palette (`:help`, `:clear`, `:compact`, `:banner`, `:model`, `:search`, `:steer`, `:followup`, `:verbose`, `:stop`, `:quit`). `:model` queries providers' model lists and filters live; selection swaps provider/model mid-session.
+**Command palette:** typing `:` in the composer shows a typeahead strip of **all** commands (Tab completes, Up/Down cycle, Esc dismisses); `:help` renders the same full set as the reference menu. `ctrl+p` opens that set as a command palette (`:help`, `:clear`, `:compact`, `:stop`, `:steer`, `:followup`, `:model`, `:agent`, `:mode`, `:search`, `:verbose`, `:banner`, `:top`, `:bottom`, `:quit`). All three surfaces — the `:` typeahead, `:help`, and the Ctrl+P palette — are derived from `command.DefaultEntries()`, so they cannot drift. `:model` queries providers' model lists and filters live; selection swaps provider/model mid-session.
 
 Component inventory and rendering rules: [TUI component system](./tui-components.md).
 
