@@ -13,9 +13,10 @@ sub-agent team, see [sub-agents.md](./sub-agents.md); for agent personas, see
 - Streaming responses, collapsible reasoning blocks (`ctrl+r`), and
   collapsible tool cards (`ctrl+t`)
 - Sub-agent dispatch cards with role, duration, and status
-- A command palette (`ctrl+p`) with `:help`, `:clear`, `:compact`,
-  `:banner`, `:model`, `:agent`, `:search`, `:steer`, `:followup`, `:verbose`, `:quit`, and
-  `:stop`
+- A command palette (`ctrl+p`) with `:help`, `:clear`, `:compact`, `:stop`,
+  `:steer`, `:followup`, `:model`, `:agent`, `:mode`, `:search`, `:verbose`,
+  `:banner`, `:top`, `:bottom`, and `:quit`. The `:` typeahead and `:help`
+  show the same complete set (all derived from `command.DefaultEntries()`).
 - A paned layout: conversation, info pane (session, context, MCP, config),
   todo sidebar, and background sub-agent jobs
 - Mouse and keyboard navigation, input history, and multi-line input

@@ -127,7 +127,13 @@ func (t *App) buildUI() {
 
 	// The sticky prompt header is scroll-derived: re-evaluate it after
 	// every draw so pin swaps track both auto-scroll and manual scrolling.
-	t.App.SetAfterDrawFunc(func(tcell.Screen) {
+	t.App.SetAfterDrawFunc(func(screen tcell.Screen) {
+		// Track the real screen height so the typeahead can bound its
+		// rendered window on short terminals. Zero until the first draw
+		// means "unknown", and the strip shows every match.
+		if _, h := screen.Size(); h > 0 {
+			t.screenHeight = h
+		}
 		t.reconcilePromptPin()
 	})
 

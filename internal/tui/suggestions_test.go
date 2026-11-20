@@ -37,6 +37,58 @@ func TestUpdateSuggestions_ShowsMatchesAndSizesStrip(t *testing.T) {
 	}
 }
 
+// TestUpdateSuggestions_LoneColonShowsEveryEntry pins the strip (the visible
+// ":" menu) to the full palette. It used to truncate Complete's matches to
+// six rows, hiding most commands until enough prefix was typed.
+func TestUpdateSuggestions_LoneColonShowsEveryEntry(t *testing.T) {
+	ui := newColonUI(t)
+	typeText(ui, ":")
+
+	entries := command.DefaultEntries()
+	if len(ui.suggestions) != len(entries) {
+		t.Fatalf("strip shows %d suggestions, want all %d palette entries", len(ui.suggestions), len(entries))
+	}
+	text := ui.suggestionsView.GetText(true)
+	for _, e := range entries {
+		if !strings.Contains(text, ":"+e.Label) {
+			t.Errorf("strip is missing :%s", e.Label)
+		}
+	}
+}
+
+// TestSuggestionWindow_ShortScreenBoundsStrip keeps the full match list for
+// selection while capping the drawn strip on a short terminal, and keeps the
+// highlighted command visible as the user cycles to the end.
+func TestSuggestionWindow_ShortScreenBoundsStrip(t *testing.T) {
+	ui := newColonUI(t)
+	ui.screenHeight = 12 // a short terminal: 12/3 = 4, floored to 6 rows
+
+	typeText(ui, ":")
+	if len(ui.suggestions) != len(command.DefaultEntries()) {
+		t.Fatalf("match list = %d, want all %d entries", len(ui.suggestions), len(command.DefaultEntries()))
+	}
+	text := ui.suggestionsView.GetText(true)
+	if rows := strings.Count(text, "\n"); rows > suggestionMinRows {
+		t.Fatalf("strip drew %d rows on a 12-row screen, want at most %d", rows, suggestionMinRows)
+	}
+	if strings.Contains(text, ":"+ui.suggestions[len(ui.suggestions)-1].Label) {
+		t.Fatal("strip should show the first window, not the last command")
+	}
+
+	// Cycling to the last command must scroll the window to keep it visible.
+	for i := 0; i < len(ui.suggestions)-1; i++ {
+		ui.cycleSuggestion(1)
+	}
+	text = ui.suggestionsView.GetText(true)
+	last := ui.suggestions[len(ui.suggestions)-1]
+	if !strings.Contains(text, ":"+last.Label) {
+		t.Errorf("strip did not follow the highlight to :%s", last.Label)
+	}
+	if ui.suggestions[ui.suggestionIdx] != last {
+		t.Errorf("highlight = %q, want the last entry", ui.suggestions[ui.suggestionIdx].Label)
+	}
+}
+
 func TestUpdateSuggestions_HidesWhenNotApplicable(t *testing.T) {
 	ui := newColonUI(t)
 	typeText(ui, ":st")

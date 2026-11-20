@@ -45,6 +45,7 @@ type App struct {
 	suggestionsView    *tview.TextView
 	suggestions        []command.Completion
 	suggestionIdx      int
+	screenHeight       int // last drawn screen height; zero until first draw
 	messagesCol        *tview.Flex
 	InfoPane           *tview.TextView
 	TodoPane           *tview.TextView

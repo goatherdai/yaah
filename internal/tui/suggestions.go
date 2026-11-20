@@ -6,17 +6,43 @@ import (
 	"github.com/goatherdai/yaah/internal/tui/components/command"
 )
 
-// suggestionMaxRows caps how tall the typeahead strip may grow.
-const suggestionMaxRows = 6
+// suggestionMinRows is the floor for the visible strip, so the highlight
+// always has a usable window even on a short terminal.
+const suggestionMinRows = 6
+
+// suggestionWindow returns the half-open slice of t.suggestions to draw. The
+// full match list is kept for cycling (every palette entry stays reachable),
+// but the rendered height is bounded by the terminal so a bare ":" cannot
+// crowd the composer off a short screen. The window follows the highlight.
+// Before the first draw the screen height is unknown and the whole list shows.
+func (t *App) suggestionWindow() (lo, hi int) {
+	n := len(t.suggestions)
+	rows := n
+	if t.screenHeight > 0 {
+		rows = t.screenHeight / 3
+		if rows < suggestionMinRows {
+			rows = suggestionMinRows
+		}
+		if rows > n {
+			rows = n
+		}
+	}
+	lo = t.suggestionIdx - rows/2
+	if lo < 0 {
+		lo = 0
+	}
+	if lo+rows > n {
+		lo = n - rows
+	}
+	return lo, lo + rows
+}
 
 // updateSuggestions recomputes the typeahead strip from the composer text and
 // shows, resizes or hides it. It is a no-op when the match set is unchanged so
-// that typing an argument does not churn the layout.
+// that typing an argument does not churn the layout. Every matching command
+// is kept — a bare ":" offers the full palette, not just its first few.
 func (t *App) updateSuggestions() {
 	matches := command.Complete(t.Input.GetText(), command.DefaultEntries())
-	if len(matches) > suggestionMaxRows {
-		matches = matches[:suggestionMaxRows]
-	}
 	if sameSuggestions(matches, t.suggestions) {
 		return
 	}
@@ -33,13 +59,14 @@ func (t *App) renderSuggestions() {
 		t.suggestionsView.SetText("")
 		return
 	}
+	lo, hi := t.suggestionWindow()
 	var b strings.Builder
-	for i, s := range t.suggestions {
-		b.WriteString(t.suggestionLine(s, i == t.suggestionIdx))
+	for i := lo; i < hi; i++ {
+		b.WriteString(t.suggestionLine(t.suggestions[i], i == t.suggestionIdx))
 		b.WriteByte('\n')
 	}
 	t.suggestionsView.SetText(b.String())
-	t.Root.ResizeItem(t.suggestionsView, len(t.suggestions), 0)
+	t.Root.ResizeItem(t.suggestionsView, hi-lo, 0)
 }
 
 // suggestionLine renders one match. The highlighted row uses reverse video

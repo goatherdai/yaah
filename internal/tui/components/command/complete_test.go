@@ -29,8 +29,15 @@ func TestComplete_PrefixesCommandNames(t *testing.T) {
 }
 
 func TestComplete_LoneColonOffersCommands(t *testing.T) {
-	if got := Complete(":", DefaultEntries()); len(got) == 0 {
-		t.Fatal("a lone ':' should offer the command list")
+	entries := DefaultEntries()
+	got := Complete(":", entries)
+	if len(got) != len(entries) {
+		t.Fatalf("a lone ':' offered %d commands, want all %d palette entries", len(got), len(entries))
+	}
+	for i, c := range got {
+		if c.Label != entries[i].Label {
+			t.Errorf("completion %d = %q, want %q", i, c.Label, entries[i].Label)
+		}
 	}
 }
 
@@ -62,10 +69,13 @@ func TestComplete_InsertsTrailingSpaceForArgCommands(t *testing.T) {
 	}
 }
 
-func TestComplete_CapsResultCount(t *testing.T) {
+func TestComplete_EveryEntryIsReachable(t *testing.T) {
+	// No prefix may be truncated by an internal cap: every palette entry
+	// must be reachable from the ":" typeahead. This pins the removal of
+	// the old 8-completion cap that hid the tail of the palette.
 	got := Complete(":", DefaultEntries())
-	if len(got) > maxCompletions {
-		t.Errorf("got %d suggestions, cap is %d", len(got), maxCompletions)
+	if len(got) != len(DefaultEntries()) {
+		t.Fatalf("got %d suggestions, want all %d entries", len(got), len(DefaultEntries()))
 	}
 }
 
