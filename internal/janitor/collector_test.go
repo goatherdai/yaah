@@ -167,6 +167,83 @@ func TestCollectorAgeGateSkipsFreshWorktree(t *testing.T) {
 	}
 }
 
+// TestCollectorForceBypassesAgeGate: a settled, deregistered worktree
+// inside the review window is reclaimed when Force is set. Force lifts only
+// the age gate — liveness, ownership and provenance are still checked. This
+// is the regression for `--force` having silently disabled worktree
+// reclamation entirely (it zeroed the age threshold, which the collector
+// reads as "disabled").
+func TestCollectorForceBypassesAgeGate(t *testing.T) {
+	store := newTestStore(t)
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	gitRepo(t, repo)
+	wt := filepath.Join(dir, "wt-fresh")
+	makeRealWorktree(t, repo, wt) // mtime is now — younger than the threshold
+	deregisterWorktree(t, repo, wt)
+
+	appendProposalFact(t, store, "scope:proposal:881:1", dispatch.SchemaProposalSealed, "proposal:881:1")
+	appendProposalFact(t, store, "scope:proposal:881:1", dispatch.SchemaProposalSettled, "proposal:881:1")
+
+	registry := &recovery.Report{
+		Orphans: []recovery.Orphan{{ScopeID: "scope:proposal:881:1", Path: wt, Repo: repo}},
+	}
+	c := NewCollector(store, registry, repo, SweepOptions{
+		SettledWorktreeAge: 24 * time.Hour,
+		Force:              true,
+	})
+
+	targets, err := c.Targets(context.Background())
+	if err != nil {
+		t.Fatalf("Targets: %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("targets = %d, want 1 (force lifts the age gate)", len(targets))
+	}
+	res := c.Execute(context.Background(), targets)
+	if res.DeletedWorktrees != 1 || len(res.Failed) != 0 {
+		t.Fatalf("execute = %+v; want one clean worktree deletion", res)
+	}
+	if _, err := os.Stat(wt); !os.IsNotExist(err) {
+		t.Errorf("worktree still exists after forced reclaim: %v", err)
+	}
+}
+
+// TestCollectorForceStillProtectsLiveWorktree: Force is not a license to
+// delete live work. A still-registered worktree with settled facts must be
+// refused even when the age gate is lifted.
+func TestCollectorForceStillProtectsLiveWorktree(t *testing.T) {
+	store := newTestStore(t)
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	gitRepo(t, repo)
+	wt := filepath.Join(dir, "wt-live")
+	makeRealWorktree(t, repo, wt) // registered — live work
+	ageWorktree(t, wt, 72*time.Hour)
+
+	appendProposalFact(t, store, "scope:proposal:882:1", dispatch.SchemaProposalSealed, "proposal:882:1")
+	appendProposalFact(t, store, "scope:proposal:882:1", dispatch.SchemaProposalSettled, "proposal:882:1")
+
+	registry := &recovery.Report{
+		Orphans: []recovery.Orphan{{ScopeID: "scope:proposal:882:1", Path: wt, Repo: repo}},
+	}
+	c := NewCollector(store, registry, repo, SweepOptions{
+		SettledWorktreeAge: 24 * time.Hour,
+		Force:              true,
+	})
+
+	targets, err := c.Targets(context.Background())
+	if err != nil {
+		t.Fatalf("Targets: %v", err)
+	}
+	if len(targets) != 0 {
+		t.Fatalf("targets = %d, want 0 — force must not reclaim live work", len(targets))
+	}
+	if _, err := os.Stat(wt); err != nil {
+		t.Errorf("live worktree was touched: %v", err)
+	}
+}
+
 // TestCollectorRefusesLiveWorktrees: a worktree still registered as a live
 // worktree of its repo is never reclaimed, even settled and old — git's
 // registry is the authority on liveness.

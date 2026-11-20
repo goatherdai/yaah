@@ -151,22 +151,23 @@ func janitorRun(ctx context.Context, w io.Writer, dryRun, force bool) error {
 		return fmt.Errorf("janitor: recovery: %w", rerr)
 	}
 
-	opts := janitor.SweepOptions{SettledWorktreeAge: 0}
-	if !force {
-		if cfg.Agent.Default.Janitor.SettledWorktreeAge != "" {
-			d, derr := time.ParseDuration(cfg.Agent.Default.Janitor.SettledWorktreeAge)
-			if derr != nil {
-				return fmt.Errorf("janitor: settled_worktree_age %q: %w", cfg.Agent.Default.Janitor.SettledWorktreeAge, derr)
-			}
-			// A negative duration is a config error, not "reclaim
-			// immediately": refuse it loudly instead of silently
-			// disabling the review window.
-			if d < 0 {
-				return fmt.Errorf("janitor: settled_worktree_age %q is negative; use 0 or omit to disable worktree reclamation", cfg.Agent.Default.Janitor.SettledWorktreeAge)
-			}
-			opts.SettledWorktreeAge = d
+	// Always validate the configured duration — force lifts the age
+	// gate, it does not excuse a malformed or negative config value.
+	var opts janitor.SweepOptions
+	if cfg.Agent.Default.Janitor.SettledWorktreeAge != "" {
+		d, derr := time.ParseDuration(cfg.Agent.Default.Janitor.SettledWorktreeAge)
+		if derr != nil {
+			return fmt.Errorf("janitor: settled_worktree_age %q: %w", cfg.Agent.Default.Janitor.SettledWorktreeAge, derr)
 		}
+		// A negative duration is a config error, not "reclaim
+		// immediately": refuse it loudly instead of silently
+		// disabling the review window.
+		if d < 0 {
+			return fmt.Errorf("janitor: settled_worktree_age %q is negative; use 0 or omit to disable worktree reclamation", cfg.Agent.Default.Janitor.SettledWorktreeAge)
+		}
+		opts.SettledWorktreeAge = d
 	}
+	opts.Force = force
 	collector := janitor.NewCollector(store, registry, repoPath, opts)
 
 	targets, err := collector.Targets(ctx)

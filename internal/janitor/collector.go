@@ -43,6 +43,11 @@ type SweepOptions struct {
 	// negative config values before they reach here; a negative duration
 	// arriving anyway is treated as disabled.
 	SettledWorktreeAge time.Duration
+	// Force bypasses the age gate for deliberate same-day cleanup. It
+	// enables worktree reclamation even when no age threshold is
+	// configured, and does NOT bypass the liveness/ownership checks —
+	// a live or unproven occupant is still never touched.
+	Force bool
 	// MaxWorktrees caps worktree deletions per run; zero means no cap.
 	MaxWorktrees int
 }
@@ -99,10 +104,11 @@ func NewCollector(store *shepherdtrace.SQLiteTraceStore, registry *recovery.Repo
 	return &Collector{store: store, registry: registry, repoPath: repoPath, opts: opts, now: now}
 }
 
-// worktreeEnabled reports whether worktree reclamation is active: a
-// strictly positive age threshold. Zero/negative = scratch-only.
+// worktreeEnabled reports whether worktree reclamation is active: an
+// explicit force, or a strictly positive age threshold. Force enables it
+// even when no threshold is configured — see SweepOptions.Force.
 func (c *Collector) worktreeEnabled() bool {
-	return c.opts.SettledWorktreeAge > 0
+	return c.opts.Force || c.opts.SettledWorktreeAge > 0
 }
 
 // Targets classifies the safe set into concrete deletions: settled
@@ -132,8 +138,10 @@ func (c *Collector) Targets(ctx context.Context) ([]SweepTarget, error) {
 		if !c.worktreeEnabled() {
 			return
 		}
-		// Age gate: untouched since before the threshold.
-		if c.age(path) < c.opts.SettledWorktreeAge {
+		// Age gate: untouched since before the threshold. Force lifts
+		// the review window, but nothing else — liveness, ownership and
+		// provenance are still checked below.
+		if !c.opts.Force && c.age(path) < c.opts.SettledWorktreeAge {
 			return
 		}
 		// Live-ness: the adoption rule (owned AND listed). Unverifiable
