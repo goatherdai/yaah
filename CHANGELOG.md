@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.198.1](https://github.com/goatherdai/yaah/compare/v0.198.0...v0.198.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **workflow:** remove doc comments stranded by the ledger extraction ([47ecbeb](https://github.com/goatherdai/yaah/commit/47ecbeb0467827a9282f61a53ae751356fdac0ae))
+
+
+### Code Refactoring
+
+* **workflow:** extract Run proposal and instance ledgers ([4973a0e](https://github.com/goatherdai/yaah/commit/4973a0e79e04e1fc2f8cbb1da3be743ccc0ba422))
+* **workflow:** extract Run proposal and instance ledgers ([db1aaf1](https://github.com/goatherdai/yaah/commit/db1aaf1d96b5056651f6e95bf4aff8d3658a2c7f))
+
 ## [0.198.0](https://github.com/goatherdai/yaah/compare/v0.197.1...v0.198.0) (2026-11-19)
 
 
