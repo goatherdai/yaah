@@ -29,8 +29,8 @@
 #   cheap `bd show`) resolves the issue text before the run and hands it to
 #   the brief step via --param issue_file; sub-agents never pay for text
 #   recovery. issue_file is optional — when empty, the brief step resolves
-#   the text itself (bd show, then ~/.yaah/hooks/sess-*.jsonl; this repo has
-#   no .beads/issues.jsonl passive export, export.auto is false).
+#   the text itself (bd show, then ~/.yaah/hooks/sess-*.jsonl; this repo
+#   exports .beads/issues.jsonl passively — export.auto is true).
 
 apiVersion: yaah.workflow/v1
 kind: Workflow
