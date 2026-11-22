@@ -320,7 +320,25 @@ func executeStatus(mgr *goatherd.ScopeManager, runs runBridge, svc firingSource)
 		}
 		out += "  Rule firings:\n"
 		for _, f := range firings {
-			out += fmt.Sprintf("    %s  %s  %dx (%s)\n", f.Rule, f.Scope, f.Count, f.Kind)
+			out += fmt.Sprintf("    %s  %s  %dx (%s)", f.Rule, f.Scope, f.Count, f.Kind)
+			// A blocking deny names what it most recently refused and
+			// why; an advisory firing steers, and carries neither. The
+			// detail is the latest refusal for this line's count and is
+			// already bounded upstream, so one line stays one line no
+			// matter how many — or how long — the refusals were.
+			cmd := f.Command
+			if cmd == "" && f.Kind == "deny" {
+				// A shell call that carried no command at all: said
+				// plainly rather than left blank.
+				cmd = "(no command)"
+			}
+			if cmd != "" {
+				out += fmt.Sprintf("  last_cmd=%q", cmd)
+			}
+			if f.Reason != "" {
+				out += fmt.Sprintf("  reason=%q", f.Reason)
+			}
+			out += "\n"
 		}
 	}
 	return out, nil

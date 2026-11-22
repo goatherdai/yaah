@@ -58,7 +58,7 @@
     },
     "allow_commands": {
       "type": "array",
-      "description": "Shell-command allowlist for the blocking sub-agent guard: patterns matched in full against the raw command line, so 'git status*' admits 'git status -s' and refuses 'echo git status'. Omitted inherits agents.default.supervisor.rules.destructive_guard.allow_commands; an explicit empty list denies every shell call.",
+      "description": "Shell-command allowlist for the blocking sub-agent guard: patterns matched in full against the raw command line, so 'git status*' admits 'git status -s' and refuses 'echo git status'. A command carrying a shell control or redirection operator (';', '&&', '|', backtick, '$(', '${', '>', '<', newline) matches NO pattern and is always denied, so a list cannot be escaped by chaining or redirecting. Omitted inherits agents.default.supervisor.rules.destructive_guard.allow_commands; an explicit empty list denies every shell call.",
       "items": { "type": "string" }
     },
     "output": {

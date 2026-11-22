@@ -500,6 +500,11 @@ type proposalMeta struct {
 	Result         string `json:"result,omitempty"`
 	RunErr         string `json:"run_err,omitempty"`
 	ManifestDigest string `json:"manifest_digest"`
+	// AuthorityPlanDigest is the digest of the permission plan the dispatch
+	// world was built to enforce — the same digest the jail lane recorded. It
+	// is persisted so a proposal rehydrated in a later process still cites the
+	// declaration it is being settled against, instead of a guess.
+	AuthorityPlanDigest string `json:"authority_plan_digest,omitempty"`
 }
 
 const (
@@ -524,6 +529,13 @@ const (
 // manifest digest is returned so the seal fact and later verification can name
 // exactly what was persisted. Failure fails the seal: a proposal the
 // orchestrator cannot settle is worse than a failed dispatch.
+//
+// authorityPlanDigest is the compiled permission plan the dispatch world
+// enforced. Persisting it is what keeps one declaration covering both lanes
+// across a restart: the seal and the settlement each cite the digest the jail
+// lane recorded, so a reader can tell whether the world and its settlement
+// enforced the same declaration. An empty digest records no citation (a
+// proposal sealed by a caller that declares no authority).
 func persistGitDelta(
 	ctx context.Context,
 	repoPath, id string,
@@ -531,6 +543,7 @@ func persistGitDelta(
 	review, result, runErr, sessionID, parentScopeID, target string,
 	basis kerneltrace.WorkspaceState,
 	basisDigest string,
+	authorityPlanDigest string,
 ) (dir, digest string, err error) {
 	if err := validateDelta(delta); err != nil {
 		return "", "", err
@@ -571,14 +584,15 @@ func persistGitDelta(
 		return "", "", fmt.Errorf("marshal basis: %w", err)
 	}
 	metaData, err := json.MarshalIndent(proposalMeta{
-		ID:             id,
-		SessionID:      sessionID,
-		ParentScopeID:  parentScopeID,
-		World:          "container",
-		Target:         target,
-		Result:         result,
-		RunErr:         runErr,
-		ManifestDigest: digest,
+		ID:                  id,
+		SessionID:           sessionID,
+		ParentScopeID:       parentScopeID,
+		World:               "container",
+		Target:              target,
+		Result:              result,
+		RunErr:              runErr,
+		ManifestDigest:      digest,
+		AuthorityPlanDigest: authorityPlanDigest,
 	}, "", "  ")
 	if err != nil {
 		return "", "", fmt.Errorf("marshal proposal meta: %w", err)
@@ -1218,7 +1232,11 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 				"world":           string(subagent.WorldContainer),
 				"target":          target,
 				"manifest_digest": p.deltaDigest,
-				"files":           p.delta.Paths(),
+				// The declaration this settlement is the commit-time monitor for:
+				// the same digest the jail lane recorded for the world that
+				// produced the manifest.
+				"authority_plan_digest": p.authorityPlanDigest,
+				"files":                 p.delta.Paths(),
 			}); ferr != nil {
 				env.Notes = appendSettleNote(env.Notes, "trace: settle fact: "+ferr.Error())
 			}

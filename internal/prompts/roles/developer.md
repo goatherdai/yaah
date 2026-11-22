@@ -46,6 +46,37 @@ tools:
   - go_test
   - staticcheck
   - go_mod
+# Shell-command allowlist for the blocking sub-agent guard. The guard
+# matches a pattern in full against the raw command, and it refuses any
+# command carrying a shell control or redirection operator (`;`, `&&`,
+# `|`, backtick, `$(`, `${`, `>`, `<`, newline) outright — no pattern can
+# admit one — so these entries describe single commands only.
+#
+# `find` is deliberately absent: its arguments (`-delete`, `-exec`) mutate
+# or execute, so no glob that covers the useful forms excludes the
+# dangerous ones. The role carries the structured `find` tool instead.
+allow_commands:
+  - "git status*"
+  - "git diff*"
+  - "git log*"
+  - "git show*"
+  - "git ls-files*"
+  - "ls*"
+  - "cat*"
+  - "head*"
+  - "tail*"
+  - "grep*"
+  - "wc*"
+  - "pwd"
+  - "which*"
+  - "go test*"
+  - "go build*"
+  - "go vet*"
+  - "gofmt*"
+  - "go mod*"
+  - "go list*"
+  - "go env*"
+  - "go version"
 max_iterations: 100
 max_turns: 50
 min_turns: 6

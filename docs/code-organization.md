@@ -40,6 +40,7 @@ yaah/
 │   ├── cwdpath/                # cwd canonicalization
 │   ├── dispatch/               # retained-dispatch lane: proposals, git delta, dispatch worlds
 │   ├── doctor/                 # diagnostics
+│   ├── effectpolicy/           # structural effect-surface authority (Match/Plan) for the sub-agent guard
 │   ├── envelopecheck/          # result-envelope/doc parity gate shared by tools + dispatch
 │   ├── instructions/           # AGENTS.md/CLAUDE.md discovery
 │   ├── jail/                   # per-platform containment selection
@@ -53,6 +54,7 @@ yaah/
 │   ├── plans/                  # PLAN.md discovery/parsing
 │   ├── process/                # background process manager
 │   ├── prompts/                # embedded identity, roles, tool docs
+│   ├── permissionplan/         # monitor-assignment compiler unifying jail + settlement authority
 │   ├── permissions/            # permission rulesets: parse, match, resource domains
 │   ├── providers/              # OpenAI-compatible + Anthropic clients
 │   ├── pubsub/                 # typed event broker

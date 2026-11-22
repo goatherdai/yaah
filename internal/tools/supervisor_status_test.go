@@ -101,6 +101,55 @@ func TestSupervisorTool_StatusListsFirings(t *testing.T) {
 	}
 }
 
+// TestSupervisorTool_StatusShowsDeniedCommand pins the deny's legibility
+// in `supervisor status`: a blocked shell call reports the most recent
+// command the guard refused and the reason it gave, beside the count — an
+// operator reading the session afterwards sees what was blocked and why,
+// not just that the guard fired. The detail is labelled last_cmd because it
+// describes only the latest refusal; the count covers all of them.
+func TestSupervisorTool_StatusShowsDeniedCommand(t *testing.T) {
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	bus := kerneltrace.NewEffectBus(64)
+	t.Cleanup(bus.Close)
+
+	mgr := goatherd.NewScopeManager(store)
+	if _, err := mgr.Create("sub-status", nil); err != nil {
+		t.Fatalf("create scope: %v", err)
+	}
+
+	// The blocking shell guard on, with no allowlist: every shell call
+	// is denied, which is the case an empty role allowlist produces.
+	svc := supervision.NewService(mgr, bus, supervision.NewRegistry(),
+		supervision.AdvisoryRules{}, true, false, "")
+
+	const cmd = "rm -rf /tmp/probe"
+	reason := svc.GuardCheck()("sub-status", "bash", `{"command":"`+cmd+`"}`)
+	if reason == "" {
+		t.Fatal("the shell guard must deny an unlisted command")
+	}
+
+	sup := &SupervisorTool{ScopeManager: mgr, Runs: supervision.NewRegistry(), Svc: svc}
+	out, err := sup.Execute(context.Background(), `{"action":"status"}`)
+	if err != nil {
+		t.Fatalf("Execute(status): %v", err)
+	}
+	for _, want := range []string{
+		"destructive_shell_guard",
+		"scope:sub-status",
+		"1x (deny)",
+		`last_cmd="` + cmd + `"`,
+		`reason="` + reason + `"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 // TestSupervisorTool_StatusWithoutService pins the nil-service path:
 // with no supervision service, status reports no firings honestly
 // instead of guessing.

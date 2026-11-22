@@ -200,8 +200,9 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 		// sub-agent pipeline; the orchestrator pipeline ignores it. The
 		// role's resolved shell allowlist rides with it so the guard
 		// narrows to this dispatch's role rather than the global default.
-		DestructiveGuard: l.Config.DestructiveGuard,
-		ShellGuardAllow:  l.Config.ShellGuardAllow,
+		DestructiveGuard:  l.Config.DestructiveGuard,
+		ShellGuardAllow:   l.Config.ShellGuardAllow,
+		ShellGuardDenyRec: l.Config.ShellGuardDenyRec,
 	}
 }
 

@@ -334,7 +334,11 @@ type retainedProposal struct {
 	basisDigest string
 	artifactDir string
 	deltaDigest string
-	world       string
+	// authorityPlanDigest is the compiled permission plan the world that
+	// produced this proposal enforced — the seal fact's citation, carried so
+	// settlement can record the declaration it is the commit-time monitor for.
+	authorityPlanDigest string
+	world               string
 	// target is "host" for a host-git settlement or "session" for a manifest
 	// that settles into the container session's workspace. session is the
 	// live world for the latter; a session-target proposal is not rehydrated.
@@ -771,6 +775,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		}
 		authority, aerr := resolveDispatchAuthority(rt, subParams.Role)
 		if aerr != nil {
+			// The declaration could not be compiled into a plan its monitors
+			// cover: refuse before the world exists, so no unenforceable
+			// posture is ever provisioned (Stage 2 fail-closed gate).
 			return retainedRunResult{}, fmt.Errorf("delegate: %w", aerr)
 		}
 		ss, seedBasis, seedDigest, perr := openDispatchWorld(ctx, rt, authority)
@@ -779,12 +786,12 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			// stuck-child deadline may start counting (yaah-95ri.2).
 			NotifySubAgentReady(ctx)
 			if report {
-				return runDispatchContainer(ctx, rt, parent, prompt, subParams, timeout, worldRes, ss)
+				return runDispatchContainer(ctx, rt, parent, prompt, subParams, timeout, worldRes, authority, ss)
 			}
 			if containerSession {
 				basis, basisDigest = seedBasis, seedDigest
 			}
-			return runDispatchContainerProposal(ctx, rt, parent, prompt, subParams, timeout, worldRes, ss, basis, basisDigest)
+			return runDispatchContainerProposal(ctx, rt, parent, prompt, subParams, timeout, worldRes, authority, ss, basis, basisDigest)
 		}
 		// Preflight failed before any work exists: auto may step down to the
 		// worktree (recording the degradation); an explicit container fails

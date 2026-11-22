@@ -358,6 +358,20 @@ func supervisorSvcGuardCheck(svc *supervision.Service) func(ownerID, toolName, a
 	return svc.GuardCheck()
 }
 
+// supervisorSvcShellAllowlistRec extracts the recorder that keeps a
+// role-allowlist refusal legible (the role_shell_allowlist rule) from
+// the session's supervisor service — the status firing and the trace
+// fact the global guard's denials already get. A nil service — tracing
+// off, or a startup that never reached the goatherd branch — yields a
+// nil recorder: the refusal still denies, it simply leaves no detail
+// behind, which is the pre-recorder wiring.
+func supervisorSvcShellAllowlistRec(svc *supervision.Service) supervision.DenyRecorder {
+	if svc == nil {
+		return nil
+	}
+	return svc.ShellAllowlistDenyRecorder()
+}
+
 // wireSubAgentNetwork lowers agents.subagent.network into the confinement policy
 // a confined dispatch carries, starting the session's egress broker when the mode
 // calls for one. The broker is returned so its owner can stop it; nil otherwise.

@@ -39,6 +39,12 @@ func TestLoadProposalRegistry_RehydratesAndSettles(t *testing.T) {
 	if got.world != "container" || got.basisDigest != f.basisDigest {
 		t.Fatalf("rehydrated world/basis = %q/%s", got.world, got.basisDigest)
 	}
+	// The declaration identity the seal cited must survive the rehydrate, or a
+	// settlement in this process would cite nothing.
+	if got.authorityPlanDigest != testAuthorityPlanDigest {
+		t.Errorf("rehydrated authority plan digest = %q, want the sealed %q",
+			got.authorityPlanDigest, testAuthorityPlanDigest)
+	}
 	if got.result != "wrote "+sealed.id {
 		t.Errorf("result = %q", got.result)
 	}
@@ -116,11 +122,11 @@ func TestLoadProposalRegistry_IgnoresAnotherSession(t *testing.T) {
 	}
 }
 
-func TestSettleGitDelta_RecordsSettledFact(t *testing.T) {
-	f := newDeltaFixture(t)
-	p := f.add(t, "proposal:fact", rehydrateDelta())
-	f.settle(t, p.id, "select")
-
+// proposalFactPayload returns the retained payload of the first fact with the
+// given schema on the session root's owner path, so a test can pin what a lane
+// recorded and not merely that it recorded something.
+func proposalFactPayload(t *testing.T, f *deltaFixture, schema string) map[string]any {
+	t.Helper()
 	parent, ok := f.fx.mgr.Get(f.rootID)
 	if !ok {
 		t.Fatal("root scope missing")
@@ -129,19 +135,31 @@ func TestSettleGitDelta_RecordsSettledFact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read owner prefix: %v", err)
 	}
-	found := false
 	for _, id := range slice.FactIDs() {
-		rec, ok := slice.FactsByID[id]
-		if !ok {
+		rec, ok := slice.FactsByID[id].(kerneltrace.Record)
+		if !ok || rec.Envelope.SchemaRef != schema {
 			continue
 		}
-		if rec.GetEnvelope().SchemaRef == SchemaProposalSettled {
-			found = true
-			break
-		}
+		return rec.Body.Payload
 	}
-	if !found {
-		t.Fatalf("no %s fact on the host root owner path", SchemaProposalSettled)
+	t.Fatalf("no %s fact on the host root owner path", schema)
+	return nil
+}
+
+func TestSettleGitDelta_RecordsSettledFact(t *testing.T) {
+	f := newDeltaFixture(t)
+	p := f.add(t, "proposal:fact", rehydrateDelta())
+	f.settle(t, p.id, "select")
+
+	payload := proposalFactPayload(t, f, SchemaProposalSettled)
+	if got, _ := payload["manifest_digest"].(string); got != p.deltaDigest {
+		t.Errorf("settle fact manifest_digest = %v, want %q", payload["manifest_digest"], p.deltaDigest)
+	}
+	// The settlement is the commit-time monitor of the declaration the world ran
+	// under, so it must cite the same plan the seal cited.
+	if got, _ := payload["authority_plan_digest"].(string); got == "" || got != p.authorityPlanDigest {
+		t.Errorf("settle fact authority_plan_digest = %v, want %q",
+			payload["authority_plan_digest"], p.authorityPlanDigest)
 	}
 }
 
@@ -177,12 +195,38 @@ func TestPersistGitDelta_RefusesCollidingArtifactDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := rehydrateDelta()
-	if _, _, err := persistGitDelta(context.Background(), f.repo, "proposal:1:2", first, "", "", "", f.sessionID, f.rootID, "host", f.basisState, f.basisDigest); err != nil {
+	if _, _, err := persistGitDelta(context.Background(), f.repo, "proposal:1:2", first, "", "", "", f.sessionID, f.rootID, "host", f.basisState, f.basisDigest, ""); err != nil {
 		t.Fatalf("first persist: %v", err)
 	}
 	// This id sanitizes to the same directory segment as proposal:1:2.
-	if _, _, err := persistGitDelta(context.Background(), f.repo, "proposal-1-2", first, "", "", "", f.sessionID, f.rootID, "host", f.basisState, f.basisDigest); err == nil {
+	if _, _, err := persistGitDelta(context.Background(), f.repo, "proposal-1-2", first, "", "", "", f.sessionID, f.rootID, "host", f.basisState, f.basisDigest, ""); err == nil {
 		t.Fatal("a colliding id must not overwrite the existing artifact")
+	}
+}
+
+// TestPersistGitDelta_PersistsAuthorityPlanDigest pins the declaration identity
+// into meta.json and back out again. The seal's citation has to survive a
+// restart: a proposal rehydrated in a later process settles against the plan the
+// world actually enforced, not against a digest it cannot know.
+func TestPersistGitDelta_PersistsAuthorityPlanDigest(t *testing.T) {
+	f := newDeltaFixture(t)
+	p := f.add(t, "proposal:plan-digest", rehydrateDelta())
+
+	var meta proposalMeta
+	if err := readJSON(filepath.Join(p.artifactDir, proposalMetaFile), &meta); err != nil {
+		t.Fatalf("read meta: %v", err)
+	}
+	if meta.AuthorityPlanDigest != testAuthorityPlanDigest {
+		t.Fatalf("meta authority plan digest = %q, want the sealed %q",
+			meta.AuthorityPlanDigest, testAuthorityPlanDigest)
+	}
+
+	reg, warnings := LoadProposalRegistry(f.repo, f.fx.mgr, f.rootID, f.sessionID)
+	if len(warnings) != 0 || len(reg.all()) != 1 {
+		t.Fatalf("proposals = %d, warnings %v; want one", len(reg.all()), warnings)
+	}
+	if got := reg.all()[0].authorityPlanDigest; got != testAuthorityPlanDigest {
+		t.Errorf("rehydrated authority plan digest = %q, want the sealed %q", got, testAuthorityPlanDigest)
 	}
 }
 
@@ -225,7 +269,7 @@ func TestApplyGitDeltaWorkspace(t *testing.T) {
 
 func TestLoadProposalRegistry_SessionTargetNotRehydrated(t *testing.T) {
 	f := newDeltaFixture(t)
-	if _, _, err := persistGitDelta(context.Background(), f.repo, "proposal:session", rehydrateDelta(), "", "", "", f.sessionID, f.rootID, "session", f.basisState, f.basisDigest); err != nil {
+	if _, _, err := persistGitDelta(context.Background(), f.repo, "proposal:session", rehydrateDelta(), "", "", "", f.sessionID, f.rootID, "session", f.basisState, f.basisDigest, ""); err != nil {
 		t.Fatalf("persist: %v", err)
 	}
 	reg, warnings := LoadProposalRegistry(f.repo, f.fx.mgr, f.rootID, f.sessionID)
@@ -239,7 +283,7 @@ func TestLoadProposalRegistry_SessionTargetNotRehydrated(t *testing.T) {
 
 func TestLoadProposalRegistry_SessionTargetSettledConsumed(t *testing.T) {
 	f := newDeltaFixture(t)
-	dir, _, err := persistGitDelta(context.Background(), f.repo, "proposal:session-settled", rehydrateDelta(), "", "", "", f.sessionID, f.rootID, "session", f.basisState, f.basisDigest)
+	dir, _, err := persistGitDelta(context.Background(), f.repo, "proposal:session-settled", rehydrateDelta(), "", "", "", f.sessionID, f.rootID, "session", f.basisState, f.basisDigest, "")
 	if err != nil {
 		t.Fatalf("persist: %v", err)
 	}

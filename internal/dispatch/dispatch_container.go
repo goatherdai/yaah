@@ -255,6 +255,7 @@ func runDispatchContainer(
 	subParams jobs.SubAgentParams,
 	timeout time.Duration,
 	res subagent.WorldResolution,
+	authority dispatchAuthority,
 	sandbox *substrate.SessionSandbox,
 ) (out retainedRunResult, runErr error) {
 	recordDispatchWorld(ctx, res)
@@ -270,6 +271,7 @@ func runDispatchContainer(
 		return retainedRunResult{}, ferr
 	}
 	recordWorldFact(ctx, rt.ScopeManager, scope.ID(), res)
+	recordAuthorityFact(ctx, rt.ScopeManager, scope.ID(), authority)
 
 	// Deferred so no return path — a body error, a supervisor halt, a panic —
 	// leaves the container running. Both steps are bounded and cancel-free:
@@ -319,6 +321,7 @@ func runDispatchContainerProposal(
 	subParams jobs.SubAgentParams,
 	timeout time.Duration,
 	res subagent.WorldResolution,
+	authority dispatchAuthority,
 	sandbox *substrate.SessionSandbox,
 	basisState kerneltrace.WorkspaceState,
 	basisDigest string,
@@ -356,6 +359,7 @@ func runDispatchContainerProposal(
 		return retainedRunResult{}, nil
 	}
 	recordWorldFact(ctx, rt.ScopeManager, scope.ID(), res)
+	recordAuthorityFact(ctx, rt.ScopeManager, scope.ID(), authority)
 
 	root := sandbox.Workspace().WorkDir()
 
@@ -397,7 +401,7 @@ func runDispatchContainerProposal(
 		env.Error = trimResult(strings.Join(notes, "; "))
 		return retainedRunResult{}, nil
 	}
-	dir, manifestDigest, perr := persistGitDelta(ctx, rt.RepoPath, id, delta, review, result, bodyFailure, rt.SessionID, rt.RootScopeID, target, basisState, basisDigest)
+	dir, manifestDigest, perr := persistGitDelta(ctx, rt.RepoPath, id, delta, review, result, bodyFailure, rt.SessionID, rt.RootScopeID, target, basisState, basisDigest, authority.planDigest)
 	if perr != nil {
 		notes = append(notes, "seal: persist delta: "+perr.Error())
 		env.Status = "error"
@@ -406,13 +410,14 @@ func runDispatchContainerProposal(
 		return retainedRunResult{}, nil
 	}
 	if _, ferr := parent.AppendFact(ctx, SchemaProposalSealed, "proposal", map[string]any{
-		"proposal_id":     id,
-		"world":           string(subagent.WorldContainer),
-		"target":          target,
-		"manifest_digest": manifestDigest,
-		"files":           delta.Paths(),
-		"basis_digest":    basisDigest,
-		"artifact_dir":    dir,
+		"proposal_id":           id,
+		"world":                 string(subagent.WorldContainer),
+		"target":                target,
+		"manifest_digest":       manifestDigest,
+		"files":                 delta.Paths(),
+		"basis_digest":          basisDigest,
+		"artifact_dir":          dir,
+		"authority_plan_digest": authority.planDigest,
 	}); ferr != nil {
 		// The manifest is durable; a missing seal fact is a record gap, not a
 		// reason to throw the work away. Carry it to the caller visibly.
@@ -432,9 +437,12 @@ func runDispatchContainerProposal(
 		basisDigest: basisDigest,
 		artifactDir: dir,
 		deltaDigest: manifestDigest,
-		world:       string(subagent.WorldContainer),
-		target:      target,
-		session:     session,
+		// The declaration this settlement will cite: the jail lane's compiled
+		// plan, carried into the proposal instead of re-derived at commit.
+		authorityPlanDigest: authority.planDigest,
+		world:               string(subagent.WorldContainer),
+		target:              target,
+		session:             session,
 	}
 	rt.Proposals.add(proposal)
 	rt.Proposals.recordSealConflictFacts(ctx, proposal)

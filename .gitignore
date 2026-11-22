@@ -1,5 +1,6 @@
 # Build output
 /yaah
+/cataloggen
 /dist/
 *.exe
 *.dll
@@ -27,6 +28,7 @@ go.work.sum
 # Scratch / sandbox directories
 .sandbox/
 .scratch/
+.scratch-build-check/
 .yaah/
 .idea/
 *.swp

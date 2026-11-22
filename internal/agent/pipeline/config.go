@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	kerneltrace "github.com/goatherdai/goatherd-kernel"
+	"github.com/goatherdai/yaah/internal/agent/supervision"
 	"github.com/goatherdai/yaah/internal/config"
 	"github.com/goatherdai/yaah/internal/toolcontract"
 	"github.com/goatherdai/yaah/internal/types"
@@ -126,6 +127,14 @@ type PipelineConfig struct {
 	// nil, which inherits the global default the check already carries.
 	// An explicitly empty list is deny-all — today's behavior.
 	ShellGuardAllow []string
+
+	// ShellGuardDenyRec, when non-nil, records a refusal the role's own
+	// allowlist made (supervision's role_shell_allowlist rule) on the
+	// supervision service's status and trace surfaces, so a per-role
+	// deny is as legible afterwards as the global guard's. Nil records
+	// nothing: the call is still denied, it simply leaves no detail
+	// behind — the pre-recorder behavior.
+	ShellGuardDenyRec supervision.DenyRecorder
 
 	// ConsolidateDispatch is the cadence-driven "nudge" callback
 	// (docs/compaction-as-sleep.md §7). When the consolidate middleware's
@@ -262,8 +271,9 @@ var subAgentBuilders = map[string]func(PipelineConfig) Middleware{
 		// can never deny anything; NewSubAgentPipeline installs it
 		// only when cfg.DestructiveGuard is wired. The role's own
 		// allowlist rides along, replacing the global default the
-		// check carries.
-		return NewSupervisorGuardMiddleware(cfg.DestructiveGuard, cfg.SessionID, cfg.ShellGuardAllow)
+		// check carries, and so does the recorder that keeps a
+		// role-level refusal visible on the status and trace surfaces.
+		return NewSupervisorGuardMiddleware(cfg.DestructiveGuard, cfg.SessionID, cfg.ShellGuardAllow, cfg.ShellGuardDenyRec)
 	},
 	// steer: the supervision inject channel (adoption plan A2). Unlike
 	// the orchestrator builder, no onDrain compaction hook — sub-agent

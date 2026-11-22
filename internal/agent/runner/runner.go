@@ -111,6 +111,12 @@ type DelegateToolOpts struct {
 	// execution. Nil when tracing is off or the guard is disabled.
 	GuardCheck func(ownerID, toolName, argsJSON string) string
 
+	// ShellGuardDenyRec, when non-nil, records a refusal the dispatching
+	// role's own allowlist made, so the per-role deny path is as legible
+	// on the supervision status and trace surfaces as the global
+	// guard's. Nil records nothing; every verdict is unchanged.
+	ShellGuardDenyRec supervision.DenyRecorder
+
 	// ResolveProviderByName translates a configured provider name into a
 	// live agent.Provider. Injected from the cmd layer because provider
 	// construction (makeProvider) belongs with the rest of the CLI wiring.
@@ -177,6 +183,7 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 		resumedScopes:         opts.ResumedScopes,
 		traceStore:            opts.TraceStore,
 		guardCheck:            opts.GuardCheck,
+		guardDenyRec:          opts.ShellGuardDenyRec,
 		resolveProviderByName: opts.ResolveProviderByName,
 	}, depth)
 

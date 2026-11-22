@@ -12,18 +12,22 @@
 package supervision
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/goatherd-runtime"
 	supervisor "github.com/goatherdai/goatherd-runtime/supervisor"
 
+	"github.com/goatherdai/yaah/internal/effectpolicy"
 	"github.com/goatherdai/yaah/internal/permissions"
 	"github.com/goatherdai/yaah/internal/supervisionapi"
 	"github.com/goatherdai/yaah/internal/types"
@@ -70,12 +74,56 @@ func (r AdvisoryRules) Any() bool {
 // B4): the `supervisor status` surface lists these, so the
 // orchestrator can see which rules acted this session without reading
 // logs. Kind is the intervention type as fired (inject, halt, deny).
-// The type lives in supervisionapi so the supervisor tool can render it
-// without importing this package.
+// A deny carries its detail — the refused command and the reason the
+// model was given — in Command and Reason, so the line names what was
+// blocked and why. The type lives in supervisionapi so the supervisor
+// tool can render it without importing this package.
 type Firing = supervisionapi.Firing
 
-// firingKey aggregates firings per rule, scope, and kind.
+// firingKey aggregates firings per rule, scope, and kind — the counting
+// axis only. A blocking deny's refused command and reason are DETAIL, not
+// identity: keying by them made every distinct — or oversized — refused
+// command a fresh map entry, so a model that kept inventing commands grew
+// `supervisor status` without bound. The key cardinality is now bounded by
+// rules × scopes × kinds, and maxFiringKeys caps it outright.
 type firingKey struct{ rule, scope, kind string }
+
+// firingEntry is one key's aggregate: the count, plus the most recent deny
+// detail — the command the guard refused and the reason the model was
+// given — so the status line still names what was blocked and why without
+// the detail multiplying the line count. Advisory firings carry no detail,
+// so their entries hold only the count.
+type firingEntry struct {
+	count   int
+	command string
+	reason  string
+}
+
+// maxFiringKeys caps the firing map. The key shape alone bounds the map at
+// rules × scopes × kinds; this is the backstop for a session that forks an
+// unbounded number of scopes. A key past the cap folds into one
+// per-rule-and-kind overflow entry (empty scope), so the count stays
+// visible and the map can exceed the cap by at most one entry per rule and
+// kind.
+const maxFiringKeys = 256
+
+// maxDenyDetailBytes bounds one stored deny detail string (the refused
+// command, and the reason beside it). A guard denial quotes the command it
+// refused, and a model can hand it a megabyte of text: the status surface,
+// the trace fact, and the map entry all keep at most this much, so status
+// stays a summary and the fact payload stays small.
+const maxDenyDetailBytes = 160
+
+// denyFactTimeout bounds one deny fact write. The write runs off the
+// dispatch path (appendDenyFact), so this is a ceiling on how long a
+// stalled trace store may hold a fact writer — never on the verdict.
+const denyFactTimeout = 2 * time.Second
+
+// maxPendingDenyFacts bounds the concurrent deny-fact writers. A denial is
+// an event a broken store can produce faster than it can record, so the
+// writers are capped: past the cap a fact is dropped (the counting firing
+// already holds the denial) instead of piling up goroutines.
+const maxPendingDenyFacts = 32
 
 // Service owns the kernel supervisor for one session and the drain
 // goroutine that turns its interventions into steering.
@@ -95,7 +143,19 @@ type Service struct {
 	// applied: a firing dropped against the root or refused by the
 	// halt gate still fired, and status says so.
 	firingsMu sync.Mutex
-	firings   map[firingKey]int
+	firings   map[firingKey]*firingEntry
+
+	// factSem caps the in-flight deny-fact writers and factWG is their
+	// join handle, so a verdict never waits on a store and Close never
+	// outlives a writer. Both are touched under mu (startFactWrite) so a
+	// writer can never gain a WaitGroup count after Close's Wait began.
+	factSem chan struct{}
+	factWG  sync.WaitGroup
+
+	// denyFact writes one deny fact, defaulting to writeDenyFact. It is a
+	// field rather than a direct call so a test can substitute a stalled
+	// store and prove the verdict does not wait on it.
+	denyFact denyFactWrite
 
 	// mu guards the lifecycle transitions: wg.Add in Start must never
 	// race wg.Wait in Close — the WaitGroup reuse rule — so both hold
@@ -145,7 +205,6 @@ func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 		if iv == nil || iv.Type != supervisor.InterventionDeny {
 			return ""
 		}
-		s.recordFiring("destructive_shell_guard", iv)
 		// Fail closed: a deny verdict denies regardless of whether the
 		// payload type-asserts or carries text. A silent empty string
 		// here would turn a non-string (or empty) payload into an
@@ -153,8 +212,15 @@ func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 		// calls pass through.
 		reason, ok := iv.Payload.(string)
 		if !ok || reason == "" {
-			return "Blocked destructive operation. Supervisor denied."
+			reason = "Blocked destructive operation. Supervisor denied."
 		}
+		// The deny records what was refused (the command under the same
+		// "cmd" key the declaration carries) and why, beside the count
+		// and as a durable fact on the refused scope. Recording cannot
+		// move the verdict: the reason returns below either way.
+		cmd, _ := payload["cmd"].(string)
+		s.recordDenial(shellGuardRuleName, iv.ScopeID, string(iv.Type), cmd, reason)
+		s.appendDenyFact(iv.ScopeID, shellGuardRuleName, toolName, cmd, reason)
 		return reason
 	}
 }
@@ -251,6 +317,44 @@ func destructiveMatch(kernelMatch func(kerneltrace.EffectEvent) bool) func(kerne
 	}
 }
 
+// SchemaShellGuardDeny is the trace fact one blocked shell call appends
+// (adoption plan B2): a Capture record on the refused sub-agent's own
+// owner path naming the rule, the tool, the command, and the reason it
+// was refused with. It sits beside the kernel's goatherd.supervisor.*
+// records under a schema ref of its own, so an existing trace reader
+// keeps working unchanged.
+const SchemaShellGuardDeny = "yaah.supervisor.shell_guard.deny.v1"
+
+// ShellGuardDenyKind is the deny fact's kind label, in the same
+// "supervisor:*" label family Scope.Inject writes.
+const ShellGuardDenyKind = "supervisor:deny"
+
+// shellGuardRuleName is the guard's rule name, and so the name its
+// denials are counted and recorded under: one constant, because the rule
+// a trace names and the rule status counts must never diverge.
+const shellGuardRuleName = "destructive_shell_guard"
+
+// shellAllowlistRuleName is the role-allowlist deny's rule name, and so
+// the name those refusals are counted and recorded under. It is
+// deliberately distinct from shellGuardRuleName: the global guard and a
+// role's own allow_commands list are different authorities, and a status
+// line or a trace fact that named either as the other would misreport
+// which one refused.
+const shellAllowlistRuleName = "role_shell_allowlist"
+
+// scopeIDPrefix is how the scope manager keys a scope: "scope:" plus the
+// scope's trace owner. A deny recorded from a sub-agent loop knows only
+// the owner, so it needs the prefix to address the same scope the
+// kernel's own denies name.
+const scopeIDPrefix = "scope:"
+
+// shellDenyKind is the status-surface kind both deny paths count under —
+// the kernel's deny intervention rendered as the string the global guard
+// already records (`string(iv.Type)`) — so a role-allowlist refusal
+// aggregates exactly like a global one instead of inventing a second
+// spelling of "deny".
+var shellDenyKind = string(supervisor.InterventionDeny)
+
 // shellGuardRule composes the blocking shell guard from the kernel's
 // DestructiveToolGuard (adoption plan B2, decision D3: "default-deny
 // for bash"), reusing the kernel's deny action verbatim. The kernel's
@@ -267,36 +371,131 @@ func destructiveMatch(kernelMatch func(kerneltrace.EffectEvent) bool) func(kerne
 // (status, output) and stop pass: a command is the hazard, and only
 // the start action carries one.
 //
-// allow is the guard's deny-all escape hatch: a command matching one of
-// these globs dispatches, everything else is denied. Empty is the
-// historical default-deny — the rule never inspects the command it
-// cannot admit.
-func shellGuardRule(allow []string) supervisor.SupervisionRule {
+// plan is the guard's authority surface (shellGuardPlan): a command
+// matching one of the allowlist globs dispatches, everything else is
+// denied. An empty allowlist compiles to a plan that denies every shell
+// call — the historical default-deny — so the rule never inspects the
+// command it cannot admit.
+func shellGuardRule(plan effectpolicy.Plan) supervisor.SupervisionRule {
 	guard := supervisor.DestructiveToolGuard()
 	return supervisor.SupervisionRule{
-		Name: "destructive_shell_guard",
+		Name: shellGuardRuleName,
 		Match: func(e kerneltrace.EffectEvent) bool {
 			if e.Mode != kerneltrace.Declaration {
 				return false
 			}
-			switch e.KindLabel {
-			case "bash", "powershell":
-				// A shell call with no command is unclassifiable —
-				// it cannot match an allowlist, so it is denied.
-				cmd, _ := e.Payload["cmd"].(string)
-				return !commandAllowed(allow, cmd)
-			case "background_process":
-				cmd, _ := e.Payload["cmd"].(string)
-				if cmd == "" {
-					// Read-only actions carry no command: nothing to admit.
-					return false
-				}
-				return !commandAllowed(allow, cmd)
+			// The command arrives under "cmd" (GuardCheck's payload
+			// shape, the same key the trace middleware stamps). A
+			// shell call carrying none is still a guarded effect:
+			// it matches no allowlist pattern and is denied.
+			cmd, _ := e.Payload["cmd"].(string)
+			eff, guarded := shellGuardEffect(e.KindLabel, cmd)
+			if !guarded {
+				return false
 			}
-			return false
+			return plan.Check(eff) != nil
 		},
 		Action: guard.Action,
 	}
+}
+
+// shellGuardPlan compiles a shell-command allowlist into the guard's
+// authority plan: deny every shell effect whose command does not match one
+// of the allowlist globs.
+//
+// The plan reads exactly that sentence. shellKinds is the guarded surface
+// — both shells plus background_process's command-running action — and
+// allowedCmd is the disjunction of one command atom per allowlist pattern,
+// each carrying the anchored expression permissions.GlobRegexp derives from
+// the same glob permissions.GlobMatch matches. Denying
+// shellKinds.And(allowedCmd.Not()) permits a call exactly when it is not a
+// guarded shell, or is one whose command matches: an empty allowlist leaves
+// allowedCmd as Nothing(), whose complement is All(), so every shell call
+// falls under the deny.
+func shellGuardPlan(allow []string) effectpolicy.Plan {
+	shellKinds := effectpolicy.Exact("bash").
+		Or(effectpolicy.Exact("powershell")).
+		Or(effectpolicy.Exact("background_process"))
+	allowedCmd := effectpolicy.Nothing()
+	for _, pattern := range allow {
+		expr, err := permissions.GlobRegexp(pattern)
+		if err != nil {
+			// An uninterpretable pattern admits nothing in
+			// permissions.GlobMatch either: a rule that cannot be read
+			// must not widen what its author wrote.
+			continue
+		}
+		allowedCmd = allowedCmd.Or(effectpolicy.Field("command", effectpolicy.Matches, expr))
+	}
+	return effectpolicy.Plan{}.DenyKind(shellKinds.And(allowedCmd.Not()))
+}
+
+// shellMetacharacters are the shell's control and redirection operators:
+// `;` `&` (covers `&&`) `|` (covers `||`) the backtick, `$` (covers `$(` and
+// `${`), the redirections `>` and `<`, and the raw newline/CR that separate
+// commands as surely as `;` does. A command carrying one composes, chains, or
+// redirects — and its text is no longer a description of what will run.
+const shellMetacharacters = ";&|`$<>\n\r"
+
+// shellHasMetacharacter reports whether a command carries a shell control or
+// redirection operator.
+func shellHasMetacharacter(cmd string) bool {
+	return strings.ContainsAny(cmd, shellMetacharacters)
+}
+
+// unsafeCommandField is the effect field a metacharacter-carrying command is
+// attached under: a name no allowlist atom reads (shellGuardPlan compiles its
+// atoms over "command" only).
+const unsafeCommandField = "unsafe_command"
+
+// shellGuardEffect classifies one call as the guard's effect: the tool's
+// kind plus the command it carries. The second return is false when the call
+// is not a guarded shell effect at all — a non-shell tool, or
+// background_process's read-only actions, which carry no command and are the
+// same pass-through as before.
+//
+// The command field carries the glob-normalized form of the command, because
+// the plan's patterns are compiled from normalized globs; matching the
+// normalized command is what reproduces permissions.GlobMatch's verdict
+// exactly (a Windows `dir C:\x` that `dir C:/*` admits).
+//
+// A command carrying a shell control or redirection operator (see
+// shellMetacharacters) is attached under unsafeCommandField instead, so the
+// effect matches NO allowlist pattern — not even a bare `*`. The glob
+// vocabulary cannot express the difference: `git status*` compiles to
+// `^git status.*$`, which admits `git status; rm -rf .` just as happily as
+// `git status -s`, and a developer or tester dispatch would then carry every
+// chained, piped, or redirected command its role's list was meant to exclude.
+// The allowlist author wrote a description of the commands the role may run;
+// a command that composes others is outside what any such description can
+// admit, so the guard denies it (the call may still pass the caller's own
+// check and the approval gate — this net is narrow by construction).
+//
+// A call with no command attaches no command field rather than an empty one:
+// an absent field makes every atom over it false, so the plan denies — the
+// guard's fail-closed reading of an unclassifiable call, and the same verdict
+// permissions.GlobMatch gives the empty string, which no pattern (not even
+// "*") admits.
+func shellGuardEffect(kind, cmd string) (effectpolicy.Effect, bool) {
+	switch kind {
+	case "bash", "powershell":
+	case "background_process":
+		if cmd == "" {
+			// Read-only actions carry no command: nothing to admit.
+			return effectpolicy.Effect{}, false
+		}
+	default:
+		return effectpolicy.Effect{}, false
+	}
+	eff := effectpolicy.Effect{Kind: kind}
+	if cmd != "" {
+		if shellHasMetacharacter(cmd) {
+			eff.Fields = map[string]any{unsafeCommandField: cmd}
+		} else {
+			eff.Fields = map[string]any{"command": permissions.NormalizeGlobValue(cmd)}
+		}
+	}
+	return eff, true
 }
 
 // shellGuardTool reports whether the shell guard inspects this tool's
@@ -323,26 +522,6 @@ func toolCommand(argsJSON string) string {
 	return args.Command
 }
 
-// commandAllowed reports whether the shell guard's allowlist admits this
-// command. Patterns are the permissions ruleset's own globs, matched in
-// full against the raw command string (permissions.GlobMatch):
-// `git status*` admits `git status -s` and refuses `echo git status`.
-//
-// Fail closed on both ends: an empty command matches nothing even
-// against a "*" pattern (an absent command is not a command), and an
-// empty allowlist admits nothing — the guard's default-deny.
-func commandAllowed(allow []string, command string) bool {
-	if command == "" {
-		return false
-	}
-	for _, pattern := range allow {
-		if permissions.GlobMatch(pattern, command) {
-			return true
-		}
-	}
-	return false
-}
-
 // WithShellAllowlist narrows a guard check to one role's shell-command
 // allowlist. A sub-agent loop's owner ID is the trace session, not the
 // role name, so the guard cannot resolve a role's allowlist when it
@@ -356,28 +535,77 @@ func commandAllowed(allow []string, command string) bool {
 // shell call is refused with a reason naming the role's allowlist.
 // Non-shell tools and background_process's read-only actions are the
 // global check's business either way.
-func WithShellAllowlist(check func(ownerID, toolName, argsJSON string) string, allow []string) func(ownerID, toolName, argsJSON string) string {
-	if check == nil || allow == nil {
+//
+// rec, when wired, receives every refusal this wrapper makes, so a
+// role's own allowlist is as legible after the fact as the global
+// guard's: the reason still returns unchanged, and recording never
+// moves the verdict. Omitting it is the pre-recorder shape — the deny
+// stands and nothing is recorded.
+func WithShellAllowlist(check func(ownerID, toolName, argsJSON string) string, allow []string, rec ...DenyRecorder) func(ownerID, toolName, argsJSON string) string {
+	if allow == nil {
 		return check
 	}
+	return WithShellAllowlistPlan(check, shellGuardPlan(allow), rec...)
+}
+
+// DenyRecorder records one refusal a guard wrapper made, so it stays
+// legible afterwards on both surfaces a reader has: the status firing
+// (scope, tool, command, reason) and a durable trace fact on the
+// refused scope. scopeID is the owner the check addressed — the
+// loop's trace session, not the kernel's scope address — which the
+// recorder resolves to the scope the manager knows.
+type DenyRecorder func(scopeID, tool, cmd, reason string)
+
+// WithShellAllowlistPlan narrows a guard check to an already-compiled
+// authority plan — the plan shellGuardPlan builds from a role's allowlist,
+// and the same shape the global guard rule carries. A role's narrowing and
+// the global default therefore run one matching mechanism
+// (effectpolicy.Plan.Check) rather than two: a guarded shell effect the plan
+// refuses is denied with a reason naming the role's allowlist, and everything
+// the plan does not classify — structured tools, background_process's
+// read-only actions — stays the wrapped check's business untouched.
+//
+// rec, when wired, records the refusal before the reason returns: both
+// deny branches (no command to match, and a command outside the list)
+// are refusals the status and trace must be able to name. An admitted
+// command records nothing.
+func WithShellAllowlistPlan(check func(ownerID, toolName, argsJSON string) string, plan effectpolicy.Plan, rec ...DenyRecorder) func(ownerID, toolName, argsJSON string) string {
+	if check == nil {
+		return nil
+	}
 	return func(ownerID, toolName, argsJSON string) string {
-		if !shellGuardTool(toolName) {
+		cmd := toolCommand(argsJSON)
+		eff, guarded := shellGuardEffect(toolName, cmd)
+		if !guarded {
 			return check(ownerID, toolName, argsJSON)
 		}
-		cmd := toolCommand(argsJSON)
-		if cmd == "" {
-			if toolName == "background_process" {
-				// status/output/stop carry no command — the same
-				// pass the global rule gives them.
-				return check(ownerID, toolName, argsJSON)
-			}
-			return "shell call carries no command to check against the role's allowlist"
-		}
-		if commandAllowed(allow, cmd) {
+		if plan.Check(eff) == nil {
 			return ""
 		}
-		return fmt.Sprintf("command %q is not in this role's allow_commands allowlist", cmd)
+		reason := fmt.Sprintf("command %q is not in this role's allow_commands allowlist", cmd)
+		switch {
+		case cmd == "":
+			reason = "shell call carries no command to check against the role's allowlist"
+		case shellHasMetacharacter(cmd):
+			// Name the real cause: the command is outside the list but
+			// not because of a near-miss glob — it composes, chains, or
+			// redirects, which no allowlist pattern can admit.
+			reason = fmt.Sprintf("command %q carries shell control or redirection operators, which no allow_commands allowlist pattern admits", cmd)
+		}
+		recordAllowlistDeny(rec, ownerID, toolName, cmd, reason)
+		return reason
 	}
+}
+
+// recordAllowlistDeny hands one role-allowlist refusal to the recorder,
+// when one was wired. An unset recorder is the backward-compatible
+// shape: the deny holds, nothing is recorded, and the caller's reason
+// is returned either way.
+func recordAllowlistDeny(rec []DenyRecorder, ownerID, tool, cmd, reason string) {
+	if len(rec) == 0 || rec[0] == nil {
+		return
+	}
+	rec[0](ownerID, tool, cmd, reason)
 }
 
 // NewService assembles the kernel supervisor with the enabled advisory
@@ -412,7 +640,15 @@ func NewService(mgr *goatherd.ScopeManager, bus *kerneltrace.EffectBus, runs *Re
 
 	sup := supervisor.NewSupervisor(mgr, bus)
 	var guard *supervisor.Supervisor
-	svc := &Service{sup: sup, mgr: mgr, runs: runs, bus: bus, rootScopeID: rootScopeID, haltRoot: haltRoot}
+	svc := &Service{
+		sup:         sup,
+		mgr:         mgr,
+		runs:        runs,
+		bus:         bus,
+		rootScopeID: rootScopeID,
+		haltRoot:    haltRoot,
+		factSem:     make(chan struct{}, maxPendingDenyFacts),
+	}
 
 	if rules.DestructiveTool {
 		sup.AddRule(advisoryRule(destructiveFileRule(), svc.recordFiring))
@@ -430,7 +666,7 @@ func NewService(mgr *goatherd.ScopeManager, bus *kerneltrace.EffectBus, runs *Re
 		// intervention the advisory drain would have to drop. Its
 		// CheckCall is the whole surface.
 		guard = supervisor.NewSupervisor(mgr, nil)
-		guard.AddRule(shellGuardRule(rules.ShellGuardAllowCommands))
+		guard.AddRule(shellGuardRule(shellGuardPlan(rules.ShellGuardAllowCommands)))
 	}
 	svc.guard = guard
 	return svc
@@ -439,23 +675,223 @@ func NewService(mgr *goatherd.ScopeManager, bus *kerneltrace.EffectBus, runs *Re
 // recordFiring counts one rule firing for the status surface (adoption
 // plan B4).
 func (s *Service) recordFiring(rule string, iv *supervisor.Intervention) {
+	s.record(rule, iv.ScopeID, string(iv.Type), "", "")
+}
+
+// recordDenial counts one blocking deny and keeps its detail — the
+// command that was refused and the reason the model was given — beside
+// the count, on the same status surface (adoption plan B4's deny path).
+// The detail is the LATEST refusal for the key and is bounded; the count
+// is the aggregate.
+func (s *Service) recordDenial(rule, scopeID, kind, command, reason string) {
+	s.record(rule, scopeID, kind, command, reason)
+}
+
+// record aggregates one firing under its rule, scope, and kind, and keeps
+// the passed detail (bounded) as that key's most recent. Advisory firings
+// pass no detail, so they only ever move the count.
+func (s *Service) record(rule, scopeID, kind, command, reason string) {
 	s.firingsMu.Lock()
+	defer s.firingsMu.Unlock()
 	if s.firings == nil {
-		s.firings = map[firingKey]int{}
+		s.firings = make(map[firingKey]*firingEntry, 8)
 	}
-	s.firings[firingKey{rule: rule, scope: iv.ScopeID, kind: string(iv.Type)}]++
-	s.firingsMu.Unlock()
+	key := firingKey{rule: rule, scope: scopeID, kind: kind}
+	if _, ok := s.firings[key]; !ok && len(s.firings) >= maxFiringKeys {
+		// Past the cap: fold into the per-rule-and-kind overflow entry.
+		// The count stays visible and the key set stays bounded.
+		key = firingKey{rule: rule, kind: kind}
+	}
+	entry, ok := s.firings[key]
+	if !ok {
+		entry = &firingEntry{}
+		s.firings[key] = entry
+	}
+	entry.count++
+	if command != "" || reason != "" {
+		entry.command = boundDenyDetail(command)
+		entry.reason = boundDenyDetail(reason)
+	}
+}
+
+// boundDenyDetail truncates one deny detail string to maxDenyDetailBytes on
+// a UTF-8 rune boundary, marking the cut with an ellipsis so a reader can
+// tell a short command from a clipped one.
+func boundDenyDetail(v string) string {
+	if len(v) <= maxDenyDetailBytes {
+		return v
+	}
+	cut := maxDenyDetailBytes
+	for cut > 0 && !utf8.RuneStart(v[cut]) {
+		cut--
+	}
+	return v[:cut] + "…"
+}
+
+// appendDenyFact records one blocked call in the refused scope's trace:
+// the durable half of the deny's legibility, so a post-hoc reader of the
+// sub-agent's own trace sees the command the guard refused, the tool
+// that carried it, and the reason given. It is a Capture fact under a
+// schema ref of its own, so a reader of the kernel's
+// goatherd.supervisor.* records is unaffected, and no rule matches it
+// (the rules read declarations, except the error-rate rule, which reads
+// captures carrying "success" — this payload has none).
+//
+// A scope the manager cannot address — a check for an owner that never
+// forked, as a test or a hand-driven call has — records no fact: the
+// firing still holds the detail, and a trace failure must never change
+// the verdict.
+//
+// rule names the authority that refused (shellGuardRuleName or
+// shellAllowlistRuleName), so one deny schema and one reader serve both
+// paths while the payload still says which one acted.
+//
+// The write is off the dispatch path: the verdict has already been decided
+// when this is called, so a stalled trace store must not delay it. Each
+// write runs in its own goroutine under a bounded context
+// (denyFactTimeout) and a bounded number may be in flight at once
+// (maxPendingDenyFacts); past that bound the fact is dropped and the
+// counting firing — which already holds the denial — is what status shows.
+// The payload's cmd and reason are bounded to maxDenyDetailBytes for the
+// same reason the status detail is: the command is model-authored text.
+func (s *Service) appendDenyFact(scopeID, rule, tool, command, reason string) {
+	if s.mgr == nil {
+		return
+	}
+	scope, ok := s.mgr.Get(scopeID)
+	if !ok {
+		slog.Debug("supervisor: shell guard deny not recorded — scope not addressable",
+			"scope", scopeID)
+		return
+	}
+	payload := map[string]any{
+		"rule":   rule,
+		"tool":   tool,
+		"cmd":    boundDenyDetail(command),
+		"reason": boundDenyDetail(reason),
+	}
+	if !s.startFactWrite() {
+		return
+	}
+	go func() {
+		defer s.factWG.Done()
+		defer func() { <-s.factSem }()
+		ctx, cancel := context.WithTimeout(context.Background(), denyFactTimeout)
+		defer cancel()
+		if err := s.writeDenyFact(ctx, scope, payload); err != nil {
+			slog.Warn("supervisor: shell guard deny not recorded in the trace",
+				"scope", scopeID, "err", err)
+		}
+	}()
+}
+
+// denyFactWrite is the durable half of a deny's legibility, as one
+// function so a test can substitute a stalled store for the real one.
+type denyFactWrite func(ctx context.Context, scope *goatherd.Scope, payload map[string]any) error
+
+// writeDenyFact appends one deny fact through the scope's own trace path —
+// the production denyFactWrite.
+func writeDenyFact(ctx context.Context, scope *goatherd.Scope, payload map[string]any) error {
+	_, err := scope.AppendFact(ctx, SchemaShellGuardDeny, ShellGuardDenyKind, payload)
+	return err
+}
+
+// writeDenyFact runs the configured fact writer, defaulting to the real
+// scope append.
+func (s *Service) writeDenyFact(ctx context.Context, scope *goatherd.Scope, payload map[string]any) error {
+	write := s.denyFact
+	if write == nil {
+		write = writeDenyFact
+	}
+	return write(ctx, scope, payload)
+}
+
+// startFactWrite reserves one in-flight fact writer. False when the bound is
+// reached, or when the service is closing: a writer must never gain a
+// WaitGroup count after Close's Wait began, so Add happens here under mu and
+// a closed service declines.
+func (s *Service) startFactWrite() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false
+	}
+	select {
+	case s.factSem <- struct{}{}:
+		s.factWG.Add(1)
+		return true
+	default:
+		slog.Debug("supervisor: deny fact dropped — too many fact writes in flight")
+		return false
+	}
+}
+
+// awaitDenyFacts blocks until every started fact write has finished — the
+// join point for Close, and for tests that read the trace back.
+func (s *Service) awaitDenyFacts() { s.factWG.Wait() }
+
+// ShellAllowlistDenyRecorder returns the recorder a sub-agent loop's
+// guard wrapper carries, so a role-allowlist refusal lands on the same
+// two surfaces the global guard's does: the `supervisor status` firing
+// (with the refused command and the reason beside the count) and a
+// durable SchemaShellGuardDeny fact on the refused scope's own owner
+// path, whose payload names shellAllowlistRuleName in its rule field.
+//
+// The wrapper knows only the loop's trace owner, while the global
+// guard's deny already carries the kernel's scope address; the recorder
+// resolves one to the other first, so both paths count and record under
+// the same scope identity. A nil service returns a nil recorder, which
+// every caller treats as "record nothing".
+func (s *Service) ShellAllowlistDenyRecorder() DenyRecorder {
+	if s == nil {
+		return nil
+	}
+	return func(scopeID, tool, cmd, reason string) {
+		scopeID = s.denyScopeID(scopeID)
+		s.recordDenial(shellAllowlistRuleName, scopeID, shellDenyKind, cmd, reason)
+		s.appendDenyFact(scopeID, shellAllowlistRuleName, tool, cmd, reason)
+	}
+}
+
+// denyScopeID resolves a deny's scope to the manager's own key. The
+// kernel hands the global guard "scope:<owner>"; the role wrapper has
+// only the loop's trace owner, which is the same owner. Whichever form
+// the manager can address wins, and an ID it cannot address comes back
+// unchanged — the refusal is still counted, only the trace fact is
+// skipped (appendDenyFact's own unaddressable-scope path).
+func (s *Service) denyScopeID(scopeID string) string {
+	if s.mgr == nil {
+		return scopeID
+	}
+	if _, ok := s.mgr.Get(scopeID); ok {
+		return scopeID
+	}
+	if qualified := scopeIDPrefix + scopeID; qualified != scopeID {
+		if _, ok := s.mgr.Get(qualified); ok {
+			return qualified
+		}
+	}
+	return scopeID
 }
 
 // Firings returns the session's counted rule firings (adoption plan
-// B4), sorted by rule then scope then kind — a deterministic snapshot
-// for `supervisor status`. Empty when no rule has acted.
+// B4), sorted by rule then scope then kind — a deterministic snapshot for
+// `supervisor status`. One aggregate per rule, scope, and kind: a deny
+// carries the most recent refused command and reason (bounded), an
+// advisory firing carries neither. Empty when no rule has acted.
 func (s *Service) Firings() []Firing {
 	s.firingsMu.Lock()
 	defer s.firingsMu.Unlock()
 	out := make([]Firing, 0, len(s.firings))
-	for k, n := range s.firings {
-		out = append(out, Firing{Rule: k.rule, Scope: k.scope, Kind: k.kind, Count: n})
+	for k, entry := range s.firings {
+		out = append(out, Firing{
+			Rule:    k.rule,
+			Scope:   k.scope,
+			Kind:    k.kind,
+			Count:   entry.count,
+			Command: entry.command,
+			Reason:  entry.reason,
+		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Rule != out[j].Rule {
@@ -520,6 +956,10 @@ func (s *Service) Close() {
 
 	s.sup.Close()
 	s.wg.Wait()
+	// Deny-fact writers are off the dispatch path, so they are joined
+	// after the drain: an in-flight append finishes (or its bounded
+	// context expires) before Close returns.
+	s.factWG.Wait()
 }
 
 // drain bridges interventions to execution. For each inject, the
