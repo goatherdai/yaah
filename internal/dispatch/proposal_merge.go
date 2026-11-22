@@ -182,7 +182,14 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 				"action":      "apply",
 				"strategy":    proposalApplyThreeWay,
 				"world":       "worktree",
-				"files":       files,
+				// The declaration this settlement is the commit-time monitor for:
+				// the digest the worktree seal cited, so a reader can tell whether
+				// the world that produced the merge and the settlement that landed
+				// it enforced one declaration. Recorded here rather than re-derived
+				// for the same reason the container lane persists it: config can
+				// move between dispatch and settlement.
+				"authority_plan_digest": p.authorityPlanDigest,
+				"files":                 files,
 			}); err != nil {
 				notes = appendSettleNote(notes, "trace: settle fact: "+err.Error())
 			}

@@ -663,3 +663,173 @@ func TestAuthorityForDispatch_BrokerHosts(t *testing.T) {
 		}
 	})
 }
+
+// TestWorktreeAuthorityForDispatch pins the worktree world's declaration: the
+// same grants, egress posture, and settlement posture the container lane reads,
+// restated with the containment posture a worktree dispatch actually enforces —
+// advisory, because that world establishes no jail, plus FallbackEnforce so the
+// declaration's clauses still compile instead of being refused on a lane with
+// no jail monitor.
+func TestWorktreeAuthorityForDispatch(t *testing.T) {
+	rt := RetainedRuntime{
+		Containment:  "paddock",
+		Network:      "broker",
+		NetworkHosts: []string{" API.Example.com. "},
+		Grants: []config.GrantConfig{
+			{Path: "src", Access: "readwrite"},
+			{Path: "docs/api", Access: "readonly"},
+		},
+	}
+	got, err := worktreeAuthorityForDispatch(rt, "developer")
+	if err != nil {
+		t.Fatalf("worktreeAuthorityForDispatch: %v", err)
+	}
+
+	// Every authority axis except containment is the container lane's, read by
+	// the same mapping, so the two worlds cite one declaration.
+	container, err := authorityForDispatch(rt, "developer")
+	if err != nil {
+		t.Fatalf("authorityForDispatch: %v", err)
+	}
+	if !reflect.DeepEqual(got.Writes, container.Writes) {
+		t.Errorf("writes = %+v, want the container lane's %+v", got.Writes, container.Writes)
+	}
+	if got.Network != container.Network || !reflect.DeepEqual(got.NetworkHosts, container.NetworkHosts) {
+		t.Errorf("network/allowlist = %q/%v, want %q/%v",
+			got.Network, got.NetworkHosts, container.Network, container.NetworkHosts)
+	}
+	if got.Delta != container.Delta {
+		t.Errorf("delta = %q, want the container lane's %q: one settlement posture", got.Delta, container.Delta)
+	}
+
+	// Containment is the one axis restated. "paddock" would otherwise claim a
+	// jail this world never established.
+	if got.Containment != permissionplan.ContainmentAdvisory || got.Fallback != permissionplan.FallbackEnforce {
+		t.Errorf("containment/fallback = %q/%q, want advisory/enforce", got.Containment, got.Fallback)
+	}
+
+	// Whatever the configured containment, the worktree declaration is advisory
+	// and accepts its clauses: the posture is a property of the world, not of the
+	// config key the container lane maps.
+	for _, setting := range []string{"", "auto", "paddock", "jail", "off", "none", "advisory"} {
+		t.Run("containment "+setting, func(t *testing.T) {
+			withGrant := RetainedRuntime{
+				Containment: setting,
+				Grants:      []config.GrantConfig{{Path: "src", Access: "readwrite"}},
+			}
+			got, err := worktreeAuthorityForDispatch(withGrant, "developer")
+			if err != nil {
+				t.Fatalf("worktreeAuthorityForDispatch: %v", err)
+			}
+			if got.Containment != permissionplan.ContainmentAdvisory || got.Fallback != permissionplan.FallbackEnforce {
+				t.Fatalf("containment/fallback = %q/%q, want advisory/enforce", got.Containment, got.Fallback)
+			}
+			// The gate still runs: the grant is declared, assigned, and covered.
+			if _, err := compileWorktreePlan(withGrant, "developer"); err != nil {
+				t.Fatalf("compileWorktreePlan: %v", err)
+			}
+		})
+	}
+
+	t.Run("an uncompilable declaration is refused, not cited", func(t *testing.T) {
+		if _, err := resolveWorktreePlanDigest(RetainedRuntime{Network: "borker"}, "developer"); err == nil {
+			t.Fatal("an unknown network mode must refuse the worktree declaration")
+		} else if !strings.Contains(err.Error(), "agents.subagent.network") {
+			t.Fatalf("error = %v, want it to name the config key", err)
+		}
+		badGrant := RetainedRuntime{Grants: []config.GrantConfig{{Path: "src", Access: "write"}}}
+		if _, err := resolveWorktreePlanDigest(badGrant, "developer"); err == nil {
+			t.Fatal("an unknown grant access must refuse the worktree declaration")
+		}
+	})
+}
+
+// TestWorktreePlanDigest_AgreesWithContainerWhereTheWorldAgrees pins the one
+// deliberate difference between the two settlement lanes' digests. The lanes
+// compile one declaration, so their digests agree exactly where both worlds
+// enforce the same containment posture — containment off/none/advisory, which
+// the container lane also lowers to advisory/enforce. Everywhere else the
+// container declares a jail and the worktree cannot, so the digests differ, and
+// they must: for that config the two worlds enforce different declarations.
+func TestWorktreePlanDigest_AgreesWithContainerWhereTheWorldAgrees(t *testing.T) {
+	grantSets := []struct {
+		name   string
+		grants []config.GrantConfig
+	}{
+		{name: "no grants"},
+		{name: "readwrite", grants: []config.GrantConfig{{Path: "src", Access: "readwrite"}}},
+		{name: "mixed", grants: []config.GrantConfig{
+			{Path: "src", Access: "readwrite"},
+			{Path: "docs/api", Access: "readonly"},
+		}},
+	}
+	networkSets := []struct {
+		name  string
+		mode  string
+		hosts []string
+	}{
+		{name: "default network"},
+		{name: "allow_all", mode: "allow_all"},
+		{name: "deny_all", mode: "deny_all"},
+		{name: "broker", mode: "broker", hosts: []string{" API.Example.com. "}},
+	}
+	// agree reports whether the two worlds enforce the same declaration for the
+	// containment setting: the container lane declares advisory only when the
+	// config does.
+	containments := []struct {
+		setting string
+		agree   bool
+	}{
+		{setting: "", agree: false},
+		{setting: "auto", agree: false},
+		{setting: "paddock", agree: false},
+		{setting: "jail", agree: false},
+		{setting: "off", agree: true},
+		{setting: "none", agree: true},
+		{setting: "advisory", agree: true},
+	}
+
+	for _, gs := range grantSets {
+		for _, ns := range networkSets {
+			for _, tc := range containments {
+				name := gs.name + "/" + ns.name + "/containment=" + tc.setting
+				t.Run(name, func(t *testing.T) {
+					rt := RetainedRuntime{
+						Network:      ns.mode,
+						NetworkHosts: ns.hosts,
+						Containment:  tc.setting,
+						Grants:       gs.grants,
+					}
+					container, err := resolveDispatchAuthority(rt, "developer")
+					if err != nil {
+						t.Fatalf("resolveDispatchAuthority: %v", err)
+					}
+					worktree, err := resolveWorktreePlanDigest(rt, "developer")
+					if err != nil {
+						t.Fatalf("resolveWorktreePlanDigest: %v", err)
+					}
+					if len(worktree) != 64 || strings.Trim(worktree, "0123456789abcdef") != "" {
+						t.Fatalf("worktree plan digest = %q, want 64 hex characters", worktree)
+					}
+					if tc.agree && worktree != container.planIdentity() {
+						t.Fatalf("digests differ where both worlds enforce one declaration: worktree %s != container %s",
+							worktree, container.planIdentity())
+					}
+					if !tc.agree && worktree == container.planIdentity() {
+						t.Fatalf("digests agree for containment %q, but the worlds enforce different declarations: %s",
+							tc.setting, worktree)
+					}
+
+					// Determinism: a restatement of one declaration is one digest.
+					again, err := resolveWorktreePlanDigest(rt, "developer")
+					if err != nil {
+						t.Fatalf("resolveWorktreePlanDigest (second): %v", err)
+					}
+					if again != worktree {
+						t.Fatalf("digest changed between identical resolutions: %q != %q", again, worktree)
+					}
+				})
+			}
+		}
+	}
+}

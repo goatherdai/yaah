@@ -26,7 +26,7 @@ deterministic predicate, not an LLM call.
 | Permission-plan `Match`/`Plan` | `internal/effectpolicy` (`Match`, `Plan`, `Conforms`) | Adopted (Stage 1) |
 | Monitor assignment / `PermissionPlan` | `internal/permissionplan` (`Authority` → `Compile` → monitors + `Digest`) | Adopted (Stage 1) |
 | Jail monitor | `internal/dispatch/dispatch_authority.go` — grants/network/containment lowered from the plan; digest recorded as `yaah.subagent.authority.v1` | Adopted (Stage 2) |
-| Settlement monitor | `internal/dispatch/git_delta.go` — delta posture declared in the plan; digest cited at settle as `authority_plan_digest` | Adopted (Stage 3) |
+| Settlement monitor | `internal/dispatch/git_delta.go` (container manifest) and `internal/dispatch/proposal_merge.go` (worktree three-way merge) — delta posture declared in the plan, digest cited at seal and settle as `authority_plan_digest` | Adopted (Stage 3) |
 | `gate` deterministic predicate (`JudgePredicate`) | `internal/workflow/assert` (named deterministic checks) + `internal/workflow/exec/gate.go` | Adopted — the `judge:` (LLM verdict) half is a yaah extension beyond Shepherd's deterministic predicate |
 | `budget`/`timeout` combinators | not present in `internal/workflow/exec` | Not ported (`yaah-hxk3.5`) |
 | Citation checking | not ported | Declined (`yaah-hxk3.2`) |
@@ -45,9 +45,29 @@ orchestrator. This is a deliberate divergence, not a port gap.
 `authorityForDispatch` declares `DeltaApply`: yaah's `select`/`apply`
 write the manifest's post-images directly, and the orchestrator invoking
 the verb is the review. `DeltaReview` is declined as a distinct posture
-because yaah has no review-gate config knob. The worktree-merge lane
-(`internal/dispatch/proposal_merge.go`) is the remaining settlement lane
-not yet tied to the plan digest.
+because yaah has no review-gate config knob.
+
+Both settlement lanes now cite the plan digest. The container lane persists
+it in `meta.json` and records `authority_plan_digest` in its sealed/settled
+facts; the worktree lane seals it in the proposal's durable metadata
+(`retainedProposalMeta`) and records it in the three-way apply's settle
+fact, so a rehydrated worktree proposal still cites the declaration it was
+settled against.
+
+The two lanes compile one declaration except for containment, because they
+confine in different places. The container world *is* the jail — it shapes
+mounts and a netns before the body runs — so `authorityForDispatch` claims
+`ContainmentJail` under `auto`/`paddock`. The worktree world is host paths
+under a git worktree and establishes no jail of its own (a declared grant or
+egress posture is enforced later, by the runner's tool-layer confinement,
+which the dispatcher does not provision), so
+`worktreeAuthorityForDispatch` declares `ContainmentAdvisory` with
+`FallbackEnforce` — advisory because no jail monitor exists for that world,
+enforce so a declaration's clauses still compile instead of being refused.
+The consequence is pinned by test: for `containment: off/none/advisory` the
+two lanes produce the same digest; for `auto`, the empty default, and
+`paddock`/`jail` they differ, and they must, because for that config the two
+worlds enforce different declarations.
 
 ## Open parity
 

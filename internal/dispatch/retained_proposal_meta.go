@@ -37,6 +37,14 @@ type retainedProposalMeta struct {
 	// TranscriptOmitted records that the conversation exceeded the snapshot
 	// bound and was dropped rather than truncated.
 	TranscriptOmitted bool `json:"transcript_omitted,omitempty"`
+	// AuthorityPlanDigest is the digest of the permission plan the worktree
+	// world was built to enforce — the declaration identity the seal cites and
+	// the settlement then records it is the commit-time monitor for. It is the
+	// worktree lane's counterpart to the container meta.json's field of the same
+	// name: persisted with the seal so a proposal rehydrated in a later process
+	// still cites the declaration it is being settled against instead of a
+	// digest this process cannot know.
+	AuthorityPlanDigest string `json:"authority_plan_digest,omitempty"`
 }
 
 // proposalSealOptions builds the seal payload for a worktree proposal. The
