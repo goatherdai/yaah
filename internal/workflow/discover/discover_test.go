@@ -163,7 +163,7 @@ func TestListSkipsSymlinkToDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(filepath.Join(cwd, "workflows", "target"), filepath.Join(cwd, "workflows", "foo.yaml")); err != nil {
-		t.Fatalf("symlink: %v", err)
+		t.Skipf("symlinks unavailable on this platform: %v", err)
 	}
 
 	got, err := List(cwd)

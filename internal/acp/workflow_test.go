@@ -103,4 +103,3 @@ func TestServer_handleWorkflowList(t *testing.T) {
 		}
 	})
 }
-
