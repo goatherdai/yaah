@@ -57,10 +57,16 @@ deterministic door into A.
 
 ## 3. Piece A — the tool
 
-New `internal/tools/workflow_run.go`, mirroring `DelegateTool`
+New `cmd/yaah/workflow_run_tool.go` (package `yaah`), mirroring `DelegateTool`
 (`internal/tools/delegate.go` — `Name`/`Description`/`Schema`/`Execute(ctx,
 args) (string, error)`), because the orchestrator already invokes `delegate`
 the same way and its observability is the precedent.
+
+**Layering constraint (why `cmd/yaah`, not `internal/tools`):**
+`internal/workflow/host` imports `internal/tools`, so a tool in
+`internal/tools` that imported `internal/workflow/host` or `cmd/yaah` would be
+an import cycle. The tool lives at the composition root instead — `cmd/yaah`
+already imports both and calls `runWorkflowRun` directly.
 
 ```go
 type WorkflowRunTool struct{}
@@ -93,9 +99,12 @@ func (t *WorkflowRunTool) Execute(ctx context.Context, args string) (string, err
 
 Changes:
 
-- Register `"workflow_run"` in the tool registry map
-  (`internal/tools/tools.go`, the `"delegate": func() Tool {...}` table).
-- Add `workflow_run` to `internal/prompts` (`ToolDescription`).
+- Register at wiring time via `Registry.Admit("workflow_run")` +
+  `Registry.Register(&WorkflowRunTool{})`, the same path MCP tools take
+  (`cmd/yaah/wiring_mcp.go`). It is **not** a `func() Tool` entry in
+  `internal/tools/tools.go` — that table cannot reach `runWorkflowRun`.
+- Add `"workflow_run"` to `defaultOrchestratorBelt`
+  (`cmd/yaah/orchestrator_belt.go`) and `prompts.ToolDescription("workflow_run")`.
 - Availability: orchestrator/primary agent only, not sub-agents — mirror how
   `delegate` is gated (the meta agent dispatches; a sub-agent must not be able
   to kick off a nested workflow).
@@ -184,7 +193,7 @@ the cheap first cut that proves the tool path end-to-end.
 
 ## 8. Tests
 
-- **Tool** (`internal/tools/workflow_run_test.go`): `Execute` with a golden spec
+- **Tool** (`cmd/yaah/workflow_run_tool_test.go`): `Execute` with a golden spec
   under `internal/workflow/spec/testdata/valid/` and a deterministic runner
   injected via the `workflowRunRunner` seam → result carries `OK`; bad path →
   error.
