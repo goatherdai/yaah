@@ -199,8 +199,14 @@ func (f *FakeRuntime) Completed(h Handle) (Completion, bool) {
 	return c, true
 }
 
-func (f *FakeRuntime) Block(_ context.Context) error {
+func (f *FakeRuntime) Block(_ context.Context, until time.Time) error {
 	f.blocks++
+	// The fake never blocks; instead it advances the virtual clock to the
+	// deadline the scheduler armed, so a bounded wait is observed as elapsed
+	// time without sleeping. Zero means the scheduler armed no deadline.
+	if !until.IsZero() && f.now.Before(until) {
+		f.now = until
+	}
 	return nil
 }
 

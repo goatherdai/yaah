@@ -275,11 +275,17 @@ func (r *Run) commitHead(ctx context.Context) (bool, error) {
 		if a, timeout, ok := r.timedOut(); ok {
 			return true, r.timeoutAttempt(a, timeout)
 		}
-		if err := r.rt.Block(ctx); err != nil {
+		if err := r.rt.Block(ctx, r.nextDeadline()); err != nil {
 			if cerr := ctx.Err(); cerr != nil {
 				return true, r.stop(RunCancelled, "context ended: "+cerr.Error())
 			}
 			return true, r.abandonHead(head, fmt.Sprintf("Runtime.Block: %v", err))
+		}
+		// A completion and an elapsed deadline both wake Block with nil; the
+		// clock decides which. Re-sample here so a deadline that elapsed during
+		// the wait is enforced in this cycle, not a later one.
+		if a, timeout, ok := r.timedOut(); ok {
+			return true, r.timeoutAttempt(a, timeout)
 		}
 		if r.anyCompleted() {
 			continue
@@ -471,11 +477,45 @@ func (r *Run) timedOut() (*Attempt, time.Duration, bool) {
 		if timeout <= 0 {
 			continue
 		}
-		if now.Sub(a.StartedAt) >= timeout {
+		// A completion the door already reported is a fact, not a stall: the
+		// attempt is only waiting for its dispatch-order turn, so its deadline
+		// must not discard the result.
+		if _, done := r.rt.Completed(a.Handle); done {
+			continue
+		}
+		// Backoff is waited out before the door is asked, so the window starts
+		// after it: a retry's clock must not include its own backoff.
+		if now.Sub(a.StartedAt.Add(a.Backoff)) >= timeout {
 			return a, timeout, true
 		}
 	}
 	return nil, 0, false
+}
+
+// nextDeadline returns the earliest node deadline among in-flight attempts
+// that declare a timeout and have not already reported a completion. It is the
+// bound commitHead passes to Block, so a door that never wakes is still
+// returned to the scheduler at the moment a timeout must be sampled. Zero means
+// no in-flight attempt has a deadline and Block waits on the door alone.
+func (r *Run) nextDeadline() time.Time {
+	var earliest time.Time
+	for _, a := range r.outstanding {
+		if a.StartedAt.IsZero() {
+			continue
+		}
+		timeout := nodeTimeout(r.byPath[a.NodePath])
+		if timeout <= 0 {
+			continue
+		}
+		if _, done := r.rt.Completed(a.Handle); done {
+			continue
+		}
+		dl := a.StartedAt.Add(a.Backoff).Add(timeout)
+		if earliest.IsZero() || dl.Before(earliest) {
+			earliest = dl
+		}
+	}
+	return earliest
 }
 
 // timeoutAttempt enforces one node timeout. The order is fixed and is stop()'s,
@@ -491,13 +531,14 @@ func (r *Run) timeoutAttempt(a *Attempt, timeout time.Duration) error {
 	if err := r.rt.Cancel(a.Handle); err != nil {
 		cancelErr = err.Error()
 	}
+	window := a.StartedAt.Add(a.Backoff)
 	return r.Apply(AttemptTimedOutEvent{
 		NodePath:   a.NodePath,
 		DispatchID: a.DispatchID,
 		Attempt:    a.Number,
 		Timeout:    timeout,
-		Elapsed:    r.rt.Now().Sub(a.StartedAt),
-		Deadline:   a.StartedAt.Add(timeout),
+		Elapsed:    r.rt.Now().Sub(window),
+		Deadline:   window.Add(timeout),
 		CancelErr:  cancelErr,
 	})
 }

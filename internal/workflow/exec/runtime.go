@@ -108,11 +108,14 @@ type Runtime interface {
 	Completed(h Handle) (Completion, bool)
 
 	// Block waits until at least one started attempt has become completable,
-	// or ctx is done. It exists so a real adapter can idle without polling,
-	// and a synchronous fake returns immediately. Returning nil when nothing
-	// became completable is a door malfunction, not a spurious wake: the
-	// scheduler treats it as an error rather than spinning or hanging on it.
-	Block(ctx context.Context) error
+	// until the deadline (zero means none is armed), or ctx is done. It exists
+	// so a real adapter can idle without polling, and a synchronous fake
+	// returns immediately. The deadline is the earliest in-flight node timeout,
+	// so a door that never wakes is still returned to the scheduler at the
+	// bound it must enforce. Returning nil when nothing became completable and
+	// the deadline has not elapsed is a door malfunction, not a spurious wake:
+	// the scheduler treats it as an error rather than spinning or hanging.
+	Block(ctx context.Context, until time.Time) error
 
 	// Cancel asks a running attempt to stop. The run's state does not wait
 	// for the world to agree: the node is cancelled the moment the request is

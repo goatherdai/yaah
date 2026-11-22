@@ -207,7 +207,7 @@ func (rt *Runtime) Completed(h exec.Handle) (exec.Completion, bool) {
 
 // Block returns immediately: every started attempt is completable the moment
 // it starts, so there is nothing to wait for and no door that could stall.
-func (rt *Runtime) Block(context.Context) error { return nil }
+func (rt *Runtime) Block(context.Context, time.Time) error { return nil }
 
 // Cancel is a no-op that cannot fail: nothing real is ever in flight behind
 // this door, so the scheduler's cancel loop receives the answer it wants —

@@ -277,3 +277,58 @@ func TestNodeTimeoutReplay(t *testing.T) {
 		t.Errorf("node kind = %s, want the delegate the record names", n.Kind)
 	}
 }
+
+// TestNodeTimeoutSilentDoor pins the backstop's core guarantee: a door that
+// never wakes — an attempt it can neither complete nor report on — still ends
+// the node at its declared timeout. No test code moves the clock here; the fake
+// advances it to the deadline Block was given, which is the boundary a real
+// adapter wakes at when its timer fires.
+func TestNodeTimeoutSilentDoor(t *testing.T) {
+	r, rt := newTimeoutRun(t, 5, "")
+	rt.Script = map[string][]Completion{"steps.slow": {Report("never read", 0)}}
+	rt.Hold = map[string]bool{"steps.slow": true}
+	res := driveTimeoutRun(t, r, nil)
+
+	n := nodeOf(t, res, "steps.slow")
+	if n.State != StateFailed {
+		t.Fatalf("state = %s, want failed\nlog:\n%s", n.State, eventLog(res))
+	}
+	if n.StopReason != StopReasonTimeout {
+		t.Errorf("stop reason = %q, want %q: a silent door must still time out", n.StopReason, StopReasonTimeout)
+	}
+	if res.Status != RunAborted {
+		t.Errorf("run status = %s, want aborted", res.Status)
+	}
+	if rt.Blocks() == 0 {
+		t.Errorf("Block was never called: the scheduler did not wait on the door")
+	}
+}
+
+// TestNodeTimeoutBackoffNotCounted pins that a retry's timeout window starts
+// after its backoff, not before: backoff is a wait the scheduler itself honors,
+// so it must not eat the next attempt's budget. backoff (10s) exceeds the
+// timeout (5s), so a window that included backoff would time the retry out the
+// instant it started; the pinned run instead gives the retry a fresh 5s.
+func TestNodeTimeoutBackoffNotCounted(t *testing.T) {
+	r, rt := newTimeoutRun(t, 5, `      retry:
+        max_attempts: 2
+        backoff_seconds: 10
+`)
+	rt.Script = map[string][]Completion{"steps.slow": {Report("never read", 0)}}
+	rt.Hold = map[string]bool{"steps.slow": true}
+	res := driveTimeoutRun(t, r, pastDeadline(rt, 6*time.Second))
+
+	n := nodeOf(t, res, "steps.slow")
+	if n.State != StateFailed {
+		t.Fatalf("state = %s, want failed\nlog:\n%s", n.State, eventLog(res))
+	}
+	if got := len(n.Attempts); got != 2 {
+		t.Fatalf("attempts = %d, want 2 (retry.max_attempts=2)", got)
+	}
+	// The retry's window starts after its 10s backoff, so the 6s the clock
+	// advances past the deadline is the whole elapsed span — not the 16s (6s
+	// run plus 10s backoff) a pre-backoff window would report.
+	if want := "steps.slow#2 attempt=2 elapsed=6s timeout=5s"; !strings.Contains(eventLog(res), want) {
+		t.Errorf("retry log line missing %q — backoff appears to count against the window:\n%s", want, eventLog(res))
+	}
+}
