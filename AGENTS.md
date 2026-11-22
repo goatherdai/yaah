@@ -67,6 +67,7 @@ yaah/
 │   ├── cwdpath/                 # cwd canonicalization shared by store + filters
 │   ├── dispatch/                # dispatch lanes, proposal settlement, git-delta apply
 │   ├── doctor/                  # `yaah doctor` checks
+│   ├── effectpolicy/            # structural effect-surface authority (Match/Plan) for the sub-agent guard
 │   ├── envelopecheck/           # envelope/doc parity gate shared by tools + dispatch
 │   ├── instructions/            # AGENTS.md/CLAUDE.md discovery
 │   ├── jail/                    # per-platform containment backend selection
@@ -77,6 +78,7 @@ yaah/
 │   ├── memory/                  # SQLite sessions, memory, FTS5, embeddings
 │   ├── observability/           # OpenTelemetry tracing + span buffer
 │   ├── parity/                  # Goatherd parity ledger drift guard
+│   ├── permissionplan/          # monitor-assignment compiler unifying jail + settlement authority
 │   ├── permissions/             # ordered allow/deny/ask tool rules (leaf package)
 │   ├── plans/                   # PLAN.md discovery/parsing
 │   ├── process/                 # background process manager

@@ -138,11 +138,38 @@ func AskRules(rules Rules) []Rule {
 // supported; an invalid pattern (unbalanced bracket) matches nothing: a
 // rule that cannot be interpreted must not widen what its author wrote.
 func GlobMatch(pattern, value string) bool {
-	re, err := globRegexp(strings.ReplaceAll(pattern, "\\", "/"))
+	re, err := globRegexp(NormalizeGlobValue(pattern))
 	if err != nil {
 		return false
 	}
-	return re.MatchString(strings.ReplaceAll(value, "\\", "/"))
+	return re.MatchString(NormalizeGlobValue(value))
+}
+
+// GlobRegexp returns the anchored regular expression GlobMatch compiles from
+// pattern — "^", the glob vocabulary translated, "$" — so a caller that needs
+// the expression rather than one verdict can match many values itself.
+//
+// The blocking shell guard's plan (internal/agent/supervision) is that
+// caller: it expresses "this command matches the allowlist" as one field atom
+// over this expression. Deriving it here keeps one translation of the pattern
+// language, so an allowlist glob and a permission resource glob can never
+// drift apart. An invalid pattern (unbalanced bracket) is an error and admits
+// nothing, the same refusal GlobMatch makes.
+func GlobRegexp(pattern string) (string, error) {
+	re, err := globRegexp(NormalizeGlobValue(pattern))
+	if err != nil {
+		return "", err
+	}
+	return re.String(), nil
+}
+
+// NormalizeGlobValue returns a pattern or a value in the one form globs are
+// compared in: backslashes become forward slashes, so Windows paths and
+// commands match a pattern written with forward slashes. GlobMatch normalizes
+// both sides; a caller that compiles with GlobRegexp must normalize the value
+// it tests with this too, or the two disagree on Windows input.
+func NormalizeGlobValue(s string) string {
+	return strings.ReplaceAll(s, "\\", "/")
 }
 
 // globRegexp compiles a resource glob into an anchored regexp. Only the

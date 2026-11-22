@@ -24,6 +24,7 @@ import (
 	"github.com/goatherdai/goatherd-runtime"
 	supervisor "github.com/goatherdai/goatherd-runtime/supervisor"
 
+	"github.com/goatherdai/yaah/internal/effectpolicy"
 	"github.com/goatherdai/yaah/internal/permissions"
 	"github.com/goatherdai/yaah/internal/supervisionapi"
 	"github.com/goatherdai/yaah/internal/types"
@@ -267,11 +268,12 @@ func destructiveMatch(kernelMatch func(kerneltrace.EffectEvent) bool) func(kerne
 // (status, output) and stop pass: a command is the hazard, and only
 // the start action carries one.
 //
-// allow is the guard's deny-all escape hatch: a command matching one of
-// these globs dispatches, everything else is denied. Empty is the
-// historical default-deny — the rule never inspects the command it
-// cannot admit.
-func shellGuardRule(allow []string) supervisor.SupervisionRule {
+// plan is the guard's authority surface (shellGuardPlan): a command
+// matching one of the allowlist globs dispatches, everything else is
+// denied. An empty allowlist compiles to a plan that denies every shell
+// call — the historical default-deny — so the rule never inspects the
+// command it cannot admit.
+func shellGuardRule(plan effectpolicy.Plan) supervisor.SupervisionRule {
 	guard := supervisor.DestructiveToolGuard()
 	return supervisor.SupervisionRule{
 		Name: "destructive_shell_guard",
@@ -279,24 +281,84 @@ func shellGuardRule(allow []string) supervisor.SupervisionRule {
 			if e.Mode != kerneltrace.Declaration {
 				return false
 			}
-			switch e.KindLabel {
-			case "bash", "powershell":
-				// A shell call with no command is unclassifiable —
-				// it cannot match an allowlist, so it is denied.
-				cmd, _ := e.Payload["cmd"].(string)
-				return !commandAllowed(allow, cmd)
-			case "background_process":
-				cmd, _ := e.Payload["cmd"].(string)
-				if cmd == "" {
-					// Read-only actions carry no command: nothing to admit.
-					return false
-				}
-				return !commandAllowed(allow, cmd)
+			// The command arrives under "cmd" (GuardCheck's payload
+			// shape, the same key the trace middleware stamps). A
+			// shell call carrying none is still a guarded effect:
+			// it matches no allowlist pattern and is denied.
+			cmd, _ := e.Payload["cmd"].(string)
+			eff, guarded := shellGuardEffect(e.KindLabel, cmd)
+			if !guarded {
+				return false
 			}
-			return false
+			return plan.Check(eff) != nil
 		},
 		Action: guard.Action,
 	}
+}
+
+// shellGuardPlan compiles a shell-command allowlist into the guard's
+// authority plan: deny every shell effect whose command does not match one
+// of the allowlist globs.
+//
+// The plan reads exactly that sentence. shellKinds is the guarded surface
+// — both shells plus background_process's command-running action — and
+// allowedCmd is the disjunction of one command atom per allowlist pattern,
+// each carrying the anchored expression permissions.GlobRegexp derives from
+// the same glob permissions.GlobMatch matches. Denying
+// shellKinds.And(allowedCmd.Not()) permits a call exactly when it is not a
+// guarded shell, or is one whose command matches: an empty allowlist leaves
+// allowedCmd as Nothing(), whose complement is All(), so every shell call
+// falls under the deny.
+func shellGuardPlan(allow []string) effectpolicy.Plan {
+	shellKinds := effectpolicy.Exact("bash").
+		Or(effectpolicy.Exact("powershell")).
+		Or(effectpolicy.Exact("background_process"))
+	allowedCmd := effectpolicy.Nothing()
+	for _, pattern := range allow {
+		expr, err := permissions.GlobRegexp(pattern)
+		if err != nil {
+			// An uninterpretable pattern admits nothing in
+			// permissions.GlobMatch either: a rule that cannot be read
+			// must not widen what its author wrote.
+			continue
+		}
+		allowedCmd = allowedCmd.Or(effectpolicy.Field("command", effectpolicy.Matches, expr))
+	}
+	return effectpolicy.Plan{}.DenyKind(shellKinds.And(allowedCmd.Not()))
+}
+
+// shellGuardEffect classifies one call as the guard's effect: the tool's
+// kind plus the command it carries. The second return is false when the call
+// is not a guarded shell effect at all — a non-shell tool, or
+// background_process's read-only actions, which carry no command and are the
+// same pass-through as before.
+//
+// The command field carries the glob-normalized form of the command, because
+// the plan's patterns are compiled from normalized globs; matching the
+// normalized command is what reproduces permissions.GlobMatch's verdict
+// exactly (a Windows `dir C:\x` that `dir C:/*` admits).
+//
+// A call with no command attaches no command field rather than an empty one:
+// an absent field makes every atom over it false, so the plan denies — the
+// guard's fail-closed reading of an unclassifiable call, and the same verdict
+// permissions.GlobMatch gives the empty string, which no pattern (not even
+// "*") admits.
+func shellGuardEffect(kind, cmd string) (effectpolicy.Effect, bool) {
+	switch kind {
+	case "bash", "powershell":
+	case "background_process":
+		if cmd == "" {
+			// Read-only actions carry no command: nothing to admit.
+			return effectpolicy.Effect{}, false
+		}
+	default:
+		return effectpolicy.Effect{}, false
+	}
+	eff := effectpolicy.Effect{Kind: kind}
+	if cmd != "" {
+		eff.Fields = map[string]any{"command": permissions.NormalizeGlobValue(cmd)}
+	}
+	return eff, true
 }
 
 // shellGuardTool reports whether the shell guard inspects this tool's
@@ -323,26 +385,6 @@ func toolCommand(argsJSON string) string {
 	return args.Command
 }
 
-// commandAllowed reports whether the shell guard's allowlist admits this
-// command. Patterns are the permissions ruleset's own globs, matched in
-// full against the raw command string (permissions.GlobMatch):
-// `git status*` admits `git status -s` and refuses `echo git status`.
-//
-// Fail closed on both ends: an empty command matches nothing even
-// against a "*" pattern (an absent command is not a command), and an
-// empty allowlist admits nothing — the guard's default-deny.
-func commandAllowed(allow []string, command string) bool {
-	if command == "" {
-		return false
-	}
-	for _, pattern := range allow {
-		if permissions.GlobMatch(pattern, command) {
-			return true
-		}
-	}
-	return false
-}
-
 // WithShellAllowlist narrows a guard check to one role's shell-command
 // allowlist. A sub-agent loop's owner ID is the trace session, not the
 // role name, so the guard cannot resolve a role's allowlist when it
@@ -357,24 +399,35 @@ func commandAllowed(allow []string, command string) bool {
 // Non-shell tools and background_process's read-only actions are the
 // global check's business either way.
 func WithShellAllowlist(check func(ownerID, toolName, argsJSON string) string, allow []string) func(ownerID, toolName, argsJSON string) string {
-	if check == nil || allow == nil {
+	if allow == nil {
 		return check
 	}
+	return WithShellAllowlistPlan(check, shellGuardPlan(allow))
+}
+
+// WithShellAllowlistPlan narrows a guard check to an already-compiled
+// authority plan — the plan shellGuardPlan builds from a role's allowlist,
+// and the same shape the global guard rule carries. A role's narrowing and
+// the global default therefore run one matching mechanism
+// (effectpolicy.Plan.Check) rather than two: a guarded shell effect the plan
+// refuses is denied with a reason naming the role's allowlist, and everything
+// the plan does not classify — structured tools, background_process's
+// read-only actions — stays the wrapped check's business untouched.
+func WithShellAllowlistPlan(check func(ownerID, toolName, argsJSON string) string, plan effectpolicy.Plan) func(ownerID, toolName, argsJSON string) string {
+	if check == nil {
+		return nil
+	}
 	return func(ownerID, toolName, argsJSON string) string {
-		if !shellGuardTool(toolName) {
+		cmd := toolCommand(argsJSON)
+		eff, guarded := shellGuardEffect(toolName, cmd)
+		if !guarded {
 			return check(ownerID, toolName, argsJSON)
 		}
-		cmd := toolCommand(argsJSON)
-		if cmd == "" {
-			if toolName == "background_process" {
-				// status/output/stop carry no command — the same
-				// pass the global rule gives them.
-				return check(ownerID, toolName, argsJSON)
-			}
-			return "shell call carries no command to check against the role's allowlist"
-		}
-		if commandAllowed(allow, cmd) {
+		if plan.Check(eff) == nil {
 			return ""
+		}
+		if cmd == "" {
+			return "shell call carries no command to check against the role's allowlist"
 		}
 		return fmt.Sprintf("command %q is not in this role's allow_commands allowlist", cmd)
 	}
@@ -430,7 +483,7 @@ func NewService(mgr *goatherd.ScopeManager, bus *kerneltrace.EffectBus, runs *Re
 		// intervention the advisory drain would have to drop. Its
 		// CheckCall is the whole surface.
 		guard = supervisor.NewSupervisor(mgr, nil)
-		guard.AddRule(shellGuardRule(rules.ShellGuardAllowCommands))
+		guard.AddRule(shellGuardRule(shellGuardPlan(rules.ShellGuardAllowCommands)))
 	}
 	svc.guard = guard
 	return svc
