@@ -1,0 +1,449 @@
+package dispatch
+
+import (
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/permissionplan"
+)
+
+// TestAuthorityForDispatch pins the config -> declaration mapping. The plan is
+// the gate and the identity for the jail lane, so every axis the mapping can
+// see is enumerated here rather than discovered by a green end-to-end run.
+func TestAuthorityForDispatch(t *testing.T) {
+	t.Run("grants become world-relative write clauses", func(t *testing.T) {
+		rt := RetainedRuntime{
+			Containment: "paddock",
+			Network:     "deny_all",
+			Grants: []config.GrantConfig{
+				{Path: "src", Access: "readwrite"},
+				{Path: "docs/api", Access: "readonly"},
+			},
+		}
+		got, err := authorityForDispatch(rt, "developer")
+		if err != nil {
+			t.Fatalf("authorityForDispatch: %v", err)
+		}
+		want := []permissionplan.WriteClause{
+			{Root: "src", Access: permissionplan.AccessReadWrite},
+			{Root: "docs/api", Access: permissionplan.AccessReadOnly},
+		}
+		if !reflect.DeepEqual(got.Writes, want) {
+			t.Errorf("writes = %+v, want %+v", got.Writes, want)
+		}
+		if got.Network != permissionplan.NetworkDenyAll {
+			t.Errorf("network = %q, want deny_all", got.Network)
+		}
+		if got.Delta != permissionplan.DeltaUnset {
+			t.Errorf("delta = %q, want it left for the settlement lane", got.Delta)
+		}
+		if got.Containment != permissionplan.ContainmentJail || got.Fallback != permissionplan.FallbackRefuse {
+			t.Errorf("containment/fallback = %q/%q, want jail/refuse", got.Containment, got.Fallback)
+		}
+	})
+
+	t.Run("role grants override the session set", func(t *testing.T) {
+		rt := RetainedRuntime{
+			Containment: "jail",
+			Grants:      []config.GrantConfig{{Path: "src", Access: "readwrite"}},
+			GrantsForRole: func(role string) []config.GrantConfig {
+				if role == "reviewer" {
+					return []config.GrantConfig{{Path: "docs", Access: "readonly"}}
+				}
+				return nil
+			},
+		}
+		got, err := authorityForDispatch(rt, "reviewer")
+		if err != nil {
+			t.Fatalf("authorityForDispatch: %v", err)
+		}
+		want := []permissionplan.WriteClause{{Root: "docs", Access: permissionplan.AccessReadOnly}}
+		if !reflect.DeepEqual(got.Writes, want) {
+			t.Errorf("writes = %+v, want the role override %+v", got.Writes, want)
+		}
+	})
+
+	t.Run("no grants declares no write clause", func(t *testing.T) {
+		got, err := authorityForDispatch(RetainedRuntime{Containment: "auto"}, "developer")
+		if err != nil {
+			t.Fatalf("authorityForDispatch: %v", err)
+		}
+		if len(got.Writes) != 0 {
+			t.Errorf("writes = %+v, want none", got.Writes)
+		}
+	})
+
+	network := []struct {
+		mode string
+		want permissionplan.NetworkPosture
+	}{
+		{mode: "", want: permissionplan.NetworkUnset},
+		{mode: "allow_all", want: permissionplan.NetworkAllowAll},
+		{mode: "deny_all", want: permissionplan.NetworkDenyAll},
+		{mode: "broker", want: permissionplan.NetworkBroker},
+		{mode: " DENY_ALL ", want: permissionplan.NetworkDenyAll},
+	}
+	for _, tc := range network {
+		t.Run("network "+tc.mode, func(t *testing.T) {
+			got, err := authorityForDispatch(RetainedRuntime{Containment: "paddock", Network: tc.mode}, "developer")
+			if err != nil {
+				t.Fatalf("authorityForDispatch: %v", err)
+			}
+			if got.Network != tc.want {
+				t.Errorf("network = %q, want %q", got.Network, tc.want)
+			}
+		})
+	}
+
+	// The containment axis decides whether a jail monitor exists, so both of its
+	// halves are part of the contract: the placement, and the fallback that
+	// makes an advisory lane's clauses compile instead of refusing them.
+	containment := []struct {
+		setting string
+		wantC   permissionplan.Containment
+		wantF   permissionplan.Fallback
+	}{
+		{setting: "paddock", wantC: permissionplan.ContainmentJail, wantF: permissionplan.FallbackRefuse},
+		{setting: "jail", wantC: permissionplan.ContainmentJail, wantF: permissionplan.FallbackRefuse},
+		{setting: "auto", wantC: permissionplan.ContainmentJail, wantF: permissionplan.FallbackRefuse},
+		{setting: "", wantC: permissionplan.ContainmentJail, wantF: permissionplan.FallbackRefuse},
+		{setting: " Jail ", wantC: permissionplan.ContainmentJail, wantF: permissionplan.FallbackRefuse},
+		{setting: "off", wantC: permissionplan.ContainmentAdvisory, wantF: permissionplan.FallbackEnforce},
+		{setting: "none", wantC: permissionplan.ContainmentAdvisory, wantF: permissionplan.FallbackEnforce},
+		{setting: "advisory", wantC: permissionplan.ContainmentAdvisory, wantF: permissionplan.FallbackEnforce},
+	}
+	for _, tc := range containment {
+		t.Run("containment "+tc.setting, func(t *testing.T) {
+			got, err := authorityForDispatch(RetainedRuntime{Containment: tc.setting}, "developer")
+			if err != nil {
+				t.Fatalf("authorityForDispatch: %v", err)
+			}
+			if got.Containment != tc.wantC || got.Fallback != tc.wantF {
+				t.Errorf("containment/fallback = %q/%q, want %q/%q",
+					got.Containment, got.Fallback, tc.wantC, tc.wantF)
+			}
+		})
+	}
+
+	t.Run("unknown access is refused", func(t *testing.T) {
+		rt := RetainedRuntime{Containment: "paddock", Grants: []config.GrantConfig{{Path: "src", Access: "write"}}}
+		if _, err := authorityForDispatch(rt, "developer"); err == nil {
+			t.Fatal("an unknown grant access must be refused")
+		} else if !strings.Contains(err.Error(), "unknown access") {
+			t.Fatalf("error = %v, want it to name the access", err)
+		}
+	})
+
+	t.Run("unknown network is refused", func(t *testing.T) {
+		rt := RetainedRuntime{Containment: "paddock", Network: "borker"}
+		if _, err := authorityForDispatch(rt, "developer"); err == nil {
+			t.Fatal("an unknown network mode must be refused")
+		} else if !strings.Contains(err.Error(), "agents.subagent.network") {
+			t.Fatalf("error = %v, want it to name the config key", err)
+		}
+	})
+
+	t.Run("unknown containment is refused", func(t *testing.T) {
+		rt := RetainedRuntime{Containment: "sandbox-ish"}
+		if _, err := authorityForDispatch(rt, "developer"); err == nil {
+			t.Fatal("an unknown containment must be refused, not degraded")
+		} else if !strings.Contains(err.Error(), "agents.subagent.containment") {
+			t.Fatalf("error = %v, want it to name the config key", err)
+		}
+	})
+}
+
+// TestResolveDispatchAuthority_Oracle is the byte-identical oracle for the
+// refactor: for every config in the matrix it recomputes the mount shape from
+// the retained lowering primitives (resolveContainerGrants and
+// lowerContainerNetwork, unchanged by this increment) and requires
+// resolveDispatchAuthority to produce exactly that — no reshaped roots, no
+// reshaped mask, no reshaped network — while additionally carrying a compiled
+// plan digest.
+func TestResolveDispatchAuthority_Oracle(t *testing.T) {
+	grantSets := []struct {
+		name   string
+		grants []config.GrantConfig
+	}{
+		{name: "no grants"},
+		{name: "readwrite", grants: []config.GrantConfig{{Path: "src", Access: "readwrite"}}},
+		{name: "readonly", grants: []config.GrantConfig{{Path: "docs", Access: "readonly"}}},
+		{name: "mixed", grants: []config.GrantConfig{
+			{Path: "src", Access: "readwrite"},
+			{Path: "docs/api", Access: "readonly"},
+		}},
+	}
+	networkSets := []struct {
+		name  string
+		mode  string
+		hosts []string
+	}{
+		{name: "default network"},
+		{name: "allow_all", mode: "allow_all"},
+		{name: "deny_all", mode: "deny_all"},
+		{name: "broker", mode: "broker", hosts: []string{" API.Example.com. "}},
+	}
+	containments := []string{"", "auto", "paddock", "jail", "off", "none", "advisory"}
+
+	for _, gs := range grantSets {
+		for _, ns := range networkSets {
+			for _, containment := range containments {
+				name := gs.name + "/" + ns.name + "/containment=" + containment
+				t.Run(name, func(t *testing.T) {
+					rt := RetainedRuntime{
+						Network:         ns.mode,
+						NetworkHosts:    ns.hosts,
+						Containment:     containment,
+						ContainerWorlds: true,
+						Grants:          gs.grants,
+						DispatchWorlds:  &DispatchWorlds{Config: sessionTestConfig()},
+					}
+
+					got, err := resolveDispatchAuthority(rt, "developer")
+					if err != nil {
+						t.Fatalf("resolveDispatchAuthority: %v", err)
+					}
+
+					wantRoots, wantMask, wantNetwork, wantHosts := oracleLowering(t, gs.grants, ns.mode, ns.hosts)
+					if !reflect.DeepEqual(got.writableRoots, wantRoots) {
+						t.Errorf("writable roots = %v, want %v", got.writableRoots, wantRoots)
+					}
+					if got.maskWorkspace != wantMask {
+						t.Errorf("mask workspace = %v, want %v", got.maskWorkspace, wantMask)
+					}
+					if got.network != wantNetwork {
+						t.Errorf("network = %q, want %q", got.network, wantNetwork)
+					}
+					if !reflect.DeepEqual(got.brokerHosts, wantHosts) {
+						t.Errorf("broker hosts = %v, want %v", got.brokerHosts, wantHosts)
+					}
+
+					// The declaration compiled: the gate passed and the identity
+					// is citable.
+					if digest := got.planIdentity(); len(digest) != 64 || strings.Trim(digest, "0123456789abcdef") != "" {
+						t.Fatalf("plan digest = %q, want 64 hex characters", digest)
+					}
+
+					// Determinism: the same declaration always compiles to the
+					// same digest.
+					again, err := resolveDispatchAuthority(rt, "developer")
+					if err != nil {
+						t.Fatalf("resolveDispatchAuthority (second): %v", err)
+					}
+					if again.planIdentity() != got.planIdentity() {
+						t.Errorf("digest changed between identical resolutions: %q != %q",
+							again.planIdentity(), got.planIdentity())
+					}
+				})
+			}
+		}
+	}
+}
+
+// oracleLowering recomputes the pre-refactor mount shape from the lowering
+// primitives, independently of resolveDispatchAuthority.
+func oracleLowering(t *testing.T, grants []config.GrantConfig, mode string, hosts []string) (roots []string, mask bool, network string, brokerHosts []string) {
+	t.Helper()
+	if len(grants) > 0 {
+		resolved, err := resolveContainerGrants(grants, "/workspace")
+		if err != nil {
+			t.Fatalf("resolveContainerGrants: %v", err)
+		}
+		roots = resolved.Writable
+		mask = len(resolved.Writable) == 0
+	}
+	network, brokerHosts, err := lowerContainerNetwork(mode, hosts)
+	if err != nil {
+		t.Fatalf("lowerContainerNetwork: %v", err)
+	}
+	return roots, mask, network, brokerHosts
+}
+
+// TestResolveDispatchAuthority_StillRefuses pins the configs that are errors
+// today: the plan gate must not turn a refused grant into an accepted world.
+func TestResolveDispatchAuthority_StillRefuses(t *testing.T) {
+	cases := []struct {
+		name string
+		rt   RetainedRuntime
+		want string
+	}{
+		{
+			name: "absolute grant",
+			rt:   RetainedRuntime{Grants: []config.GrantConfig{{Path: "/etc", Access: "readwrite"}}},
+			want: "world-relative",
+		},
+		{
+			name: "escaping grant",
+			rt:   RetainedRuntime{Grants: []config.GrantConfig{{Path: "../etc", Access: "readwrite"}}},
+			want: "escapes",
+		},
+		{
+			name: "world-root grant",
+			rt:   RetainedRuntime{Grants: []config.GrantConfig{{Path: ".", Access: "readwrite"}}},
+			want: "world root",
+		},
+		{
+			name: "unknown grant access",
+			rt:   RetainedRuntime{Grants: []config.GrantConfig{{Path: "src", Access: "write"}}},
+			want: "unknown access",
+		},
+		{
+			name: "unknown network",
+			rt:   RetainedRuntime{Network: "borker"},
+			want: "agents.subagent.network",
+		},
+		{
+			name: "unknown containment",
+			rt:   RetainedRuntime{Containment: "sandbox-ish"},
+			want: "agents.subagent.containment",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.rt.ContainerWorlds = true
+			tc.rt.DispatchWorlds = &DispatchWorlds{Config: sessionTestConfig()}
+			_, err := resolveDispatchAuthority(tc.rt, "developer")
+			if err == nil {
+				t.Fatal("the config must still be refused")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestDispatchPlanGate_FailClosed proves the coverage gate is live in the jail
+// lane: a declaration that claims write authority without a jail to enforce it
+// does not compile, so no dispatch world can be built from one. The mapping
+// above never emits this combination (an advisory placement sets
+// FallbackEnforce), which is exactly why the gate is asserted directly — the
+// refusal must come from the compiler, not from the mapping happening to be
+// careful.
+func TestDispatchPlanGate_FailClosed(t *testing.T) {
+	declared := permissionplan.Authority{
+		Writes: []permissionplan.WriteClause{{Root: "src", Access: permissionplan.AccessReadWrite}},
+	}
+
+	uncovered := []struct {
+		name string
+		a    permissionplan.Authority
+	}{
+		{name: "write clause, containment unset, refuse", a: declared},
+		{
+			name: "write clause, advisory, refuse",
+			a:    withContainment(declared, permissionplan.ContainmentAdvisory, permissionplan.FallbackRefuse),
+		},
+		{
+			name: "network clause, containment unset",
+			a:    permissionplan.Authority{Network: permissionplan.NetworkBroker},
+		},
+		{
+			name: "network clause, advisory, refuse",
+			a: permissionplan.Authority{
+				Network:     permissionplan.NetworkBroker,
+				Containment: permissionplan.ContainmentAdvisory,
+				Fallback:    permissionplan.FallbackRefuse,
+			},
+		},
+	}
+	for _, tc := range uncovered {
+		t.Run("refused/"+tc.name, func(t *testing.T) {
+			plan, err := permissionplan.Compile(tc.a)
+			if err == nil {
+				t.Fatalf("Compile accepted an unenforceable declaration: %s", plan)
+			}
+			if !errors.Is(err, permissionplan.ErrClauseUncovered) {
+				t.Fatalf("error = %v, want ErrClauseUncovered", err)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name string
+		a    permissionplan.Authority
+	}{
+		{name: "jail", a: withContainment(declared, permissionplan.ContainmentJail, permissionplan.FallbackRefuse)},
+		{name: "advisory accepting enforcement", a: withContainment(declared, permissionplan.ContainmentAdvisory, permissionplan.FallbackEnforce)},
+	} {
+		t.Run("compiled/"+tc.name, func(t *testing.T) {
+			plan, err := permissionplan.Compile(tc.a)
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			if err := plan.Coverage(); err != nil {
+				t.Fatalf("Coverage: %v", err)
+			}
+			if plan.Digest() == "" {
+				t.Fatal("a compiled plan must have a digest")
+			}
+		})
+	}
+}
+
+func withContainment(a permissionplan.Authority, c permissionplan.Containment, f permissionplan.Fallback) permissionplan.Authority {
+	a.Containment, a.Fallback = c, f
+	return a
+}
+
+// TestCompileDispatchPlan_DigestIdentity pins the digest as a declaration
+// identity: stable for one declaration, different for a different one.
+func TestCompileDispatchPlan_DigestIdentity(t *testing.T) {
+	base := RetainedRuntime{
+		Containment: "paddock",
+		Network:     "deny_all",
+		Grants:      []config.GrantConfig{{Path: "src", Access: "readwrite"}},
+	}
+	first, err := compileDispatchPlan(base, "developer")
+	if err != nil {
+		t.Fatalf("compileDispatchPlan: %v", err)
+	}
+	second, err := compileDispatchPlan(base, "developer")
+	if err != nil {
+		t.Fatalf("compileDispatchPlan (second): %v", err)
+	}
+	if first.Digest() != second.Digest() {
+		t.Fatalf("digest is not deterministic: %q != %q", first.Digest(), second.Digest())
+	}
+
+	wider := base
+	wider.Grants = []config.GrantConfig{{Path: "src", Access: "readwrite"}, {Path: "docs", Access: "readonly"}}
+	other, err := compileDispatchPlan(wider, "developer")
+	if err != nil {
+		t.Fatalf("compileDispatchPlan (wider): %v", err)
+	}
+	if other.Digest() == first.Digest() {
+		t.Fatal("two different declarations must not share a digest")
+	}
+}
+
+// TestAuthorityFactPayloadShape pins the authority fact's key set, so the trace
+// consumer and the settlement lane can rely on it (worldFactPayload has the
+// same guard).
+func TestAuthorityFactPayloadShape(t *testing.T) {
+	got := authorityFactPayload(dispatchAuthority{
+		writableRoots: []string{"/workspace/src"},
+		network:       "broker",
+		planDigest:    "abc123",
+	})
+	want := map[string]bool{"plan_digest": true, "network_posture": true, "shaped": true, "writable_roots": true}
+	if len(got) != len(want) {
+		t.Fatalf("payload keys = %v, want %v", got, want)
+	}
+	for k := range got {
+		if !want[k] {
+			t.Errorf("unexpected authority-fact key %q", k)
+		}
+	}
+	if got["plan_digest"] != "abc123" || got["network_posture"] != "broker" || got["shaped"] != true || got["writable_roots"] != 1 {
+		t.Errorf("payload = %v", got)
+	}
+
+	unshaped := authorityFactPayload(dispatchAuthority{network: "host", planDigest: "def456"})
+	if unshaped["shaped"] != false || unshaped["writable_roots"] != 0 {
+		t.Errorf("unshaped payload = %v", unshaped)
+	}
+}

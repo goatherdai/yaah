@@ -24,6 +24,18 @@ type dispatchAuthority struct {
 	maskWorkspace bool
 	network       string
 	brokerHosts   []string
+	// planDigest is the digest of the permission plan this declaration
+	// compiled to. It is the declaration's citable identity: the mount shape
+	// above says what the container is told to do, and this names what was
+	// promised, so the world and a later settlement can be shown to enforce
+	// the same declaration.
+	planDigest string
+}
+
+// planIdentity returns the digest of the compiled permission plan the world was
+// built to enforce. Empty only on the zero authority, which declares nothing.
+func (a dispatchAuthority) planIdentity() string {
+	return a.planDigest
 }
 
 // shaped reports whether the workspace needs mount shaping. A read-only mask
@@ -44,8 +56,17 @@ func (a dispatchAuthority) apply(w config.WorkspaceConfig) config.WorkspaceConfi
 }
 
 // resolveDispatchAuthority lowers the configured grants and network posture to
-// the container's vocabulary. Grants are world-relative: they are resolved
-// against the container's Root (for example /workspace), not the host tree.
+// the container's vocabulary, and compiles the same declaration into the
+// permission plan that gates the dispatch. Grants are world-relative: they are
+// resolved against the container's Root (for example /workspace), not the host
+// tree.
+//
+// Two independent outputs come out of one declaration: the mount math below
+// (what the container is told to do) and the plan (what the declaration
+// promised, and the digest that makes it citable). The lowering runs first so
+// an invalid grant path or network mode keeps its established error text; the
+// plan is then the gate over the declaration the lowering accepted, and a
+// declaration its monitors cannot cover refuses the world.
 func resolveDispatchAuthority(rt RetainedRuntime, role string) (dispatchAuthority, error) {
 	var a dispatchAuthority
 
@@ -70,6 +91,12 @@ func resolveDispatchAuthority(rt RetainedRuntime, role string) (dispatchAuthorit
 		return dispatchAuthority{}, err
 	}
 	a.network, a.brokerHosts = network, hosts
+
+	plan, err := compileDispatchPlan(rt, role)
+	if err != nil {
+		return dispatchAuthority{}, err
+	}
+	a.planDigest = plan.Digest()
 	return a, nil
 }
 

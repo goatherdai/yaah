@@ -255,6 +255,7 @@ func runDispatchContainer(
 	subParams jobs.SubAgentParams,
 	timeout time.Duration,
 	res subagent.WorldResolution,
+	authority dispatchAuthority,
 	sandbox *substrate.SessionSandbox,
 ) (out retainedRunResult, runErr error) {
 	recordDispatchWorld(ctx, res)
@@ -270,6 +271,7 @@ func runDispatchContainer(
 		return retainedRunResult{}, ferr
 	}
 	recordWorldFact(ctx, rt.ScopeManager, scope.ID(), res)
+	recordAuthorityFact(ctx, rt.ScopeManager, scope.ID(), authority)
 
 	// Deferred so no return path — a body error, a supervisor halt, a panic —
 	// leaves the container running. Both steps are bounded and cancel-free:
@@ -319,6 +321,7 @@ func runDispatchContainerProposal(
 	subParams jobs.SubAgentParams,
 	timeout time.Duration,
 	res subagent.WorldResolution,
+	authority dispatchAuthority,
 	sandbox *substrate.SessionSandbox,
 	basisState kerneltrace.WorkspaceState,
 	basisDigest string,
@@ -356,6 +359,7 @@ func runDispatchContainerProposal(
 		return retainedRunResult{}, nil
 	}
 	recordWorldFact(ctx, rt.ScopeManager, scope.ID(), res)
+	recordAuthorityFact(ctx, rt.ScopeManager, scope.ID(), authority)
 
 	root := sandbox.Workspace().WorkDir()
 
