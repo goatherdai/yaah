@@ -161,10 +161,11 @@ func ProtectReasoningTurns(messages []types.Message, keepStart, protectTurns int
 	return boundary
 }
 
-// TrimToLastUserTurn cuts the replayed history back to the current user turn:
-// the leading message (the session's system prompt) plus everything from the
-// final user message on. ok is false when nothing would be dropped — no user
-// turn to cut back to, or the history is already a single turn.
+// TrimToCurrentUserTurn cuts the replayed history back to the current user
+// turn: the leading message (the session's system prompt) plus everything from
+// the message carrying the operator's current request onward. ok is false when
+// nothing would be dropped — no user turn to cut back to, or the history is
+// already a single turn.
 //
 // It exists for provider swaps (yaah-1109). A fallback onto a thinking-mode
 // endpoint cannot consume assistant turns produced by the swapped-out
@@ -174,14 +175,20 @@ func ProtectReasoningTurns(messages []types.Message, keepStart, protectTurns int
 // one recovery that needs no provider cooperation — a turn that is never sent
 // needs no reasoning replayed with it — and the current user message is all the
 // new provider needs to serve the turn.
-func TrimToLastUserTurn(messages []types.Message) ([]types.Message, bool) {
-	last := -1
-	for i := len(messages) - 1; i >= 1; i-- {
-		if messages[i].Role == "user" {
-			last = i
-			break
-		}
-	}
+//
+// canonical is the loop's own conversation for this turn, taken before the
+// request-only transforms (pruning, orphan repair) and without the transient
+// wrap-up/budget notice the loop appends to the request after the user prompt.
+// The boundary cannot be found in the request alone: those notices are
+// user-role messages, so once one lands the LAST user message in the payload is
+// the notice, and cutting back to it keeps [system, notice] while dropping the
+// real request (review finding: user request preservation). The boundary is
+// therefore the last user message whose content matches canonical's final user
+// message; trailing notices survive because they follow it. A nil canonical
+// falls back to the final user message, which is correct whenever the loop
+// appended no notice.
+func TrimToCurrentUserTurn(messages, canonical []types.Message) ([]types.Message, bool) {
+	last := currentTurnStart(messages, canonical)
 	if last <= 0 {
 		return messages, false
 	}
@@ -195,6 +202,40 @@ func TrimToLastUserTurn(messages []types.Message) ([]types.Message, bool) {
 		return messages, false
 	}
 	return trimmed, true
+}
+
+// currentTurnStart returns the index in messages where the turn carrying the
+// operator's current request begins, or -1 when messages holds no user turn to
+// cut back to. The turn is located by content against canonical so a trailing
+// transient notice — a user-role message the loop appends after the real prompt
+// — cannot be mistaken for the request itself.
+func currentTurnStart(messages, canonical []types.Message) int {
+	if task := lastUserContent(canonical); task != "" {
+		for i := len(messages) - 1; i >= 1; i-- {
+			if messages[i].Role == "user" && messages[i].Content == task {
+				return i
+			}
+		}
+	}
+	// No canonical task to match (an unwired caller), or it is no longer in
+	// the request: the final user message is the best available boundary.
+	for i := len(messages) - 1; i >= 1; i-- {
+		if messages[i].Role == "user" {
+			return i
+		}
+	}
+	return -1
+}
+
+// lastUserContent returns the content of the final user message in msgs — the
+// instruction the model is answering right now. Empty when it carries none.
+func lastUserContent(msgs []types.Message) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" && msgs[i].Content != "" {
+			return msgs[i].Content
+		}
+	}
+	return ""
 }
 
 // isReasoningAssistant reports whether m is an assistant message carrying

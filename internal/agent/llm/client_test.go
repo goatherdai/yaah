@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/goatherdai/yaah/internal/prompts"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -369,6 +370,116 @@ func TestCall_swapTrimsForeignThinkinglessHistory(t *testing.T) {
 	}
 	if len(fallback.messages[1]) != len(want) {
 		t.Errorf("replay carried %d messages, want the trimmed %d", len(fallback.messages[1]), len(want))
+	}
+}
+
+// TestCall_swapTrimKeepsRequestUnderTrailingNotice pins the request-preservation
+// half of the swap trim: buildTurnRequest appends a transient wrap-up/budget
+// notice AFTER the user turn, and that notice is itself a user-role message — so
+// trimming to the final user message keeps [system, notice] and drops the
+// operator's actual request. The boundary must come from canonical history, and
+// the adopted baseline must reach the persistence rebase seam.
+func TestCall_swapTrimKeepsRequestUnderTrailingNotice(t *testing.T) {
+	notice := prompts.WrapUpMessage(1)
+	canonical := []types.Message{
+		types.SystemMsg("system prompt"),
+		types.UserMsg("first ask"),
+		{Role: "assistant", Content: "old answer"},
+		types.UserMsg("current ask"),
+	}
+	request := append(append([]types.Message{}, canonical...), types.UserMsg(notice))
+
+	primary := &degeneratePrimaryProvider{}
+	fallback := &swapThinkingModeProvider{}
+	var replaced []types.Message
+	c := &Client{
+		Provider:           primary,
+		FallbackProvider:   fallback,
+		Model:              "primary-model",
+		FallbackModel:      "thinking-model",
+		MaxRetries:         2,
+		RetryBackoff:       time.Millisecond,
+		CanonicalMessages:  func() []types.Message { return canonical },
+		OnMessagesReplaced: func(msgs []types.Message) { replaced = msgs },
+	}
+
+	res, err := c.Call(context.Background(), types.ChatRequest{Model: "primary-model", Messages: request})
+	if err != nil {
+		t.Fatalf("Call() error after the swap trim: %v", err)
+	}
+	want := []types.Message{
+		types.SystemMsg("system prompt"),
+		types.UserMsg("current ask"),
+		types.UserMsg(notice),
+	}
+	if !res.Compacted {
+		t.Fatal("the trimmed baseline must be reported as Compacted so the loop adopts it")
+	}
+	if len(res.CompactedMessages) != len(want) {
+		t.Fatalf("CompactedMessages = %+v, want the request turn plus its trailing notice", res.CompactedMessages)
+	}
+	for i := range want {
+		if res.CompactedMessages[i].Content != want[i].Content {
+			t.Errorf("CompactedMessages[%d].Content = %q, want %q", i, res.CompactedMessages[i].Content, want[i].Content)
+		}
+	}
+	if len(replaced) != len(want) {
+		t.Fatalf("persistence rebase received %d messages; want the trimmed %d", len(replaced), len(want))
+	}
+	for i := range want {
+		if replaced[i].Content != want[i].Content {
+			t.Errorf("rebase message %d = %q, want %q", i, replaced[i].Content, want[i].Content)
+		}
+	}
+	if len(fallback.messages) != 2 {
+		t.Fatalf("fallback attempts = %d, want 2 (foreign replay, then trimmed replay)", len(fallback.messages))
+	}
+}
+
+// TestCall_midToolLoopSwapSkipsTrim: the trim keeps everything from the current
+// user message onward, so a swap that fires mid-tool-loop still carries the
+// turn's own unsigned assistant tool-call turns and the endpoint refuses the
+// trimmed payload for the same reason. The client must not adopt that
+// still-broken baseline — no trim, no persistence rebase — and must surface the
+// swap diagnosis instead.
+func TestCall_midToolLoopSwapSkipsTrim(t *testing.T) {
+	call := types.ToolCall{ID: "c1", Function: types.ToolCallFn{Name: "read", Arguments: "{}"}}
+	history := []types.Message{
+		types.SystemMsg("system prompt"),
+		types.UserMsg("first ask"),
+		{Role: "assistant", Content: "old answer"},
+		types.UserMsg("current ask"),
+		{Role: "assistant", ToolCalls: []types.ToolCall{call}},
+		{Role: "tool", Name: "read", ToolCallID: "c1", Content: "result"},
+	}
+	primary := &degeneratePrimaryProvider{}
+	fallback := &swapThinkingModeProvider{}
+	rebased := false
+	c := &Client{
+		Provider:           primary,
+		FallbackProvider:   fallback,
+		Model:              "primary-model",
+		FallbackModel:      "thinking-model",
+		MaxRetries:         2,
+		RetryBackoff:       time.Millisecond,
+		OnMessagesReplaced: func([]types.Message) { rebased = true },
+	}
+
+	res, err := c.Call(context.Background(), types.ChatRequest{Model: "primary-model", Messages: history})
+	if err == nil {
+		t.Fatal("expected the thinking-replay error to surface")
+	}
+	if !strings.Contains(err.Error(), "swapped-out primary") {
+		t.Fatalf("error must attribute the failure to the mid-session swap, got: %s", err.Error())
+	}
+	if res.Compacted {
+		t.Error("a trimmed history that still carries unsigned assistant turns must not be adopted as the baseline")
+	}
+	if rebased {
+		t.Error("persistence must not be rebased onto a history the provider still rejects")
+	}
+	if len(fallback.messages) != 1 {
+		t.Errorf("fallback attempts = %d, want 1 (the trimmed replay is refused, so it is never sent)", len(fallback.messages))
 	}
 }
 

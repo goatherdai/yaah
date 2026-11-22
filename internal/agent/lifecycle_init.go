@@ -213,8 +213,17 @@ func (l *Loop) applyDefaults() {
 			Compact:        l.llmCompact,
 			Trim:           l.llmTrim,
 			StripReasoning: l.StripAllReasoning,
-			OtelEnabled:    l.Config.OtelEnabled,
-			OtelVerbose:    l.Config.OtelVerbose,
+			// The swap trim replaces the replayed history wholesale, so it
+			// must go through the same persistence rebase compaction uses:
+			// otherwise the discarded rows survive in the DB and a resumed
+			// session reloads the foreign history the trim just dropped.
+			OnMessagesReplaced: l.rebasePersistence,
+			// The request alone cannot name the operator's current request
+			// once the loop appends a transient wrap-up/budget notice; the
+			// canonical history can (yaah-1109 review).
+			CanonicalMessages: l.canonicalMessages,
+			OtelEnabled:       l.Config.OtelEnabled,
+			OtelVerbose:       l.Config.OtelVerbose,
 		}
 	} else if l.broker != nil {
 		// Rebind the streaming callbacks to the current broker — closures
@@ -222,10 +231,11 @@ func (l *Loop) applyDefaults() {
 		l.LLM.OnToken = l.publishTokenDelta
 		l.LLM.OnThinking = l.publishThinking
 	}
-	// Every path that hands back a client must carry the two injected seams,
-	// not just the fresh-construction one: a nil SessionIDFn silently drops
-	// provider session affinity and a nil Heartbeat drops liveness pings
-	// (yaah-9RCG review).
+	// Every path that hands back a client must carry the injected seams, not
+	// just the fresh-construction one: a nil SessionIDFn silently drops
+	// provider session affinity, a nil Heartbeat drops liveness pings
+	// (yaah-9RCG review), and nil persistence/canonical-history seams leave a
+	// swap trim desynced from the stored transcript (yaah-1109 review).
 	if l.LLM != nil {
 		if l.LLM.SessionIDFn == nil {
 			l.LLM.SessionIDFn = providers.WithSessionID
@@ -233,7 +243,23 @@ func (l *Loop) applyDefaults() {
 		if l.LLM.Heartbeat == nil {
 			l.LLM.Heartbeat = jobs.SendHeartbeat
 		}
+		if l.LLM.OnMessagesReplaced == nil {
+			l.LLM.OnMessagesReplaced = l.rebasePersistence
+		}
+		if l.LLM.CanonicalMessages == nil {
+			l.LLM.CanonicalMessages = l.canonicalMessages
+		}
 	}
+}
+
+// canonicalMessages reports the loop's conversation history for the current
+// turn. It is the request-transformation-free view: prepareRequestMessages
+// prunes and repairs into a copy, and buildTurnRequest appends the transient
+// wrap-up/budget notice there, so the request cannot say which user message is
+// the operator's current ask (yaah-1109 review). A method value keeps the seam
+// pointed at the live state across Runs.
+func (l *Loop) canonicalMessages() []types.Message {
+	return l.State.Messages
 }
 
 // publishTokenDelta and publishThinking are method values so rebinding
