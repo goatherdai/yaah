@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.204.0](https://github.com/goatherdai/yaah/compare/v0.203.1...v0.204.0) (2026-11-22)
+
+
+### Features
+
+* **workflow:** enforce per-node timeout in the scheduler ([#361](https://github.com/goatherdai/yaah/issues/361)) ([9077f01](https://github.com/goatherdai/yaah/commit/9077f0104778229b41c9c01d750771980b6cc4a6))
+
 ## [0.203.1](https://github.com/goatherdai/yaah/compare/v0.203.0...v0.203.1) (2026-11-22)
 
 
