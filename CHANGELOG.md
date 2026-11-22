@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.203.1](https://github.com/goatherdai/yaah/compare/v0.203.0...v0.203.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **supervision:** cite the confinement the worktree run actually had ([#359](https://github.com/goatherdai/yaah/issues/359)) ([6cc4b5a](https://github.com/goatherdai/yaah/commit/6cc4b5a776916f7f2dd4d5cfa56c81154f249379))
+
 ## [0.203.0](https://github.com/goatherdai/yaah/compare/v0.202.0...v0.203.0) (2026-11-22)
 
 
