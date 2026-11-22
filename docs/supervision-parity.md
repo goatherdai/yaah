@@ -27,7 +27,8 @@ deterministic predicate, not an LLM call.
 | Monitor assignment / `PermissionPlan` | `internal/permissionplan` (`Authority` → `Compile` → monitors + `Digest`) | Adopted (Stage 1) |
 | Jail monitor | `internal/dispatch/dispatch_authority.go` — grants/network/containment lowered from the plan; digest recorded as `yaah.subagent.authority.v1` | Adopted (Stage 2) |
 | Settlement monitor | `internal/dispatch/git_delta.go` — delta posture declared in the plan; digest cited at settle as `authority_plan_digest` | Adopted (Stage 3) |
-| Gating combinators (`gate`/`budget`/`timeout`) | not ported | Declined — ties to the workflow DSL (`yaah-hxk3.5`) |
+| `gate` deterministic predicate (`JudgePredicate`) | `internal/workflow/assert` (named deterministic checks) + `internal/workflow/exec/gate.go` | Adopted — the `judge:` (LLM verdict) half is a yaah extension beyond Shepherd's deterministic predicate |
+| `budget`/`timeout` combinators | not present in `internal/workflow/exec` | Not ported (`yaah-hxk3.5`) |
 | Citation checking | not ported | Declined (`yaah-hxk3.2`) |
 | Effects supervisor handler | advisory rules engine (`destructive_tool`, `high_error_rate`, `stuck_detection`) | Diverged — see below |
 
@@ -53,5 +54,6 @@ not yet tied to the plan digest.
 `docs/goatherd-parity.md` is the ledger of record. Open items: `yaah-hxk3.1`
 (supervision, Partial — the biggest gap), `hxk3.2` (citation checking, not
 ported), `hxk3.4` (contexts/effect fold, Partial), `hxk3.5`
-(task/step/combinators, not ported), `hxk3.3` (scorecard, ongoing);
-umbrella `yaah-1tkp`.
+(task/step/combinators — the workflow DSL exists under `internal/workflow/`
+with `gate`/`assert` adopted; `budget`/`timeout` remain unported),
+`hxk3.3` (scorecard, ongoing); umbrella `yaah-1tkp`.

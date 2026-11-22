@@ -2,6 +2,7 @@ package effectpolicy
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -687,5 +688,328 @@ func TestString(t *testing.T) {
 				t.Fatalf("got %s; want %s", tc.got, tc.want)
 			}
 		})
+	}
+}
+
+// TestNotInImpliesPresenceOnlyWithNil pins the excluded-set rule: an excluded
+// set rules out the nil value only when it names nil, so only then does it
+// prove presence. A set that does not name nil still admits a present field
+// whose value is nil, which IsNotNone rejects.
+func TestNotInImpliesPresenceOnlyWithNil(t *testing.T) {
+	withoutNil := Field("x", NotIn, []any{"blocked"})
+	withNil := Field("x", NotIn, []any{"blocked", nil})
+	presence := Field("x", IsNotNone, nil)
+
+	nilValue := Effect{Kind: "write", Fields: map[string]any{"x": nil}}
+	blocked := Effect{Kind: "write", Fields: map[string]any{"x": "blocked"}}
+	other := Effect{Kind: "write", Fields: map[string]any{"x": "ok"}}
+
+	// Matches is the ground truth the proofs must respect.
+	if !withoutNil.Matches(nilValue) {
+		t.Fatal("x not in [blocked] must match a present nil value")
+	}
+	if presence.Matches(nilValue) {
+		t.Fatal("x is not null must not match a present nil value")
+	}
+	if withNil.Matches(nilValue) {
+		t.Fatal("x not in [blocked, nil] must not match a present nil value")
+	}
+
+	t.Run("nil-excluding set proves presence", func(t *testing.T) {
+		if !withNil.SubsetOf(presence) {
+			t.Fatal("x not in [blocked, nil] must prove x is not null")
+		}
+		child := Plan{}.AllowOnly(withNil)
+		parent := Plan{}.AllowOnly(presence)
+		if err := Conforms(child, parent); err != nil {
+			t.Fatalf("Conforms = %v; want nil", err)
+		}
+	})
+
+	t.Run("nil-admitting set does not", func(t *testing.T) {
+		if withoutNil.SubsetOf(presence) {
+			t.Fatal("x not in [blocked] admits a nil value, so it must not prove presence")
+		}
+		child := Plan{}.AllowOnly(withoutNil)
+		parent := Plan{}.AllowOnly(presence)
+		if err := Conforms(child, parent); !errors.Is(err, ErrEffectSurfaceTooWide) {
+			t.Fatalf("Conforms = %v; want ErrEffectSurfaceTooWide", err)
+		}
+	})
+
+	for _, e := range []Effect{other} {
+		if !withNil.SubsetOf(presence) {
+			t.Fatalf("subset with %s = false; want true", e)
+		}
+		if !withoutNil.Matches(e) || !presence.Matches(e) {
+			t.Fatalf("%s: both matchers must accept a present non-nil value", e)
+		}
+	}
+	if withoutNil.Matches(blocked) {
+		t.Fatal("x not in [blocked] must reject the excluded value")
+	}
+	if !presence.Matches(blocked) {
+		t.Fatal("x is not null must accept a present non-nil value")
+	}
+}
+
+// TestLargeIntegersStayDistinct pins the comparison to exact integral values: a
+// float64 conversion rounds two neighbouring large integers onto the same
+// value, which would let one satisfy an equality policy written for the other.
+func TestLargeIntegersStayDistinct(t *testing.T) {
+	const maxUint64 = ^uint64(0)        // 18446744073709551615
+	const prevUint64 = maxUint64 - 1    // 18446744073709551614
+	const maxInt64 = uint64(1<<63 - 1)  // 9223372036854775807
+	const prevInt64 = uint64(1<<63 - 2) // 9223372036854775806
+
+	// The premise: float64 rounds each pair onto one value, which is exactly
+	// what made the old comparison collapse them.
+	if float64(maxUint64) != float64(prevUint64) {
+		t.Fatalf("premise: float64(%d) and float64(%d) differ", prevUint64, maxUint64)
+	}
+	if float64(int64(maxInt64)) != float64(int64(prevInt64)) {
+		t.Fatalf("premise: float64(%d) and float64(%d) differ", prevInt64, maxInt64)
+	}
+
+	cases := []struct {
+		name   string
+		m      Match
+		fields map[string]any
+		want   bool
+	}{
+		{"uint64 near max", Field("size", Eq, maxUint64), map[string]any{"size": prevUint64}, false},
+		{"uint64 exact", Field("size", Eq, maxUint64), map[string]any{"size": maxUint64}, true},
+		{"int64 near max", Field("size", Eq, int64(maxInt64)), map[string]any{"size": int64(prevInt64)}, false},
+		{"int64 exact", Field("size", Eq, int64(maxInt64)), map[string]any{"size": int64(maxInt64)}, true},
+		{"uint64 neighbour is below", Field("size", Gt, prevUint64), map[string]any{"size": maxUint64}, true},
+		{"uint64 bound excludes itself", Field("size", Gt, maxUint64), map[string]any{"size": maxUint64}, false},
+		{"uint64 neighbour is not above", Field("size", Lt, maxUint64), map[string]any{"size": prevUint64}, true},
+		{"signed negative excludes unsigned", Field("size", Eq, int64(-1)), map[string]any{"size": maxUint64}, false},
+		{"signed bound admits unsigned", Field("size", Gt, int64(-1)), map[string]any{"size": maxUint64}, true},
+		{"unsigned bound keeps the negative below it", Field("size", Lt, uint64(0)), map[string]any{"size": int64(-1)}, true},
+		{"signed negative is not above zero", Field("size", Gt, uint64(0)), map[string]any{"size": int64(-1)}, false},
+		{"integer is not the rounded float", Field("size", Eq, maxUint64), map[string]any{"size": float64(maxUint64)}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := Effect{Kind: "write", Fields: tc.fields}
+			if got := tc.m.Matches(e); got != tc.want {
+				t.Fatalf("%s.Matches(%s) = %v; want %v", tc.m, e, got, tc.want)
+			}
+		})
+	}
+
+	t.Run("subset proofs are not corrupted", func(t *testing.T) {
+		narrow := Field("size", In, []any{prevUint64})
+		wide := Field("size", In, []any{maxUint64})
+		if narrow.SubsetOf(wide) {
+			t.Fatal("a set holding one uint64 must not prove a set holding its neighbour")
+		}
+		if Field("size", Eq, maxUint64).SubsetOf(Field("size", Eq, prevUint64)) {
+			t.Fatal("an equality on one uint64 must not prove an equality on its neighbour")
+		}
+		if Field("size", Eq, maxUint64).EquivalentTo(Field("size", Eq, prevUint64)) {
+			t.Fatal("adjacent uint64 equality atoms are not equivalent")
+		}
+		if !Field("size", In, []any{maxUint64}).SubsetOf(Field("size", Eq, maxUint64)) {
+			t.Fatal("a singleton set must prove the equality of its member")
+		}
+	})
+}
+
+// TestValueIdentityIsUnambiguous pins atom identity to a structural encoding: a
+// rendering makes []string{"a b", "c"} and []string{"a", "b c"} look alike,
+// while the runtime equality they stand for distinguishes them.
+func TestValueIdentityIsUnambiguous(t *testing.T) {
+	spaced := []string{"a b", "c"}
+	apart := []string{"a", "b c"}
+
+	// The premise: one rendering, two distinct values.
+	if fmt.Sprint(spaced) != fmt.Sprint(apart) {
+		t.Fatalf("premise: %q and %q render differently", fmt.Sprint(spaced), fmt.Sprint(apart))
+	}
+
+	eqSpaced := Field("tags", Eq, spaced)
+	eqApart := Field("tags", Eq, apart)
+	spacedEffect := Effect{Kind: "write", Fields: map[string]any{"tags": spaced}}
+	apartEffect := Effect{Kind: "write", Fields: map[string]any{"tags": apart}}
+
+	if !eqSpaced.Matches(spacedEffect) || eqSpaced.Matches(apartEffect) {
+		t.Fatal("an equality atom must accept only its own value")
+	}
+	if !eqApart.Matches(apartEffect) || eqApart.Matches(spacedEffect) {
+		t.Fatal("an equality atom must accept only its own value")
+	}
+	if eqSpaced.SubsetOf(eqApart) || eqApart.SubsetOf(eqSpaced) {
+		t.Fatal("equalities on distinct values are not subsets of each other")
+	}
+	if eqSpaced.EquivalentTo(eqApart) {
+		t.Fatal("equalities on distinct values are not equivalent")
+	}
+	if !eqSpaced.And(eqApart).IsEmpty() {
+		t.Fatal("a field cannot equal two distinct values")
+	}
+	if Field("tags", In, []any{spaced}).SubsetOf(Field("tags", In, []any{apart})) {
+		t.Fatal("a set holding one value must not prove a set holding another")
+	}
+	// The same collision one level down, inside a map value.
+	mapSpaced := map[string]any{"k": spaced}
+	mapApart := map[string]any{"k": apart}
+	if Field("meta", Eq, mapSpaced).SubsetOf(Field("meta", Eq, mapApart)) {
+		t.Fatal("map values must keep an unambiguous identity")
+	}
+	if Field("meta", Eq, mapSpaced).EquivalentTo(Field("meta", Eq, mapApart)) {
+		t.Fatal("map values must keep an unambiguous identity")
+	}
+}
+
+// TestNegationComplement pins dnfNegate to the runtime complement. Match.Matches
+// negates an atom's boolean result, so Not(atom) also matches effects whose
+// field is absent, or present with a value the atom cannot compare. Mapping Not
+// onto the opposite atom alone drops those effects and over-claims.
+func TestNegationComplement(t *testing.T) {
+	absent := Effect{Kind: "write"}
+	wrongType := Effect{Kind: "write", Fields: map[string]any{"x": "s"}}
+	one := Effect{Kind: "write", Fields: map[string]any{"p": 1}}
+	two := Effect{Kind: "write", Fields: map[string]any{"p": 2}}
+
+	t.Run("Not(eq) covers an absent field but ne does not", func(t *testing.T) {
+		notEq := Field("p", Eq, 1).Not()
+		ne := Field("p", Ne, 1)
+
+		if !notEq.Matches(absent) {
+			t.Fatal(`not(p == 1) must match an effect with no p`)
+		}
+		if ne.Matches(absent) {
+			t.Fatal("p != 1 must not match an effect with no p")
+		}
+		if notEq.SubsetOf(ne) {
+			t.Fatal("not(p == 1) is not a subset of p != 1: only the first matches an absent field")
+		}
+		if !ne.SubsetOf(notEq) {
+			t.Fatal("p != 1 is a subset of not(p == 1)")
+		}
+		for _, e := range []Effect{one, two} {
+			if notEq.Matches(e) != ne.Matches(e) {
+				t.Fatalf("the two matchers must agree on the present value %s", e)
+			}
+		}
+
+		child := Plan{}.AllowOnly(Field("p", Eq, 1).Not())
+		parent := Plan{}.AllowOnly(Field("p", Ne, 1))
+		if err := Conforms(child, parent); !errors.Is(err, ErrEffectSurfaceTooWide) {
+			t.Fatalf("Conforms = %v; want ErrEffectSurfaceTooWide", err)
+		}
+		if err := Conforms(parent, child); err != nil {
+			t.Fatalf("Conforms = %v; want nil", err)
+		}
+	})
+
+	t.Run("complementary bounds stay non-empty on an absent field", func(t *testing.T) {
+		m := Field("p", Lt, 5).Not().And(Field("p", Gte, 5).Not())
+		if !m.Matches(absent) {
+			t.Fatal("an effect with no p must match both negations")
+		}
+		if m.IsEmpty() {
+			t.Fatal("IsEmpty = true; an absent field matches the conjunction")
+		}
+		if m.SubsetOf(Field("p", Eq, 5)) {
+			t.Fatal("an absent field matches the conjunction but not p == 5")
+		}
+		if m.EquivalentTo(Nothing()) {
+			t.Fatal("the conjunction matches effects, so it is not Nothing")
+		}
+	})
+
+	t.Run("an uncomparable value survives a comparison negation", func(t *testing.T) {
+		m := Field("x", Lt, 1).Not().And(Field("x", Eq, "s"))
+		if !m.Matches(wrongType) {
+			t.Fatalf(`not(x < 1) must match x = "s", which no comparison orders`)
+		}
+		if m.IsEmpty() {
+			t.Fatalf(`IsEmpty = true; x = "s" matches the matcher`)
+		}
+		if !m.SubsetOf(Field("x", Eq, "s")) {
+			t.Fatal(`the matcher conjoins x == "s", so it is a subset of it`)
+		}
+	})
+
+	t.Run("string negations keep their wrong-typed case", func(t *testing.T) {
+		notPrefix := Field("p", StartsWith, "s").Not()
+		if !notPrefix.Matches(absent) || !notPrefix.Matches(wrongType) {
+			t.Fatal("not(p starts with s) must match absent and non-string values")
+		}
+		// Its canonical form must keep those effects, or the proofs would
+		// reason about a smaller surface than the matcher really accepts.
+		canonical := notPrefix.Canonical()
+		if canonical.String() != canonical.Canonical().String() {
+			t.Fatalf("Canonical is not idempotent: %s", canonical)
+		}
+		for _, e := range []Effect{absent, wrongType, one, two} {
+			if got, want := canonical.Matches(e), notPrefix.Matches(e); got != want {
+				t.Fatalf("Canonical changed semantics on %s: got %v; want %v", e, got, want)
+			}
+		}
+	})
+}
+
+// TestProofsAgreeWithMatches is a soundness sweep: whenever an effect matches
+// the narrow matcher and not the wide one, SubsetOf must decline, and a matcher
+// reported empty must match no probe at all.
+func TestProofsAgreeWithMatches(t *testing.T) {
+	probes := []Effect{
+		{Kind: "write"},
+		{Kind: "write", Fields: map[string]any{"p": 1}},
+		{Kind: "write", Fields: map[string]any{"p": 5}},
+		{Kind: "write", Fields: map[string]any{"p": "s"}},
+		{Kind: "write", Fields: map[string]any{"p": nil}},
+		{Kind: "delete", Fields: map[string]any{"p": 2}},
+	}
+	matchers := map[string]Match{
+		"all":         All(),
+		"nothing":     Nothing(),
+		"eq1":         Field("p", Eq, 1),
+		"ne1":         Field("p", Ne, 1),
+		"lt5":         Field("p", Lt, 5),
+		"gte5":        Field("p", Gte, 5),
+		"notEq1":      Field("p", Eq, 1).Not(),
+		"notLt5":      Field("p", Lt, 5).Not(),
+		"notBounds":   Field("p", Lt, 5).Not().And(Field("p", Gte, 5).Not()),
+		"write":       Exact("write"),
+		"writeNotEq1": Exact("write").And(Field("p", Eq, 1).Not()),
+		"inSet":       Field("p", In, []any{1, "s"}),
+		"notIn1":      Field("p", NotIn, []any{1}),
+		"notInNil":    Field("p", NotIn, []any{1, nil}),
+		"isNone":      Field("p", IsNone, nil),
+		"isNotNone":   Field("p", IsNotNone, nil),
+		"prefix":      Field("p", StartsWith, "s"),
+		"notPrefix":   Field("p", StartsWith, "s").Not(),
+	}
+
+	for name, m := range matchers {
+		if m.IsEmpty() {
+			for _, e := range probes {
+				if m.Matches(e) {
+					t.Fatalf("%s.IsEmpty() = true, but it matches %s", name, e)
+				}
+			}
+		}
+		for oname, o := range matchers {
+			if m.SubsetOf(o) {
+				for _, e := range probes {
+					if m.Matches(e) && !o.Matches(e) {
+						t.Fatalf("%s.SubsetOf(%s) = true, but %s matches only the first", name, oname, e)
+					}
+				}
+			}
+			if m.EquivalentTo(o) {
+				for _, e := range probes {
+					if m.Matches(e) != o.Matches(e) {
+						t.Fatalf("%s.EquivalentTo(%s) = true, but they differ on %s", name, oname, e)
+					}
+				}
+			}
+		}
 	}
 }

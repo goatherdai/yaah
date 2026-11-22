@@ -28,6 +28,19 @@
 //     small implication theory over a single field.
 //   - EquivalentTo: the two canonical clause sets are identical.
 //
+// # Negation is exact
+//
+// The atom alphabet carries three presence literals — `f is absent`,
+// `f is present`, and an explicit `not(atom)` — so the complement of any atom
+// is expressible in it. An atom matches only an effect whose field is present,
+// so its runtime complement also covers every effect whose field is absent;
+// and a value of the wrong type for a typed operator satisfies neither the
+// atom nor its opposite, so the complement covers that case too. Negation
+// therefore emits the absent-field clause plus either the opposite atom (only
+// for the operators whose opposite is exactly complementary) or the explicit
+// negated literal. Substituting the opposite atom alone would drop those
+// effects and let SubsetOf, IsEmpty, and EquivalentTo over-claim.
+//
 // # Where this under-approximates
 //
 // Each of these is a place a true relation is reported as false, never the
@@ -44,6 +57,12 @@
 //   - Regex and string algebras beyond simple subsumption. `matches("^/a")`
 //     entails nothing but `is not null`; prefix and substring atoms entail
 //     only shorter prefixes and substrings of the same string.
+//   - Value identity outside the constant domain. Atom identity is a
+//     structural encoding of nil, booleans, strings, numbers, slices, arrays,
+//     and maps, so two constants the runtime distinguishes never share an
+//     identity. An exotic value (a function, a channel, a struct with
+//     unexported state) falls back to a Go-syntax rendering whose identity is
+//     only best effort.
 //   - Contradiction detection. Clauses are only provably empty when atoms
 //     conflict pairwise through the rules in clauseUnsat; richer
 //     unsatisfiability (three bounds, regex intersections) reads as non-empty.
@@ -53,12 +72,15 @@
 package effectpolicy
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -187,7 +209,7 @@ func (m Match) Matches(e Effect) bool {
 	case kindAtom:
 		v, ok := e.Field(m.atom.field)
 		if !ok {
-			return false
+			return m.atom.op == opAbsent
 		}
 		return m.atom.holds(v)
 	case kindAnd:
@@ -469,9 +491,9 @@ func Conforms(child, parent Plan) error {
 }
 
 // atomOp is the internal operator set. It is the public Op set plus the
-// negations of the non-negatable-by-an-Op testers (StartsWith, EndsWith,
-// Contains, Matches), so that pushing a Not into a clause never needs a second
-// node type.
+// presence literals (opAbsent, opPresent) and the explicit negated literal
+// (opNot), so that the complement of any atom is expressible exactly and
+// pushing a Not into a clause never needs a second node type.
 type atomOp uint8
 
 const (
@@ -484,36 +506,34 @@ const (
 	opIn
 	opNotIn
 	opStartsWith
-	opNotStartsWith
 	opEndsWith
-	opNotEndsWith
 	opContains
-	opNotContains
 	opMatches
-	opNotMatches
 	opIsNone
 	opIsNotNone
+	opAbsent
+	opPresent
+	opNot
 )
 
 var atomOpNames = [...]string{
-	opEq:            "eq",
-	opNe:            "ne",
-	opLt:            "lt",
-	opLte:           "lte",
-	opGt:            "gt",
-	opGte:           "gte",
-	opIn:            "in",
-	opNotIn:         "not_in",
-	opStartsWith:    "startswith",
-	opNotStartsWith: "not_startswith",
-	opEndsWith:      "endswith",
-	opNotEndsWith:   "not_endswith",
-	opContains:      "contains",
-	opNotContains:   "not_contains",
-	opMatches:       "matches",
-	opNotMatches:    "not_matches",
-	opIsNone:        "is_none",
-	opIsNotNone:     "is_not_none",
+	opEq:         "eq",
+	opNe:         "ne",
+	opLt:         "lt",
+	opLte:        "lte",
+	opGt:         "gt",
+	opGte:        "gte",
+	opIn:         "in",
+	opNotIn:      "not_in",
+	opStartsWith: "startswith",
+	opEndsWith:   "endswith",
+	opContains:   "contains",
+	opMatches:    "matches",
+	opIsNone:     "is_none",
+	opIsNotNone:  "is_not_none",
+	opAbsent:     "absent",
+	opPresent:    "present",
+	opNot:        "not",
 }
 
 func (o atomOp) String() string {
@@ -539,31 +559,30 @@ func (o atomOp) symbol() string {
 		return ">="
 	case opStartsWith:
 		return "starts with"
-	case opNotStartsWith:
-		return "does not start with"
 	case opEndsWith:
 		return "ends with"
-	case opNotEndsWith:
-		return "does not end with"
 	case opContains:
 		return "contains"
-	case opNotContains:
-		return "does not contain"
 	case opMatches:
 		return "~"
-	case opNotMatches:
-		return "!~"
+	case opAbsent:
+		return "is absent"
+	case opPresent:
+		return "is present"
 	}
 	return o.String()
 }
 
-// atom is one field test: the unit of a canonical clause.
+// atom is one field test: the unit of a canonical clause. inner is set only on
+// the explicit negated literal (opNot), which records the present values the
+// nested atom rejects.
 type atom struct {
 	field string
 	op    atomOp
 	value any
 	set   []any
 	re    *regexp.Regexp
+	inner *atom
 }
 
 func newAtom(name string, op Op, value any) (atom, bool) {
@@ -617,54 +636,66 @@ var atomOps = map[Op]atomOp{
 	IsNotNone:  opIsNotNone,
 }
 
-// negate returns the atom that denotes the complement of a. Every operator has
-// a partner, so negation never leaves the atom language.
-func (a atom) negate() atom {
+// exactOpposite returns the atom that denotes a's complement on a *present*
+// field, for the operators whose opposite is exactly complementary. ok is
+// false for the typed operators (comparisons, string tests, regexps): a value
+// of the wrong type satisfies neither the atom nor its opposite operator, so
+// the opposite atom alone would drop effects the runtime complement matches.
+func (a atom) exactOpposite() (atom, bool) {
 	out := a
 	switch a.op {
 	case opEq:
 		out.op = opNe
 	case opNe:
 		out.op = opEq
-	case opLt:
-		out.op = opGte
-	case opLte:
-		out.op = opGt
-	case opGt:
-		out.op = opLte
-	case opGte:
-		out.op = opLt
 	case opIn:
 		out.op = opNotIn
 	case opNotIn:
 		out.op = opIn
-	case opStartsWith:
-		out.op = opNotStartsWith
-	case opNotStartsWith:
-		out.op = opStartsWith
-	case opEndsWith:
-		out.op = opNotEndsWith
-	case opNotEndsWith:
-		out.op = opEndsWith
-	case opContains:
-		out.op = opNotContains
-	case opNotContains:
-		out.op = opContains
-	case opMatches:
-		out.op = opNotMatches
-	case opNotMatches:
-		out.op = opMatches
 	case opIsNone:
 		out.op = opIsNotNone
 	case opIsNotNone:
 		out.op = opIsNone
+	case opNot:
+		if a.inner == nil {
+			return atom{}, false
+		}
+		return *a.inner, true
+	default:
+		return atom{}, false
 	}
-	return out
+	return out, true
+}
+
+// absent and present return the presence tests on a's field.
+func (a atom) absent() atom { return atom{field: a.field, op: opAbsent} }
+
+func (a atom) present() atom { return atom{field: a.field, op: opPresent} }
+
+// complement returns the disjunction of one-atom clauses that denotes exactly
+// the runtime complement of a: every effect whose field is absent matches it,
+// and so does every effect whose field is present with a value a rejects.
+// Match.Matches is ground truth for what a negation accepts, so this must not
+// drop the absent (or wrong-typed) side.
+func (a atom) complement() [][]atom {
+	switch a.op {
+	case opAbsent:
+		return [][]atom{{a.present()}}
+	case opPresent:
+		return [][]atom{{a.absent()}}
+	}
+	out := [][]atom{{a.absent()}}
+	if opp, ok := a.exactOpposite(); ok {
+		return append(out, []atom{opp})
+	}
+	inner := a
+	return append(out, []atom{{field: a.field, op: opNot, inner: &inner}})
 }
 
 // holds evaluates the atom against a present field value. A value of the wrong
-// type for the operator is false under both a test and its negation: the
-// field simply does not satisfy the atom.
+// type for a typed operator is false under both the atom and its opposite: the
+// field simply does not satisfy the test. That case is not lost, because the
+// explicit negated literal (opNot) records it.
 func (a atom) holds(v any) bool {
 	switch a.op {
 	case opEq:
@@ -690,32 +721,26 @@ func (a atom) holds(v any) bool {
 	case opStartsWith:
 		s, ok := v.(string)
 		return ok && strings.HasPrefix(s, stringOf(a.value))
-	case opNotStartsWith:
-		s, ok := v.(string)
-		return ok && !strings.HasPrefix(s, stringOf(a.value))
 	case opEndsWith:
 		s, ok := v.(string)
 		return ok && strings.HasSuffix(s, stringOf(a.value))
-	case opNotEndsWith:
-		s, ok := v.(string)
-		return ok && !strings.HasSuffix(s, stringOf(a.value))
 	case opContains:
 		return a.contains(v)
-	case opNotContains:
-		if !a.containable(v) {
-			return false
-		}
-		return !a.contains(v)
 	case opMatches:
 		s, ok := v.(string)
 		return ok && a.re != nil && a.re.MatchString(s)
-	case opNotMatches:
-		s, ok := v.(string)
-		return ok && a.re != nil && !a.re.MatchString(s)
 	case opIsNone:
 		return v == nil
 	case opIsNotNone:
 		return v != nil
+	case opAbsent:
+		// An absent field never reaches holds: the atom is decided by
+		// Match.Matches, which sees the absence itself.
+		return false
+	case opPresent:
+		return true
+	case opNot:
+		return a.inner != nil && !a.inner.holds(v)
 	}
 	return false
 }
@@ -731,36 +756,37 @@ func (a atom) contains(v any) bool {
 	return ok && setContains(set, a.value)
 }
 
-// containable reports whether v has a type Contains is defined for, so that
-// NotContains can stay false on a wrong-typed field.
-func (a atom) containable(v any) bool {
-	if _, ok := v.(string); ok {
-		return true
-	}
-	_, ok := toAnySlice(v)
-	return ok
-}
-
 // key is the structural identity of the atom, used for sorting, deduplication,
-// and clause comparison.
+// and clause comparison. Every part is length-prefixed, so two atoms share a
+// key only when they really are the same test: no rendering ambiguity can make
+// distinct atoms look identical.
 func (a atom) key() string {
 	var b strings.Builder
-	b.WriteString(a.field)
-	b.WriteByte('|')
-	b.WriteString(a.op.String())
-	b.WriteByte('|')
-	if a.set != nil {
+	b.WriteString("a(")
+	writePart(&b, a.field)
+	writePart(&b, a.op.String())
+	switch {
+	case a.inner != nil:
+		writePart(&b, a.inner.key())
+	case a.set != nil:
+		b.WriteString(strconv.Itoa(len(a.set)))
 		b.WriteByte('[')
-		for i, x := range a.set {
-			if i > 0 {
-				b.WriteByte(',')
-			}
-			b.WriteString(valueKey(x))
+		for _, x := range a.set {
+			writePart(&b, valueKey(x))
 		}
 		b.WriteByte(']')
+	default:
+		writePart(&b, valueKey(a.value))
 	}
-	b.WriteString(valueKey(a.value))
 	return b.String()
+}
+
+// writePart appends one length-prefixed part, so no part's content can be read
+// as a different part's.
+func writePart(b *strings.Builder, part string) {
+	b.WriteString(strconv.Itoa(len(part)))
+	b.WriteByte(':')
+	b.WriteString(part)
 }
 
 func (a atom) String() string {
@@ -769,6 +795,15 @@ func (a atom) String() string {
 		return a.field + " is null"
 	case opIsNotNone:
 		return a.field + " is not null"
+	case opAbsent:
+		return a.field + " is absent"
+	case opPresent:
+		return a.field + " is present"
+	case opNot:
+		if a.inner == nil {
+			return "not(" + a.field + ")"
+		}
+		return "not(" + a.inner.String() + ")"
 	case opIn:
 		return a.field + " in " + renderSet(a.set)
 	case opNotIn:
@@ -852,7 +887,10 @@ func dnfProduct(parts []dnf) dnf {
 }
 
 // dnfNegate pushes negation through the disjunction by De Morgan and
-// distributes the resulting conjunction back into disjunctive normal form.
+// distributes the resulting conjunction back into disjunctive normal form. Each
+// atom is complemented exactly (atom.complement), so the result denotes the
+// same effects the runtime negation matches — absent fields and wrong-typed
+// values included.
 func dnfNegate(x dnf) dnf {
 	if x.unknown {
 		return dnf{unknown: true}
@@ -865,9 +903,12 @@ func dnfNegate(x dnf) dnf {
 		if len(clause) == 0 {
 			return dnf{}
 		}
-		alts := make([][]atom, 0, len(clause))
+		alts := make([][]atom, 0, 2*len(clause))
 		for _, a := range clause {
-			alts = append(alts, []atom{a.negate()})
+			alts = append(alts, a.complement()...)
+		}
+		if len(alts) > maxClauses {
+			return dnf{unknown: true}
 		}
 		parts = append(parts, dnf{clauses: alts})
 	}
@@ -971,6 +1012,21 @@ func atomImplies(src, target atom) bool {
 	if src.key() == target.key() {
 		return true
 	}
+	if target.op == opPresent {
+		// Every atom except the absent test needs the field to be present.
+		return src.op != opAbsent
+	}
+	if target.op == opNot {
+		if target.inner == nil {
+			return false
+		}
+		// An atom that cannot be satisfied alongside the inner atom excludes
+		// it exactly, so it entails the negated literal. Otherwise fall through:
+		// a pinned source value decides the literal directly.
+		if !atomsCompatible(src, *target.inner) {
+			return true
+		}
+	}
 	switch src.op {
 	case opEq:
 		// A pinned value decides any other atom on the field.
@@ -992,7 +1048,9 @@ func atomImplies(src, target atom) bool {
 		case opNe:
 			return setContains(src.set, target.value)
 		case opIsNotNone:
-			return !setContains(src.set, nil)
+			// Excluding the nil value is what excludes the nil value; an
+			// excluded set without nil still admits a present nil field.
+			return setContains(src.set, nil)
 		}
 		return false
 	case opNe:
@@ -1129,6 +1187,28 @@ func atomsCompatible(a, b atom) bool {
 	if a.key() == b.key() {
 		return true
 	}
+	// Presence is decided: an absent field cannot satisfy an atom that needs a
+	// value, and a present field is not absent.
+	if a.op == opAbsent || b.op == opAbsent {
+		return false
+	}
+	// An explicit negated literal conflicts with exactly the atoms that entail
+	// its inner atom, and two negated literals can always coexist.
+	if a.op == opNot {
+		if a.inner == nil {
+			return false
+		}
+		if b.op == opNot {
+			return true
+		}
+		return !atomImplies(b, *a.inner)
+	}
+	if b.op == opNot {
+		if b.inner == nil {
+			return false
+		}
+		return !atomImplies(a, *b.inner)
+	}
 	if a.op == opEq {
 		return b.holds(a.value)
 	}
@@ -1223,15 +1303,15 @@ func setContains(set []any, v any) bool {
 }
 
 // valuesEqual compares two field values, treating numbers of different Go types
-// as comparable and falling back to deep equality for everything else.
+// as comparable when their exact values agree and falling back to deep equality
+// for everything else.
 func valuesEqual(a, b any) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
-	if x, ok := toFloat(a); ok {
-		if y, ok := toFloat(b); ok {
-			return x == y
-		}
+	if x, y := numberOf(a), numberOf(b); x.ok && y.ok {
+		c, ok := compareNumber(x, y)
+		return ok && c == 0
 	}
 	return reflect.DeepEqual(a, b)
 }
@@ -1239,59 +1319,150 @@ func valuesEqual(a, b any) bool {
 // compareValues orders two values numerically or lexicographically. ok is false
 // when the pair is not comparable, which makes every comparison operator false.
 func compareValues(a, b any) (int, bool) {
-	x, ok := toFloat(a)
-	if !ok {
-		s, ok := a.(string)
-		if !ok {
-			return 0, false
-		}
-		t, ok := b.(string)
-		if !ok {
-			return 0, false
-		}
-		return strings.Compare(s, t), true
+	if x, y := numberOf(a), numberOf(b); x.ok || y.ok {
+		return compareNumber(x, y)
 	}
-	y, ok := toFloat(b)
+	s, ok := a.(string)
 	if !ok {
 		return 0, false
 	}
-	switch {
-	case x < y:
-		return -1, true
-	case x > y:
-		return 1, true
+	t, ok := b.(string)
+	if !ok {
+		return 0, false
 	}
-	return 0, true
+	return strings.Compare(s, t), true
 }
 
-func toFloat(v any) (float64, bool) {
+// numberKind classifies a numeric value: signed, unsigned, or floating point.
+type numberKind uint8
+
+const (
+	numSigned numberKind = iota
+	numUnsigned
+	numFloat
+)
+
+// number is one numeric value kept in its own representation. Rounding every
+// number to float64 would make neighbouring large integers compare equal —
+// 2^64-2 and 2^64-1 both land on the same float64 — so integral values keep
+// their exact magnitude instead.
+type number struct {
+	kind numberKind
+	i    int64
+	u    uint64
+	f    float64
+	ok   bool
+}
+
+func numberOf(v any) number {
 	switch n := v.(type) {
 	case int:
-		return float64(n), true
+		return number{kind: numSigned, i: int64(n), ok: true}
 	case int8:
-		return float64(n), true
+		return number{kind: numSigned, i: int64(n), ok: true}
 	case int16:
-		return float64(n), true
+		return number{kind: numSigned, i: int64(n), ok: true}
 	case int32:
-		return float64(n), true
+		return number{kind: numSigned, i: int64(n), ok: true}
 	case int64:
-		return float64(n), true
+		return number{kind: numSigned, i: n, ok: true}
 	case uint:
-		return float64(n), true
+		return number{kind: numUnsigned, u: uint64(n), ok: true}
 	case uint8:
-		return float64(n), true
+		return number{kind: numUnsigned, u: uint64(n), ok: true}
 	case uint16:
-		return float64(n), true
+		return number{kind: numUnsigned, u: uint64(n), ok: true}
 	case uint32:
-		return float64(n), true
+		return number{kind: numUnsigned, u: uint64(n), ok: true}
 	case uint64:
-		return float64(n), true
+		return number{kind: numUnsigned, u: n, ok: true}
 	case float32:
-		return float64(n), true
+		return number{kind: numFloat, f: float64(n), ok: true}
 	case float64:
-		return n, true
+		return number{kind: numFloat, f: n, ok: true}
 	}
-	return 0, false
+	return number{}
+}
+
+// compareNumber orders two classified numbers exactly, including mixed
+// signed/unsigned and integer/float pairs. ok is false when either operand is
+// not a number, and for a NaN, which is unordered against everything.
+func compareNumber(x, y number) (int, bool) {
+	switch {
+	case !x.ok || !y.ok:
+		return 0, false
+	case x.kind == numFloat && y.kind == numFloat:
+		if math.IsNaN(x.f) || math.IsNaN(y.f) {
+			return 0, false
+		}
+		return cmp.Compare(x.f, y.f), true
+	case x.kind == numFloat:
+		return compareFloatInteger(x.f, y)
+	case y.kind == numFloat:
+		c, ok := compareFloatInteger(y.f, x)
+		return -c, ok
+	case x.kind == numSigned && y.kind == numSigned:
+		return cmp.Compare(x.i, y.i), true
+	case x.kind == numUnsigned && y.kind == numUnsigned:
+		return cmp.Compare(x.u, y.u), true
+	case x.kind == numSigned:
+		if x.i < 0 {
+			return -1, true
+		}
+		return cmp.Compare(uint64(x.i), y.u), true
+	default:
+		if y.i < 0 {
+			return 1, true
+		}
+		return cmp.Compare(x.u, uint64(y.i)), true
+	}
+}
+
+// compareFloatInteger compares the float f against the integral number n
+// without rounding n: a large integer is never reported equal to a neighbouring
+// float value. ok is false for a NaN operand.
+func compareFloatInteger(f float64, n number) (int, bool) {
+	switch {
+	case math.IsNaN(f):
+		return 0, false
+	case math.IsInf(f, 1):
+		return 1, true
+	case math.IsInf(f, -1):
+		return -1, true
+	}
+	if n.kind == numSigned {
+		// 2^63 bounds the float64 range an int64 can be exact inside.
+		switch {
+		case f >= 1<<63:
+			return 1, true
+		case f < -(1 << 63):
+			return -1, true
+		}
+		whole := math.Floor(f)
+		if c := cmp.Compare(int64(whole), n.i); c != 0 {
+			return c, true
+		}
+		if f != whole {
+			// The integer equals the float's floor, so it is below it.
+			return -1, true
+		}
+		return 0, true
+	}
+	// 2^64 bounds the float64 range a uint64 can be exact inside.
+	switch {
+	case f < 0:
+		return -1, true
+	case f >= 1<<64:
+		return 1, true
+	}
+	whole := math.Floor(f)
+	if c := cmp.Compare(uint64(whole), n.u); c != 0 {
+		return c, true
+	}
+	if f != whole {
+		return -1, true
+	}
+	return 0, true
 }
 
 // toAnySlice adapts any slice or array to []any. A string is not a collection
@@ -1334,7 +1505,97 @@ func stringOf(v any) string {
 	return s
 }
 
-func valueKey(v any) string { return fmt.Sprintf("%T:%v", v, v) }
+// valueKey is the structural identity of a constant value. The encoding is
+// unambiguous — every part is tagged and length-prefixed — so two values the
+// runtime distinguishes never share a key. A rendering like %v cannot promise
+// that: []string{"a b", "c"} and []string{"a", "b c"} both print as "[a b c]",
+// which would let two distinct equality atoms look identical to the proofs.
+func valueKey(v any) string {
+	var b strings.Builder
+	writeValueKey(&b, v)
+	return b.String()
+}
+
+func writeValueKey(b *strings.Builder, v any) {
+	switch x := v.(type) {
+	case nil:
+		b.WriteString("null")
+		return
+	case bool:
+		if x {
+			b.WriteString("true")
+		} else {
+			b.WriteString("false")
+		}
+		return
+	case string:
+		b.WriteString("str:")
+		writePart(b, x)
+		return
+	}
+	if n := numberOf(v); n.ok {
+		switch n.kind {
+		case numSigned:
+			b.WriteString("num:")
+			writePart(b, strconv.FormatInt(n.i, 10))
+		case numUnsigned:
+			b.WriteString("num:")
+			writePart(b, strconv.FormatUint(n.u, 10))
+		case numFloat:
+			b.WriteString("flt:")
+			writePart(b, strconv.FormatFloat(n.f, 'x', -1, 64))
+		}
+		return
+	}
+	if elems, ok := toAnySlice(v); ok {
+		b.WriteString("list:")
+		writePart(b, reflect.TypeOf(v).String())
+		b.WriteString(strconv.Itoa(len(elems)))
+		b.WriteByte('[')
+		for _, e := range elems {
+			writePart(b, valueKey(e))
+		}
+		b.WriteByte(']')
+		return
+	}
+	if entries, ok := mapEntries(v); ok {
+		b.WriteString("map:")
+		writePart(b, reflect.TypeOf(v).String())
+		b.WriteString(strconv.Itoa(len(entries)))
+		b.WriteByte('{')
+		for _, e := range entries {
+			writePart(b, e)
+		}
+		b.WriteByte('}')
+		return
+	}
+	// Outside the constant domain (functions, channels, structs carrying
+	// unexported state) identity falls back to a type-tagged Go-syntax
+	// rendering, which is only best effort.
+	b.WriteString("opaque:")
+	writePart(b, fmt.Sprintf("%T", v))
+	writePart(b, fmt.Sprintf("%#v", v))
+}
+
+// mapEntries renders a map as sorted "key=value" entry keys. ok is false when v
+// is not a map.
+func mapEntries(v any) ([]string, bool) {
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() || rv.Kind() != reflect.Map {
+		return nil, false
+	}
+	keys := rv.MapKeys()
+	entries := make([]string, 0, len(keys))
+	for _, k := range keys {
+		var b strings.Builder
+		writeValueKey(&b, k.Interface())
+		b.WriteByte('=')
+		writeValueKey(&b, rv.MapIndex(k).Interface())
+		entries = append(entries, b.String())
+	}
+	sort.Strings(entries)
+	return entries, true
+}
 
 func renderValue(v any) string {
 	if s, ok := v.(string); ok {
