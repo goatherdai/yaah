@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.200.2](https://github.com/goatherdai/yaah/compare/v0.200.1...v0.200.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* **tools:** dedupe the glob truncation footer and clarify the empty-match count ([#344](https://github.com/goatherdai/yaah/issues/344)) ([4293a33](https://github.com/goatherdai/yaah/commit/4293a33f25401b954682d99e07689289e2b0f74c))
+
 ## [0.200.1](https://github.com/goatherdai/yaah/compare/v0.200.0...v0.200.1) (2026-11-22)
 
 
