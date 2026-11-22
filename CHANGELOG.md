@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.200.3](https://github.com/goatherdai/yaah/compare/v0.200.2...v0.200.3) (2026-11-22)
+
+
+### Bug Fixes
+
+* **resume:** drop duplicate tool results and prevent re-persisting them ([#348](https://github.com/goatherdai/yaah/issues/348)) ([39ea58b](https://github.com/goatherdai/yaah/commit/39ea58b85ffab89c79756d147cf99bec198edebf))
+
 ## [0.200.2](https://github.com/goatherdai/yaah/compare/v0.200.1...v0.200.2) (2026-11-22)
 
 
