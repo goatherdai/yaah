@@ -11,6 +11,19 @@ func (t *App) Run() error {
 	t.App.SetFocus(t.Input)
 	t.renderInfoPane()
 	t.renderTodoPane()
+	// Seed a launcher prompt (yaah tui workflow run <spec>, piece C) through
+	// the same OnSubmit path a typed prompt uses, once the loops above are
+	// consuming. queueUpdateDraw routes onto the UI event loop, which blocks
+	// on tview until App.Run starts draining it, so this is safe before Run.
+	if t.initialPrompt != "" {
+		prompt := t.initialPrompt
+		t.initialPrompt = ""
+		t.queueUpdateDraw(func() {
+			if t.OnSubmit != nil {
+				t.OnSubmit(prompt)
+			}
+		})
+	}
 	err := t.App.Run()
 	t.stopBackgroundLoops()
 	return err
