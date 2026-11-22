@@ -31,6 +31,9 @@ func init() {
 	tuiCmd.Flags().StringVar(&tuiMCPHTTPDeprecated, "mcp-http", "", "removed: use `yaah serve --http <addr>`")
 	_ = tuiCmd.Flags().MarkHidden("mcp")
 	_ = tuiCmd.Flags().MarkHidden("mcp-http")
+
+	tuiCmd.AddCommand(tuiWorkflowCmd)
+	tuiWorkflowCmd.AddCommand(tuiWorkflowRunCmd)
 }
 
 var tuiCmd = &cobra.Command{
@@ -39,17 +42,54 @@ var tuiCmd = &cobra.Command{
 	Long:  `Launch the interactive terminal UI with rich chat display, streaming, and tool call visualization.`,
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if tuiMCPDeprecated {
-			return fmt.Errorf("tui --mcp was removed; use `yaah serve` for MCP over stdio")
+		if err := refuseDeprecatedTUIFlags(); err != nil {
+			return err
 		}
-		if tuiMCPHTTPDeprecated != "" {
-			return fmt.Errorf("tui --mcp-http was removed; use `yaah serve --http %s`", tuiMCPHTTPDeprecated)
-		}
-		return runTUI()
+		return runTUI("")
 	},
 }
 
-func runTUI() error {
+// tuiWorkflowCmd groups the TUI workflow launchers (workflow-in-session Scope
+// B, piece C). The run subcommand is the CLI form of Scope A's :workflow run:
+// it seeds a session that invokes the workflow_run tool as its first action
+// instead of the fire-and-forget command path.
+var tuiWorkflowCmd = &cobra.Command{
+	Use:   "workflow",
+	Short: "Workflow operations for a TUI session",
+}
+
+var tuiWorkflowRunCmd = &cobra.Command{
+	Use:   "run <spec>",
+	Short: "Launch a TUI session seeded to run a workflow",
+	Long: `Launch the interactive terminal UI with the session seeded to run the
+workflow at <spec> as its first action, through the workflow_run tool.
+
+This is the in-session form of "yaah workflow run": the workflow executes
+inside the orchestrator session, so its per-node progress streams into the TUI
+and its report lands in the conversation.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := refuseDeprecatedTUIFlags(); err != nil {
+			return err
+		}
+		return runTUI(args[0])
+	},
+}
+
+// refuseDeprecatedTUIFlags refuses the removed --mcp/--mcp-http flags on any
+// TUI entry point. The refusal lives here so the plain tui command and its
+// subcommands share one answer.
+func refuseDeprecatedTUIFlags() error {
+	if tuiMCPDeprecated {
+		return fmt.Errorf("tui --mcp was removed; use `yaah serve` for MCP over stdio")
+	}
+	if tuiMCPHTTPDeprecated != "" {
+		return fmt.Errorf("tui --mcp-http was removed; use `yaah serve --http %s`", tuiMCPHTTPDeprecated)
+	}
+	return nil
+}
+
+func runTUI(initialSpec string) error {
 	// Interactive surface: honor bare --resume before building the
 	// session (stderr is hijacked later; this runs on the real terminal).
 	if err := maybeResolveResumePicker(os.Stdout, os.Stdin); err != nil {
@@ -251,6 +291,14 @@ func runTUI() error {
 	// wake policy are installed; a missed wake must render, not run unheard.
 	sess.Start()
 
+	// A workflow launcher (yaah tui workflow run <spec>) seeds the session's
+	// first prompt instead of running the command fire-and-forget: the run
+	// then executes inside the session, so progress streams and the report
+	// lands in the conversation.
+	if initialSpec != "" {
+		app.SetInitialPrompt(workflowSeedPrompt(initialSpec))
+	}
+
 	// Suppress stderr while the TUI is on the alt screen. Anything written
 	// to stderr (slow-refresh logs, MCP warnings, tool output) would bleed
 	// through and corrupt the layout.
@@ -274,6 +322,16 @@ func runTUI() error {
 	}()
 
 	return app.Run()
+}
+
+// workflowSeedPrompt is the v1 prompt-seed for `yaah tui workflow run <spec>`:
+// it asks the orchestrator to invoke the workflow_run tool on the given spec
+// as its first action, then report the result. A later iteration (v2) will
+// pre-seed the tool call deterministically rather than asking the model to
+// make it, but the outcome is the same composition: the tool, not a mode
+// switch, drives the run.
+func workflowSeedPrompt(spec string) string {
+	return fmt.Sprintf("Run the workflow at %q with the workflow_run tool, then report the result.", spec)
 }
 
 // modelListAttempts bounds how many discovery retries the warm loop runs. A

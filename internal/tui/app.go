@@ -193,6 +193,12 @@ type App struct {
 	// picker (read-only or full). The driver switches this session's mode
 	// axis, effective at the next run.
 	OnModeSelect func(word string)
+
+	// initialPrompt is a prompt submitted through OnSubmit once the event
+	// loop starts. It is the launcher seam for `yaah tui workflow run
+	// <spec>` (workflow-in-session Scope B, piece C): set via
+	// SetInitialPrompt before Run, read on the Run goroutine.
+	initialPrompt string
 }
 
 type convItem struct {
@@ -211,6 +217,14 @@ type convItem struct {
 	// count changes at a fixed width.
 	rowsCache int
 	rowsWidth int
+}
+
+// SetInitialPrompt queues a prompt for submission through OnSubmit once the
+// event loop starts. It is the launcher seam for `yaah tui workflow run
+// <spec>` (workflow-in-session Scope B, piece C): set it before Run, and the
+// seeded prompt runs through the exact same path a typed prompt does.
+func (t *App) SetInitialPrompt(text string) {
+	t.initialPrompt = text
 }
 
 // promptAnchor maps a user prompt convItem to its first painted row in

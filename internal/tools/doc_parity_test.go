@@ -33,6 +33,15 @@ var docForTool = map[string]string{
 	"memory_search_sessions": "memory_session_search",
 }
 
+// externalToolDocs lists docs consumed by tools registered outside
+// internal/tools. The workflow host package imports internal/tools, so a
+// tool that reaches the host cannot live here; its doc still does, so this
+// list closes the doc-parity loop for it (workflow-in-session Scope B, piece
+// A — the workflow_run tool lives in cmd/yaah).
+var externalToolDocs = map[string]string{
+	"workflow_run": "workflow-in-session Scope B, piece A",
+}
+
 // docExemptions lists registered tools that still carry an inline
 // description instead of an embedded doc. Value is the bead tracking
 // the doc's creation. Empty today: proposal and supervisor gained docs
@@ -76,6 +85,9 @@ func TestEveryToolDoc_IsConsumedByATool(t *testing.T) {
 			continue
 		}
 		used[docName(tool.Name())] = true
+	}
+	for doc := range externalToolDocs {
+		used[doc] = true
 	}
 	entries, err := prompts.ToolsFS.ReadDir("tools")
 	if err != nil {

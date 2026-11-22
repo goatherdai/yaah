@@ -320,7 +320,7 @@ allowlist). It is placement-gated
 and host-dependent — `containment: off`/`advisory`, `mode: shared`, and any
 host without a usable jail run the advisory or host path instead — with a
 per-platform containment table in the
-[README](../README.md#confinement-and-egress); full semantics are
+[README](../README.md#isolation-and-confinement); full semantics are
 in [configuration.md](./configuration.md#sub-agent-dispatch-lane-and-confinement),
 and the row-by-row statement of what isolation does and does not govern —
 filesystem versus egress — is the

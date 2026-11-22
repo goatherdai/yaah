@@ -139,4 +139,17 @@ type Config struct {
 	// graph key the strict decoder would refuse. When that field lands, this
 	// flag becomes its folded default and the guard keeps the same reason.
 	OpenProposals bool
+	// Progress, when non-nil, is called after each lifecycle event is folded,
+	// with its projection (see ProgressEvent). It is the live-progress seam
+	// for a caller with a view (workflow-in-session Scope B). It fires for
+	// reported and derived events alike — node_ready, dispatch_started,
+	// node_succeeded, node_failed, node_skipped, node_cancelled, run_started,
+	// run_finished, and the scheduler's mechanical facts, in the order they
+	// were committed — because the terminal node states are derived by the
+	// reducer rather than submitted, and a view wants the full node lifecycle.
+	//
+	// It is called synchronously on the driver's goroutine, after the fold and
+	// before the checkpoint, so it must return quickly and must not re-enter
+	// the run.
+	Progress func(ProgressEvent)
 }

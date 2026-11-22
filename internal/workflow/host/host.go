@@ -609,6 +609,14 @@ type Options struct {
 	// reach a model would not be a replay.
 	Door exec.Runtime
 
+	// Progress, when non-nil, receives each committed lifecycle event's
+	// projection as the run executes (see exec.Config.Progress). It is the
+	// live-progress seam for a caller with a view (workflow-in-session Scope
+	// B): node_ready, dispatch_started, node_succeeded, node_failed,
+	// node_skipped, node_cancelled, run_started, run_finished, and the
+	// scheduler's mechanical facts, in the order they were committed.
+	Progress func(exec.ProgressEvent)
+
 	// Now and Wait override the door's clock and backoff for deterministic
 	// tests.
 	Now  func() time.Time
@@ -668,6 +676,7 @@ func Execute(ctx context.Context, opts Options) (Result, error) {
 		SpecHash: opts.SpecHash,
 		SpecPath: opts.SpecPath,
 		Store:    opts.Store,
+		Progress: opts.Progress,
 		// Guard stays nil: `when` selectors are evaluated by the value-plumbing
 		// bead (yaah-0u0v.13). exec.New records that every guarded node was
 		// scheduled as if its guard passed in Result.Warnings, so the gap is

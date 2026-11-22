@@ -53,6 +53,11 @@ type workflowRunOptions struct {
 	artifactRoot string
 	statePath    string
 	replayRunID  string
+	// progress, when non-nil, receives each committed external lifecycle
+	// event's projection as the run executes (workflow-in-session Scope B).
+	// It is a seam for the in-session tool, not a CLI flag: the command
+	// reports once at completion, so it has no live view to feed.
+	progress func(exec.ProgressEvent)
 }
 
 func newWorkflowRunCmd() *cobra.Command {
@@ -192,6 +197,7 @@ func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) er
 		SpecHash:     specHash,
 		SpecPath:     path,
 		Calls:        a.calls,
+		Progress:     opts.progress,
 	}
 	// The retained runtime the seam composed, if any: proposal-lane
 	// dispatches and settle nodes need it. Nil for a report-only document

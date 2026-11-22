@@ -1394,6 +1394,16 @@ func wireBackgroundJobs(st *loopInfraStage, tr *toolRegistryStage) {
 	tr.reg.Register(st.taskTool)
 
 	tr.reg.Register(&tools.SubAgentJobsTool{Jobs: st.backgroundJobs})
+
+	// workflow_run (workflow-in-session Scope B): the workflow executor on the
+	// orchestrator's belt. Admitted at registration rather than named in the
+	// func() Tool table — the tool lives in this package because
+	// internal/workflow/host imports internal/tools, so a tool there that
+	// reached the host would close an import cycle. It is registered
+	// unconditionally: unlike the gated lanes it needs no store, sandbox or
+	// scope tree, and a run it cannot complete reports why.
+	tr.reg.Admit("workflow_run")
+	tr.reg.Register(&WorkflowRunTool{})
 }
 
 // registerWakeTools gates the wake pair to sessions that can service a
