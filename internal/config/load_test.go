@@ -708,3 +708,45 @@ func TestMCPServerConfigResolve(t *testing.T) {
 		t.Errorf("Command with unset var = %q, want the empty expansion", got.Command)
 	}
 }
+
+// TestLoad_roleAllowCommands pins the config role entry's shell-command
+// allowlist: a declared list parses, an absent key stays nil (the role
+// inherits the role file, then the global default), and an explicit empty
+// list stays empty — deny-all, not inherit.
+func TestLoad_roleAllowCommands(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+
+	configContent := `
+agents:
+  default:
+    model: test/model
+  subagent:
+    roles:
+      developer:
+        allow_commands:
+          - "git status*"
+          - "go test*"
+      reviewer:
+        allow_commands: []
+`
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(configContent), 0o644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	dev := cfg.Agent.SubAgent.Roles["developer"]
+	if want := []string{"git status*", "go test*"}; !slices.Equal(dev.AllowCommands, want) {
+		t.Errorf("developer.AllowCommands = %v, want %v", dev.AllowCommands, want)
+	}
+	if rev := cfg.Agent.SubAgent.Roles["reviewer"]; rev.AllowCommands == nil || len(rev.AllowCommands) != 0 {
+		t.Errorf("reviewer.AllowCommands = %v, want an explicit empty (deny-all) list", rev.AllowCommands)
+	}
+	if other := cfg.Agent.SubAgent.Roles["unset-role"]; other.AllowCommands != nil {
+		t.Errorf("unset-role.AllowCommands = %v, want nil (inherit)", other.AllowCommands)
+	}
+}

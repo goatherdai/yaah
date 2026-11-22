@@ -325,6 +325,12 @@ type LoopConfig struct {
 	// unchanged.
 	DestructiveGuard func(ownerID, toolName, argsJSON string) string
 
+	// ShellGuardAllow is the dispatching role's resolved shell-command
+	// allowlist for the guard above, plumbed through from
+	// SubAgentConfig. Nil inherits the global default the check
+	// carries; an explicitly empty list denies every shell call.
+	ShellGuardAllow []string
+
 	// TraceStore is the session's Goatherd trace sink (plan 07, H4),
 	// plumbed through from SubAgentConfig: the sub-agent pipeline's
 	// goatherd_trace middleware writes through it. Nil when tracing

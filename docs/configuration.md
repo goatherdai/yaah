@@ -125,6 +125,7 @@ agents:
       rules:
         destructive_guard:
           enabled: true
+          allow_commands: []
         high_error_rate:
           threshold: 0.5
           window: 10
@@ -791,7 +792,7 @@ agents:
         destructive_tool:
           enabled: true
         destructive_guard:
-          enabled: true
+          enabled: true        # allow_commands: [] denies every shell call
         high_error_rate:
           enabled: true
           threshold: 0.5
@@ -807,6 +808,7 @@ agents:
 | `supervisor.halt_root` | `false` | Allow a rule or the `supervisor` tool to halt the session's root scope |
 | `supervisor.rules.destructive_tool.enabled` | `true` | Advisory warning on destructive tool declarations; inject-only. A `write` is classified by what the tool observed: overwriting an existing file warns, first-time creation passes, and a missing observation warns conservatively. Shell and `delete` matches are unchanged. |
 | `supervisor.rules.destructive_guard.enabled` | `true` | Blocking pre-dispatch net for sub-agent `bash`/`powershell` and command-running `background_process` calls, with a synthesized denial result |
+| `supervisor.rules.destructive_guard.allow_commands` | `[]` (deny every shell call) | Global default allowlist: shell commands a sub-agent may run, as anchored globs matched in full against the raw command (`*` crosses arguments, so `git status*` admits `git status -s` and refuses `echo git status`). Empty stays deny-all. A role's own list — `agents.subagent.roles.<role>.allow_commands`, else the role file's `allow_commands` — replaces this list for that role; an explicit role-level `[]` is deny-all, not inherit |
 | `supervisor.rules.high_error_rate.{enabled,threshold,window}` | `true`, `0.5`, `10` | Guidance when a scope's recent tool error rate crosses the threshold |
 | `supervisor.rules.stuck_detection.{enabled,repeat_threshold}` | `true`, `3` | Guidance when a scope repeats the same tool call |
 

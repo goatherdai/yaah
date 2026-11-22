@@ -93,7 +93,7 @@ func (r Rules) Match(tool, resource string) (Effect, bool) {
 		if rule.Tool != tool {
 			continue
 		}
-		if rule.Resource != "" && !globMatch(rule.Resource, resource) {
+		if rule.Resource != "" && !GlobMatch(rule.Resource, resource) {
 			continue
 		}
 		hit = rule.Effect
@@ -117,9 +117,17 @@ func AskRules(rules Rules) []Rule {
 	return out
 }
 
-// globMatch reports whether pattern matches value. Patterns are
+// GlobMatch reports whether pattern matches value, anchored: the pattern
+// must describe the whole value, not a substring. Patterns are
 // workspace-relative globs using forward slashes; the value is normalized
-// the same way so Windows backslash paths match.
+// the same way so Windows backslash paths match. Commands match the same
+// way, so `git status*` admits `git status -s` and refuses `echo git status`.
+//
+// Exported because it is the whole glob vocabulary the `permissions:`
+// ruleset uses: the blocking shell guard's per-role `allow_commands`
+// allowlist (internal/agent/supervision) compiles its patterns with this
+// same matcher, so an allowlist entry and a permission resource glob
+// behave identically.
 //
 // Both `*` and `**` cross directory separators and `?` matches any single
 // character — broader than a shell glob or gitignore pattern, where `*`
@@ -129,7 +137,7 @@ func AskRules(rules Rules) []Rule {
 // glob like `git push*` prefixes the whole command. Escaping is not
 // supported; an invalid pattern (unbalanced bracket) matches nothing: a
 // rule that cannot be interpreted must not widen what its author wrote.
-func globMatch(pattern, value string) bool {
+func GlobMatch(pattern, value string) bool {
 	re, err := globRegexp(strings.ReplaceAll(pattern, "\\", "/"))
 	if err != nil {
 		return false

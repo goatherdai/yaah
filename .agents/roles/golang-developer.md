@@ -51,6 +51,29 @@ tools:
   - calculate
   - webfetch
   - http
+allow_commands:
+  - "git status*"
+  - "git diff*"
+  - "git log*"
+  - "git show*"
+  - "git ls-files*"
+  - "ls*"
+  - "find*"
+  - "cat*"
+  - "head*"
+  - "tail*"
+  - "grep*"
+  - "wc*"
+  - "pwd"
+  - "which*"
+  - "go test*"
+  - "go build*"
+  - "go vet*"
+  - "gofmt*"
+  - "go mod*"
+  - "go list*"
+  - "go env*"
+  - "go version"
 max_iterations: 100
 max_turns: 50
 min_turns: 6

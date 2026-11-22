@@ -51,6 +51,10 @@ tools:
   - github_update_issue_comment
   - github_update_pull_request
   - github_add_reply_to_pull_request_comment
+allow_commands:
+  - "bd *"
+  - "git status*"
+  - "git log*"
 permissions:
   bash:
     "*": deny

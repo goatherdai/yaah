@@ -80,6 +80,11 @@ type RoleDef struct {
 	// as Tools.
 	Permissions []permissions.Rule
 
+	// AllowCommands is the role file's `allow_commands:` list (the
+	// blocking shell guard's per-role allowlist). Nil inherits the
+	// global default; an explicit empty list is deny-all.
+	AllowCommands []string
+
 	// Headless is the role file's `headless:` declaration: what a headless
 	// run does with this role's `ask` rules. "deny" (the only accepted
 	// value) states that the dispatch path's refusal IS the intent, and
@@ -108,6 +113,7 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 		Mode:          normalizeRoleMode(fm.Mode, fm.Name),
 		SystemReplace: normalizeRoleSystem(fm.System, fm.Name),
 		Permissions:   []permissions.Rule(fm.Permissions),
+		AllowCommands: fm.AllowCommands,
 		Headless:      fm.Headless,
 		MaxLoopCycles: fm.MaxLoopCycles,
 		MinLoopCycles: fm.MinLoopCycles,
@@ -286,6 +292,7 @@ func (d RoleDef) ToProfile() RoleProfile {
 		JSONMode:      d.JSONMode,
 		Timeout:       time.Duration(d.Timeout) * time.Second,
 		Permissions:   d.Permissions,
+		AllowCommands: d.AllowCommands,
 	}
 	if p.Tools == nil {
 		p.Tools = []string{}

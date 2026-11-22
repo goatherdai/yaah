@@ -770,3 +770,45 @@ body
 		}
 	})
 }
+
+// TestParseAllowCommands pins the role-file shell-command allowlist: a
+// declared list parses in source order, an absent key is nil (inherits
+// the global default), and an explicit empty list is an empty non-nil
+// slice — deny-all, which must not be confused with "inherit".
+func TestParseAllowCommands(t *testing.T) {
+	const withList = `---
+name: tester
+allow_commands:
+  - "git status*"
+  - "go test*"
+---
+
+Run the suite.
+`
+	fm, body, err := Parse(withList)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if want := []string{"git status*", "go test*"}; !slices.Equal(fm.AllowCommands, want) {
+		t.Errorf("allow_commands = %v, want %v", fm.AllowCommands, want)
+	}
+	if !strings.Contains(body, "Run the suite.") {
+		t.Errorf("body = %q, want the markdown body preserved", body)
+	}
+
+	absent, _, err := Parse("---\nname: tester\n---\n\nbody\n")
+	if err != nil {
+		t.Fatalf("Parse (absent): %v", err)
+	}
+	if absent.AllowCommands != nil {
+		t.Errorf("absent allow_commands = %v, want nil (inherit)", absent.AllowCommands)
+	}
+
+	empty, _, err := Parse("---\nname: tester\nallow_commands: []\n---\n\nbody\n")
+	if err != nil {
+		t.Fatalf("Parse (empty): %v", err)
+	}
+	if empty.AllowCommands == nil || len(empty.AllowCommands) != 0 {
+		t.Errorf("explicit empty allow_commands = %v, want an empty non-nil (deny-all) list", empty.AllowCommands)
+	}
+}

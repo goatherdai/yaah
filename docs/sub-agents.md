@@ -111,6 +111,26 @@ tool narrowing, budget, switching) is covered in
 omit a key to use the provider's default — an explicit `0` is a real value,
 not "unset". Persona files carry the same keys for the session they run.
 
+`allow_commands:` (optional) is the role's shell-command allowlist for the
+blocking sub-agent guard: patterns matched in full against the raw command
+(`*` and `?`, `*` crossing arguments), e.g.
+
+```yaml
+allow_commands:
+  - "git status*"
+  - "git diff*"
+  - "go test*"
+  - "go build*"
+```
+
+A `bash`/`powershell` (or command-running `background_process`) call whose
+command matches one of these dispatches; anything else is denied with a
+synthesized result. Omitting the key inherits —
+`agents.default.supervisor.rules.destructive_guard.allow_commands`, else the
+built-in deny-all; an explicit `allow_commands: []` locks the role's shell
+down even when the global default admits commands. The config role entry
+(`agents.subagent.roles.<role>.allow_commands`) wins over this key.
+
 Per-turn checkpointing is configured in `config.yaml`, not in the role-file
 frontmatter: set `agents.subagent.roles.<role>.turn_checkpoints: true`.
 The restore limit is `agents.default.max_turn_restores`. See

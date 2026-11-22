@@ -118,6 +118,15 @@ type PipelineConfig struct {
 	// every call passes, so tracing-off sessions are unchanged.
 	DestructiveGuard func(ownerID, toolName, argsJSON string) string
 
+	// ShellGuardAllow is the dispatching role's resolved shell-command
+	// allowlist for the guard above (permissions globs matched in full
+	// against the raw command). The sub-agent loop's owner ID is its
+	// trace session, not the role, so the runner resolves the list at
+	// dispatch time and carries it here: config role entry > role file >
+	// nil, which inherits the global default the check already carries.
+	// An explicitly empty list is deny-all — today's behavior.
+	ShellGuardAllow []string
+
 	// ConsolidateDispatch is the cadence-driven "nudge" callback
 	// (docs/compaction-as-sleep.md §7). When the consolidate middleware's
 	// turn or tool-result interval is crossed it fires fire-and-forget and
@@ -251,8 +260,10 @@ var subAgentBuilders = map[string]func(PipelineConfig) Middleware{
 	"supervisor_guard": func(cfg PipelineConfig) Middleware {
 		// The middleware no-ops on a nil check, so a stale config name
 		// can never deny anything; NewSubAgentPipeline installs it
-		// only when cfg.DestructiveGuard is wired.
-		return NewSupervisorGuardMiddleware(cfg.DestructiveGuard, cfg.SessionID)
+		// only when cfg.DestructiveGuard is wired. The role's own
+		// allowlist rides along, replacing the global default the
+		// check carries.
+		return NewSupervisorGuardMiddleware(cfg.DestructiveGuard, cfg.SessionID, cfg.ShellGuardAllow)
 	},
 	// steer: the supervision inject channel (adoption plan A2). Unlike
 	// the orchestrator builder, no onDrain compaction hook — sub-agent

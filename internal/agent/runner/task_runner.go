@@ -335,6 +335,20 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// ceiling inherits nothing, exactly the pre-W5.7 behavior.
 		rolePermissions := withInheritedCeiling(profile.Permissions, permissions.Inherited(ctx))
 
+		// Shell-command allowlist for this dispatch's blocking guard
+		// (supervisor.rules.destructive_guard): config role entry > role
+		// file > nil, and nil inherits the global default the guard
+		// check already carries — the same precedence shape as
+		// provider/model, with the global default in the config-default
+		// seat. An explicit empty list stays deny-all. Resolved HERE
+		// because the sub-agent loop's owner ID is its trace session,
+		// not the role: the guard cannot look the role up when it
+		// denies.
+		guardAllow := opts.subCfg.Roles[string(role)].AllowCommands
+		if guardAllow == nil {
+			guardAllow = profile.AllowCommands
+		}
+
 		// A tool-less profile is valid — some roles (e.g. grump) are
 		// designed to respond without calling any tools.
 
@@ -519,6 +533,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			RetainedContext:        traceContext,
 			SteerCh:                steerCh,
 			DestructiveGuard:       opts.guardCheck,
+			ShellGuardAllow:        guardAllow,
 
 			TurnCheckpointer:      turnCk,
 			TurnCheckpointEnabled: turnCk != nil,

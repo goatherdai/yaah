@@ -24,7 +24,7 @@ func TestSupervisorGuard_DeniesBeforeDispatch(t *testing.T) {
 			return "Blocked destructive operation (bash). Supervisor denied."
 		}
 		return ""
-	}, "sub-worker")
+	}, "sub-worker", nil)
 
 	msg := &types.Message{ToolCalls: []types.ToolCall{
 		toolCall("call-1", "bash", `{"command":"rm -rf /tmp/probe"}`),
@@ -58,7 +58,7 @@ func TestSupervisorGuard_DeniesBeforeDispatch(t *testing.T) {
 // check is the pass-through — tracing-off sessions dispatch
 // byte-identical to today.
 func TestSupervisorGuard_NilCheckPassesAll(t *testing.T) {
-	m := NewSupervisorGuardMiddleware(nil, "sub-worker")
+	m := NewSupervisorGuardMiddleware(nil, "sub-worker", nil)
 	msg := &types.Message{ToolCalls: []types.ToolCall{
 		toolCall("call-1", "bash", `{"command":"rm -rf /tmp/probe"}`),
 	}}
@@ -82,7 +82,7 @@ func TestSupervisorGuard_OwnerAddressing(t *testing.T) {
 	m := NewSupervisorGuardMiddleware(func(ownerID, toolName, argsJSON string) string {
 		seenOwner = ownerID
 		return ""
-	}, "sub-worker-sess-123")
+	}, "sub-worker-sess-123", nil)
 	msg := &types.Message{ToolCalls: []types.ToolCall{
 		toolCall("call-1", "read", `{"path":"/x"}`),
 	}}

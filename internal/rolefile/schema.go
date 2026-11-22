@@ -72,6 +72,11 @@ const SchemaJSON = `{
       "description": "The role's tool belt; the dispatch registry is built from exactly this list.",
       "items": { "type": "string" }
     },
+    "allow_commands": {
+      "type": "array",
+      "description": "Shell-command allowlist for the blocking sub-agent guard: patterns matched in full against the raw command line, so 'git status*' admits 'git status -s' and refuses 'echo git status'. Omitted inherits agents.default.supervisor.rules.destructive_guard.allow_commands; an explicit empty list denies every shell call.",
+      "items": { "type": "string" }
+    },
     "output": {
       "type": "string",
       "enum": ["report", "proposal", ""],

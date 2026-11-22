@@ -56,6 +56,13 @@ type RoleProfile struct {
 	// sub-agent loop, with the parent's inherited ceiling appended after
 	// so an inherited deny can never be widened by the role file.
 	Permissions []permissions.Rule
+
+	// AllowCommands is the role file's `allow_commands:` list: the shell
+	// commands this role may run through the blocking sub-agent guard.
+	// Nil inherits the global default
+	// (supervisor.rules.destructive_guard.allow_commands); an explicit
+	// empty list is deny-all.
+	AllowCommands []string
 }
 
 // defaultRoleReg is set at startup by the CLI layer after built-in and

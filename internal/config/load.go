@@ -495,6 +495,14 @@ type RoleConfig struct {
 	// role's sub-agent loop. Default false. Only meaningful where a shared
 	// goatherd scope manager is configured.
 	TurnCheckpoints bool `yaml:"turn_checkpoints"`
+
+	// AllowCommands is this role's allowlist for the blocking sub-agent
+	// shell guard (supervisor.rules.destructive_guard): patterns matched
+	// in full against the raw command, `*`/`?` globs, e.g. "git status*".
+	// Nil inherits the role file's `allow_commands`, then the global
+	// supervisor default; an explicit empty list stays deny-all (a shell
+	// can execute anything a pattern matcher cannot see).
+	AllowCommands []string `yaml:"allow_commands"`
 }
 
 // MCPServerConfig holds the configuration for a single MCP server,

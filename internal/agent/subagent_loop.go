@@ -111,6 +111,14 @@ type SubAgentConfig struct {
 	// guard is disabled in config; every call then dispatches.
 	DestructiveGuard func(ownerID, toolName, argsJSON string) string
 
+	// ShellGuardAllow, when non-nil, is this dispatch's role's
+	// shell-command allowlist for the guard above: patterns matched in
+	// full against the raw command. The runner resolves it at dispatch
+	// time (config role entry > role file > global default) because the
+	// guard's owner ID is the trace session, not the role. Nil inherits
+	// the global default; an explicitly empty list is deny-all.
+	ShellGuardAllow []string
+
 	// TraceStore is the session's Goatherd trace store (plan 07, H4),
 	// injected by the wiring through the task runner: the sub-agent
 	// pipeline's goatherd_trace middleware writes through it. Nil when
@@ -181,6 +189,7 @@ func NewSubAgentLoop(provider Provider, registry ToolRegistry, model, systemProm
 			RetainedContext:        cfg.RetainedContext,
 			IsSubAgent:             true,
 			DestructiveGuard:       cfg.DestructiveGuard,
+			ShellGuardAllow:        cfg.ShellGuardAllow,
 			TraceStore:             cfg.TraceStore,
 
 			TurnCheckpointer:      cfg.TurnCheckpointer,
