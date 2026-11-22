@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.203.0](https://github.com/goatherdai/yaah/compare/v0.202.0...v0.203.0) (2026-11-22)
+
+
+### Features
+
+* **supervision:** tie the worktree settlement lane to the plan digest ([#356](https://github.com/goatherdai/yaah/issues/356)) ([6d484a1](https://github.com/goatherdai/yaah/commit/6d484a13f3c73c610035124d453779c8fa375c6d))
+
 ## [0.202.0](https://github.com/goatherdai/yaah/compare/v0.201.0...v0.202.0) (2026-11-22)
 
 
