@@ -14,6 +14,7 @@ import (
 	"github.com/goatherdai/yaah/internal/control"
 	"github.com/goatherdai/yaah/internal/tui"
 	"github.com/goatherdai/yaah/internal/tui/components/mcpinfo"
+	"github.com/goatherdai/yaah/internal/workflow/discover"
 	"github.com/spf13/cobra"
 )
 
@@ -208,6 +209,18 @@ func runTUI(initialSpec string) error {
 	}
 	var runMu sync.Mutex
 	app.OnWorkflowRun = func(specPath string) {
+		// A bare name resolves against the search dirs (default-location
+		// feature) before the read guard; a path passes through unchanged.
+		if resolved, err := resolveWorkflowSpec(specPath, nil); err != nil {
+			sendCtrlMsg(controlCh, nil, &control.WorkflowRunReport{
+				Path:   specPath,
+				OK:     false,
+				Report: err.Error(),
+			}, tuiSendTimeout)
+			return
+		} else {
+			specPath = resolved
+		}
 		// Read-only guard before we spend anything.
 		st, err := os.Stat(specPath)
 		if err != nil {
@@ -255,6 +268,25 @@ func runTUI(initialSpec string) error {
 				OK:     err == nil,
 				Report: report,
 			}, tuiSendTimeout)
+		}()
+	}
+	app.OnWorkflowList = func() {
+		go func() {
+			cwd, err := os.Getwd()
+			if err != nil {
+				sendCtrlMsg(controlCh, nil, &control.Status{Text: err.Error()}, tuiSendTimeout)
+				return
+			}
+			specs, err := discover.List(cwd)
+			if err != nil {
+				sendCtrlMsg(controlCh, nil, &control.Status{Text: err.Error()}, tuiSendTimeout)
+				return
+			}
+			entries := make([]control.WorkflowListEntry, 0, len(specs))
+			for _, s := range specs {
+				entries = append(entries, control.WorkflowListEntry{Name: s.Name, Path: s.Path})
+			}
+			sendCtrlMsg(controlCh, nil, &control.WorkflowList{Specs: entries}, tuiSendTimeout)
 		}()
 	}
 	app.OnClear = func() {}

@@ -51,7 +51,7 @@ func (t *WorkflowRunTool) Schema() json.RawMessage {
   "properties": {
     "spec": {
       "type": "string",
-      "description": "Path to the workflow document to run (.yaml or .json), validated and resolved exactly as yaah workflow validate would."
+      "description": "Path to the workflow document to run (.yaml or .json), or a bare name resolved against the search directories (./workflows then ~/.yaah/workflows). Validated and resolved exactly as yaah workflow validate would."
     },
     "strict": {
       "type": "boolean",

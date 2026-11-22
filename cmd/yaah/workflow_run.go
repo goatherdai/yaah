@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"text/tabwriter"
 	"time"
 
+	"github.com/goatherdai/yaah/internal/workflow/discover"
 	"github.com/goatherdai/yaah/internal/workflow/exec"
 	"github.com/goatherdai/yaah/internal/workflow/host"
 	"github.com/spf13/cobra"
@@ -118,7 +120,25 @@ Flags:
 	return cmd
 }
 
+// resolveWorkflowSpec resolves a run reference to a document path. A path
+// passes through (resolved against the process cwd); a bare name is searched
+// for in the workflow search directories (default-location feature).
+func resolveWorkflowSpec(ref string, dirs []string) (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve workflow spec: %w", err)
+	}
+	return discover.Resolve(cwd, ref, dirs...)
+}
+
 func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) error {
+	// A bare name resolves against the search dirs (default-location
+	// feature); a path passes through unchanged.
+	resolved, err := resolveWorkflowSpec(path, opts.workflowDirs)
+	if err != nil {
+		return err
+	}
+	path = resolved
 	if opts.replayRunID != "" {
 		return runWorkflowReplay(cmd, path, opts)
 	}

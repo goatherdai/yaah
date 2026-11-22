@@ -376,3 +376,29 @@ func TestHandleCommand_WorkflowAcceptsTabSeparator(t *testing.T) {
 		t.Fatalf("callback spec = %q, want %q", called, "specs/demo.yaml")
 	}
 }
+
+func TestHandleCommand_WorkflowListCallsCallback(t *testing.T) {
+	ui := newColonUI(t)
+	var listed bool
+	ui.OnWorkflowList = func() { listed = true }
+
+	if !ui.HandleCommand(command.CmdWorkflow, "list") {
+		t.Fatal(":workflow list should be consumed")
+	}
+	if !listed {
+		t.Fatal(":workflow list did not call OnWorkflowList")
+	}
+}
+
+func TestHandleCommand_WorkflowListRefusesArg(t *testing.T) {
+	ui := newColonUI(t)
+	var listed bool
+	ui.OnWorkflowList = func() { listed = true }
+
+	if ui.HandleCommand(command.CmdWorkflow, "list extra") {
+		t.Fatal(":workflow list <extra> should be refused, not consumed")
+	}
+	if listed {
+		t.Fatal(":workflow list <extra> reached the callback")
+	}
+}

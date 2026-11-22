@@ -1404,6 +1404,13 @@ func wireBackgroundJobs(st *loopInfraStage, tr *toolRegistryStage) {
 	// scope tree, and a run it cannot complete reports why.
 	tr.reg.Admit("workflow_run")
 	tr.reg.Register(&WorkflowRunTool{})
+
+	// workflow_list (workflow default-location feature): the discovery
+	// companion to workflow_run. Same layering and registration shape — it
+	// lives in this package beside workflow_run and reaches only the discover
+	// leaf, so the agent can list specs before running one.
+	tr.reg.Admit("workflow_list")
+	tr.reg.Register(&WorkflowListTool{})
 }
 
 // registerWakeTools gates the wake pair to sessions that can service a

@@ -86,6 +86,9 @@ type App struct {
 
 	// OnWorkflowRun receives a spec file path the user typed at :workflow run.
 	OnWorkflowRun func(specPath string)
+	// OnWorkflowList is invoked at :workflow list; it discovers the specs and
+	// renders them (typically via a control.WorkflowList message).
+	OnWorkflowList func()
 
 	// ShowApprovalFn overrides the approval modal for testing.
 	// If nil (default), the tview-based approval.Show modal is used.

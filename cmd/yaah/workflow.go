@@ -57,10 +57,15 @@ func newWorkflowCmd() *cobra.Command {
   yaah workflow explain  <spec>   report the plan: graph, fan-out, cost,
                                   authority union, proposal dispositions
   yaah workflow run      <spec>   validate, then execute and report outputs
+  yaah workflow list              discover specs from the search dirs
 
 validate and explain are static analysis: neither dispatches an agent,
 starts a session, nor writes run state. run executes — through the host
 door and internal/dispatch, after the same validation gate.
+
+run and list accept a bare spec name, resolved against the search
+directories in order: --workflow-dir (repeatable), then ./workflows, then
+~/.yaah/workflows.
 
 The --json report shapes are stable within v1 and documented as JSON Schema:
   docs/schemas/workflow-validate.schema.json   (kind yaah.workflow.validate.v1)
@@ -70,6 +75,7 @@ The --json report shapes are stable within v1 and documented as JSON Schema:
 	cmd.AddCommand(newWorkflowExplainCmd())
 	cmd.AddCommand(newWorkflowRunCmd())
 	cmd.AddCommand(newWorkflowResumeCmd())
+	cmd.AddCommand(newWorkflowListCmd())
 	return cmd
 }
 
@@ -82,6 +88,10 @@ type workflowOptions struct {
 	strict       bool
 	asJSON       bool
 	workflowRoot string
+	// workflowDirs prepend the default search directories a bare spec name
+	// resolves against (--workflow-dir, repeatable). Resolution order is:
+	// these dirs, then ./workflows, then ~/.yaah/workflows.
+	workflowDirs []string
 }
 
 func (o *workflowOptions) bind(cmd *cobra.Command, explain bool) {
@@ -96,6 +106,8 @@ func (o *workflowOptions) bind(cmd *cobra.Command, explain bool) {
 	}
 	cmd.Flags().StringVar(&o.workflowRoot, "workflow-root", "",
 		"directory a call node's workflow name resolves under: each name loads <name>.yaml or <name>.json from the root, is validated and resolved like the root document, and a name outside the root never resolves")
+	cmd.Flags().StringArrayVar(&o.workflowDirs, "workflow-dir", nil,
+		"prepend a directory to the search path a bare spec name resolves against (repeatable; the defaults are ./workflows then ~/.yaah/workflows)")
 	cmd.Flags().BoolVar(&o.strict, "strict", false,
 		"treat host-relative warnings as failures")
 }

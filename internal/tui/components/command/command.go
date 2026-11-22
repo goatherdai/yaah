@@ -155,7 +155,7 @@ func Usage(cmd Cmd) string {
 	case CmdMode:
 		return ":mode [read-only|full]"
 	case CmdWorkflow:
-		return ":workflow run <spec.yaml|spec.json>"
+		return ":workflow run <spec.yaml|spec.json>  |  :workflow list"
 	default:
 		return ""
 	}
@@ -176,7 +176,7 @@ func DefaultEntries() []Entry {
 		{"compact", "Compact context window", CmdCompact},
 		{"stop", "Abort running agent", CmdStop},
 		{"steer", "Inject steering text (requires arg)", CmdSteer},
-		{"workflow", "Run a workflow spec file (requires arg)", CmdWorkflow},
+		{"workflow", "Run a workflow spec, or list discoverable specs (:workflow run <spec> | :workflow list)", CmdWorkflow},
 		{"followup", "Queue text as a follow-up message (requires arg)", CmdFollowUp},
 		{"model", "Switch model", CmdModel},
 		{"agent", "Pick the persona (switches this session)", CmdAgent},

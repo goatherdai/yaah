@@ -39,7 +39,8 @@ var docForTool = map[string]string{
 // list closes the doc-parity loop for it (workflow-in-session Scope B, piece
 // A — the workflow_run tool lives in cmd/yaah).
 var externalToolDocs = map[string]string{
-	"workflow_run": "workflow-in-session Scope B, piece A",
+	"workflow_run":  "workflow-in-session Scope B, piece A",
+	"workflow_list": "workflow default-location feature",
 }
 
 // docExemptions lists registered tools that still carry an inline

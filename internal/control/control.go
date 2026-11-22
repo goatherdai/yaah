@@ -66,6 +66,22 @@ type WorkflowRunReport struct {
 
 func (*WorkflowRunReport) marker() {}
 
+// WorkflowList carries the specs :workflow list discovered in the search
+// directories, so a surface can render them in the conversation stream.
+// Render-only, like WorkflowRunReport: the listing is derived from the
+// filesystem, not session state, so it must never be persisted.
+type WorkflowList struct {
+	Specs []WorkflowListEntry
+}
+
+// WorkflowListEntry is one discovered spec: a bare name and its path.
+type WorkflowListEntry struct {
+	Name string
+	Path string
+}
+
+func (*WorkflowList) marker() {}
+
 // WorkflowProgress carries one live node/run transition from a workflow
 // executing inside the session (workflow-in-session Scope B). Unlike
 // WorkflowRunReport, which reports once at completion, this fires as the run
