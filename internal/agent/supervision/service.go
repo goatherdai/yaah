@@ -167,7 +167,7 @@ func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 		// move the verdict: the reason returns below either way.
 		cmd, _ := payload["cmd"].(string)
 		s.recordDenial(shellGuardRuleName, iv.ScopeID, string(iv.Type), cmd, reason)
-		s.appendDenyFact(iv.ScopeID, toolName, cmd, reason)
+		s.appendDenyFact(iv.ScopeID, shellGuardRuleName, toolName, cmd, reason)
 		return reason
 	}
 }
@@ -280,6 +280,27 @@ const ShellGuardDenyKind = "supervisor:deny"
 // denials are counted and recorded under: one constant, because the rule
 // a trace names and the rule status counts must never diverge.
 const shellGuardRuleName = "destructive_shell_guard"
+
+// shellAllowlistRuleName is the role-allowlist deny's rule name, and so
+// the name those refusals are counted and recorded under. It is
+// deliberately distinct from shellGuardRuleName: the global guard and a
+// role's own allow_commands list are different authorities, and a status
+// line or a trace fact that named either as the other would misreport
+// which one refused.
+const shellAllowlistRuleName = "role_shell_allowlist"
+
+// scopeIDPrefix is how the scope manager keys a scope: "scope:" plus the
+// scope's trace owner. A deny recorded from a sub-agent loop knows only
+// the owner, so it needs the prefix to address the same scope the
+// kernel's own denies name.
+const scopeIDPrefix = "scope:"
+
+// shellDenyKind is the status-surface kind both deny paths count under —
+// the kernel's deny intervention rendered as the string the global guard
+// already records (`string(iv.Type)`) — so a role-allowlist refusal
+// aggregates exactly like a global one instead of inventing a second
+// spelling of "deny".
+var shellDenyKind = string(supervisor.InterventionDeny)
 
 // shellGuardRule composes the blocking shell guard from the kernel's
 // DestructiveToolGuard (adoption plan B2, decision D3: "default-deny
@@ -427,12 +448,26 @@ func toolCommand(argsJSON string) string {
 // shell call is refused with a reason naming the role's allowlist.
 // Non-shell tools and background_process's read-only actions are the
 // global check's business either way.
-func WithShellAllowlist(check func(ownerID, toolName, argsJSON string) string, allow []string) func(ownerID, toolName, argsJSON string) string {
+//
+// rec, when wired, receives every refusal this wrapper makes, so a
+// role's own allowlist is as legible after the fact as the global
+// guard's: the reason still returns unchanged, and recording never
+// moves the verdict. Omitting it is the pre-recorder shape — the deny
+// stands and nothing is recorded.
+func WithShellAllowlist(check func(ownerID, toolName, argsJSON string) string, allow []string, rec ...DenyRecorder) func(ownerID, toolName, argsJSON string) string {
 	if allow == nil {
 		return check
 	}
-	return WithShellAllowlistPlan(check, shellGuardPlan(allow))
+	return WithShellAllowlistPlan(check, shellGuardPlan(allow), rec...)
 }
+
+// DenyRecorder records one refusal a guard wrapper made, so it stays
+// legible afterwards on both surfaces a reader has: the status firing
+// (scope, tool, command, reason) and a durable trace fact on the
+// refused scope. scopeID is the owner the check addressed — the
+// loop's trace session, not the kernel's scope address — which the
+// recorder resolves to the scope the manager knows.
+type DenyRecorder func(scopeID, tool, cmd, reason string)
 
 // WithShellAllowlistPlan narrows a guard check to an already-compiled
 // authority plan — the plan shellGuardPlan builds from a role's allowlist,
@@ -442,7 +477,12 @@ func WithShellAllowlist(check func(ownerID, toolName, argsJSON string) string, a
 // refuses is denied with a reason naming the role's allowlist, and everything
 // the plan does not classify — structured tools, background_process's
 // read-only actions — stays the wrapped check's business untouched.
-func WithShellAllowlistPlan(check func(ownerID, toolName, argsJSON string) string, plan effectpolicy.Plan) func(ownerID, toolName, argsJSON string) string {
+//
+// rec, when wired, records the refusal before the reason returns: both
+// deny branches (no command to match, and a command outside the list)
+// are refusals the status and trace must be able to name. An admitted
+// command records nothing.
+func WithShellAllowlistPlan(check func(ownerID, toolName, argsJSON string) string, plan effectpolicy.Plan, rec ...DenyRecorder) func(ownerID, toolName, argsJSON string) string {
 	if check == nil {
 		return nil
 	}
@@ -455,11 +495,24 @@ func WithShellAllowlistPlan(check func(ownerID, toolName, argsJSON string) strin
 		if plan.Check(eff) == nil {
 			return ""
 		}
+		reason := fmt.Sprintf("command %q is not in this role's allow_commands allowlist", cmd)
 		if cmd == "" {
-			return "shell call carries no command to check against the role's allowlist"
+			reason = "shell call carries no command to check against the role's allowlist"
 		}
-		return fmt.Sprintf("command %q is not in this role's allow_commands allowlist", cmd)
+		recordAllowlistDeny(rec, ownerID, toolName, cmd, reason)
+		return reason
 	}
+}
+
+// recordAllowlistDeny hands one role-allowlist refusal to the recorder,
+// when one was wired. An unset recorder is the backward-compatible
+// shape: the deny holds, nothing is recorded, and the caller's reason
+// is returned either way.
+func recordAllowlistDeny(rec []DenyRecorder, ownerID, tool, cmd, reason string) {
+	if len(rec) == 0 || rec[0] == nil {
+		return
+	}
+	rec[0](ownerID, tool, cmd, reason)
 }
 
 // NewService assembles the kernel supervisor with the enabled advisory
@@ -555,7 +608,11 @@ func (s *Service) record(rule, scopeID, kind, command, reason string) {
 // forked, as a test or a hand-driven call has — records no fact: the
 // firing still holds the detail, and a trace failure must never change
 // the verdict.
-func (s *Service) appendDenyFact(scopeID, tool, command, reason string) {
+//
+// rule names the authority that refused (shellGuardRuleName or
+// shellAllowlistRuleName), so one deny schema and one reader serve both
+// paths while the payload still says which one acted.
+func (s *Service) appendDenyFact(scopeID, rule, tool, command, reason string) {
 	scope, ok := s.mgr.Get(scopeID)
 	if !ok {
 		slog.Debug("supervisor: shell guard deny not recorded — scope not addressable",
@@ -563,7 +620,7 @@ func (s *Service) appendDenyFact(scopeID, tool, command, reason string) {
 		return
 	}
 	payload := map[string]any{
-		"rule":   shellGuardRuleName,
+		"rule":   rule,
 		"tool":   tool,
 		"cmd":    command,
 		"reason": reason,
@@ -572,6 +629,50 @@ func (s *Service) appendDenyFact(scopeID, tool, command, reason string) {
 		slog.Warn("supervisor: shell guard deny not recorded in the trace",
 			"scope", scopeID, "err", err)
 	}
+}
+
+// ShellAllowlistDenyRecorder returns the recorder a sub-agent loop's
+// guard wrapper carries, so a role-allowlist refusal lands on the same
+// two surfaces the global guard's does: the `supervisor status` firing
+// (with the refused command and the reason beside the count) and a
+// durable SchemaShellGuardDeny fact on the refused scope's own owner
+// path, whose payload names shellAllowlistRuleName in its rule field.
+//
+// The wrapper knows only the loop's trace owner, while the global
+// guard's deny already carries the kernel's scope address; the recorder
+// resolves one to the other first, so both paths count and record under
+// the same scope identity. A nil service returns a nil recorder, which
+// every caller treats as "record nothing".
+func (s *Service) ShellAllowlistDenyRecorder() DenyRecorder {
+	if s == nil {
+		return nil
+	}
+	return func(scopeID, tool, cmd, reason string) {
+		scopeID = s.denyScopeID(scopeID)
+		s.recordDenial(shellAllowlistRuleName, scopeID, shellDenyKind, cmd, reason)
+		s.appendDenyFact(scopeID, shellAllowlistRuleName, tool, cmd, reason)
+	}
+}
+
+// denyScopeID resolves a deny's scope to the manager's own key. The
+// kernel hands the global guard "scope:<owner>"; the role wrapper has
+// only the loop's trace owner, which is the same owner. Whichever form
+// the manager can address wins, and an ID it cannot address comes back
+// unchanged — the refusal is still counted, only the trace fact is
+// skipped (appendDenyFact's own unaddressable-scope path).
+func (s *Service) denyScopeID(scopeID string) string {
+	if s.mgr == nil {
+		return scopeID
+	}
+	if _, ok := s.mgr.Get(scopeID); ok {
+		return scopeID
+	}
+	if qualified := scopeIDPrefix + scopeID; qualified != scopeID {
+		if _, ok := s.mgr.Get(qualified); ok {
+			return qualified
+		}
+	}
+	return scopeID
 }
 
 // Firings returns the session's counted rule firings (adoption plan

@@ -154,6 +154,12 @@ type taskRunnerOpts struct {
 	// config; calls then dispatch unchanged.
 	guardCheck func(ownerID, toolName, argsJSON string) string
 
+	// guardDenyRec records a refusal the dispatching role's own
+	// allow_commands list made, so a per-role deny is as legible on the
+	// supervision status and trace surfaces as the global guard's. Nil
+	// records nothing and changes no verdict.
+	guardDenyRec supervision.DenyRecorder
+
 	// resolveProviderByName resolves a configured provider by name. It
 	// is injected from the cmd layer because provider construction
 	// (makeProvider) is CLI wiring that does not belong here. May be nil;
@@ -534,6 +540,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			SteerCh:                steerCh,
 			DestructiveGuard:       opts.guardCheck,
 			ShellGuardAllow:        guardAllow,
+			ShellGuardDenyRec:      opts.guardDenyRec,
 
 			TurnCheckpointer:      turnCk,
 			TurnCheckpointEnabled: turnCk != nil,

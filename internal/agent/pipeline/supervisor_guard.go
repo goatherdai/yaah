@@ -37,9 +37,11 @@ type SupervisorGuardMiddleware struct {
 // allow is the dispatching role's resolved shell-command allowlist; nil
 // inherits the global default the check already carries, and an
 // explicitly empty list denies every shell call (see
-// supervision.WithShellAllowlist).
-func NewSupervisorGuardMiddleware(check func(ownerID, toolName, argsJSON string) string, ownerID string, allow []string) *SupervisorGuardMiddleware {
-	return &SupervisorGuardMiddleware{check: supervision.WithShellAllowlist(check, allow), ownerID: ownerID}
+// supervision.WithShellAllowlist). rec, when wired, records each
+// role-allowlist refusal so it stays legible on the supervision
+// status and trace surfaces; omitting it records nothing.
+func NewSupervisorGuardMiddleware(check func(ownerID, toolName, argsJSON string) string, ownerID string, allow []string, rec ...supervision.DenyRecorder) *SupervisorGuardMiddleware {
+	return &SupervisorGuardMiddleware{check: supervision.WithShellAllowlist(check, allow, rec...), ownerID: ownerID}
 }
 
 func (m *SupervisorGuardMiddleware) Name() string { return "supervisor_guard" }

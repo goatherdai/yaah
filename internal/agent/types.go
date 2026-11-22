@@ -10,6 +10,7 @@ import (
 	agentctx "github.com/goatherdai/yaah/internal/agent/context"
 	"github.com/goatherdai/yaah/internal/agent/llm"
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/agent/supervision"
 	"github.com/goatherdai/yaah/internal/jobs"
 	"github.com/goatherdai/yaah/internal/permissions"
 	"github.com/goatherdai/yaah/internal/pubsub"
@@ -330,6 +331,12 @@ type LoopConfig struct {
 	// SubAgentConfig. Nil inherits the global default the check
 	// carries; an explicitly empty list denies every shell call.
 	ShellGuardAllow []string
+
+	// ShellGuardDenyRec, when non-nil, records a refusal the role's own
+	// allowlist made, plumbed through from SubAgentConfig: the deny
+	// stays legible on the supervision status and trace surfaces. Nil
+	// records nothing and changes no verdict.
+	ShellGuardDenyRec supervision.DenyRecorder
 
 	// TraceStore is the session's Goatherd trace sink (plan 07, H4),
 	// plumbed through from SubAgentConfig: the sub-agent pipeline's

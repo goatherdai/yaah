@@ -1289,6 +1289,7 @@ func buildDelegateTool(st *loopInfraStage, cfg *config.Config, lc *sessionConfig
 		ResumedScopes:         st.resumedScopes,
 		TraceStore:            pipeline.TraceSinkOf(st.traceStore),
 		GuardCheck:            supervisorSvcGuardCheck(st.supervisorSvc),
+		ShellGuardDenyRec:     supervisorSvcShellAllowlistRec(st.supervisorSvc),
 		ResolveProviderByName: resolveProviderByName,
 
 		// Retained lane (Plan 7 Phase 2): default on in local mode, where a

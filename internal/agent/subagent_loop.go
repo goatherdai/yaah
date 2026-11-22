@@ -6,6 +6,7 @@ import (
 
 	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/agent/pipeline"
+	"github.com/goatherdai/yaah/internal/agent/supervision"
 	"github.com/goatherdai/yaah/internal/permissions"
 	"github.com/goatherdai/yaah/internal/types"
 )
@@ -119,6 +120,12 @@ type SubAgentConfig struct {
 	// the global default; an explicitly empty list is deny-all.
 	ShellGuardAllow []string
 
+	// ShellGuardDenyRec, when non-nil, records a refusal the role's own
+	// allowlist made, so a per-role deny is as legible on the
+	// supervision status and trace surfaces as the global guard's. Nil
+	// leaves the refusal unrecorded; the deny itself is unchanged.
+	ShellGuardDenyRec supervision.DenyRecorder
+
 	// TraceStore is the session's Goatherd trace store (plan 07, H4),
 	// injected by the wiring through the task runner: the sub-agent
 	// pipeline's goatherd_trace middleware writes through it. Nil when
@@ -190,6 +197,7 @@ func NewSubAgentLoop(provider Provider, registry ToolRegistry, model, systemProm
 			IsSubAgent:             true,
 			DestructiveGuard:       cfg.DestructiveGuard,
 			ShellGuardAllow:        cfg.ShellGuardAllow,
+			ShellGuardDenyRec:      cfg.ShellGuardDenyRec,
 			TraceStore:             cfg.TraceStore,
 
 			TurnCheckpointer:      cfg.TurnCheckpointer,
