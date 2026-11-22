@@ -12,6 +12,7 @@
 package supervision
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,12 +72,17 @@ func (r AdvisoryRules) Any() bool {
 // B4): the `supervisor status` surface lists these, so the
 // orchestrator can see which rules acted this session without reading
 // logs. Kind is the intervention type as fired (inject, halt, deny).
-// The type lives in supervisionapi so the supervisor tool can render it
-// without importing this package.
+// A deny carries its detail — the refused command and the reason the
+// model was given — in Command and Reason, so the line names what was
+// blocked and why. The type lives in supervisionapi so the supervisor
+// tool can render it without importing this package.
 type Firing = supervisionapi.Firing
 
-// firingKey aggregates firings per rule, scope, and kind.
-type firingKey struct{ rule, scope, kind string }
+// firingKey aggregates firings per rule, scope, and kind — and, for a
+// blocking deny, per refused command and reason, so the status line
+// names what was blocked and why rather than only how often. Advisory
+// firings carry neither and keep their old aggregation.
+type firingKey struct{ rule, scope, kind, command, reason string }
 
 // Service owns the kernel supervisor for one session and the drain
 // goroutine that turns its interventions into steering.
@@ -146,7 +152,6 @@ func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 		if iv == nil || iv.Type != supervisor.InterventionDeny {
 			return ""
 		}
-		s.recordFiring("destructive_shell_guard", iv)
 		// Fail closed: a deny verdict denies regardless of whether the
 		// payload type-asserts or carries text. A silent empty string
 		// here would turn a non-string (or empty) payload into an
@@ -154,8 +159,15 @@ func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 		// calls pass through.
 		reason, ok := iv.Payload.(string)
 		if !ok || reason == "" {
-			return "Blocked destructive operation. Supervisor denied."
+			reason = "Blocked destructive operation. Supervisor denied."
 		}
+		// The deny records what was refused (the command under the same
+		// "cmd" key the declaration carries) and why, beside the count
+		// and as a durable fact on the refused scope. Recording cannot
+		// move the verdict: the reason returns below either way.
+		cmd, _ := payload["cmd"].(string)
+		s.recordDenial(shellGuardRuleName, iv.ScopeID, string(iv.Type), cmd, reason)
+		s.appendDenyFact(iv.ScopeID, toolName, cmd, reason)
 		return reason
 	}
 }
@@ -252,6 +264,23 @@ func destructiveMatch(kernelMatch func(kerneltrace.EffectEvent) bool) func(kerne
 	}
 }
 
+// SchemaShellGuardDeny is the trace fact one blocked shell call appends
+// (adoption plan B2): a Capture record on the refused sub-agent's own
+// owner path naming the rule, the tool, the command, and the reason it
+// was refused with. It sits beside the kernel's goatherd.supervisor.*
+// records under a schema ref of its own, so an existing trace reader
+// keeps working unchanged.
+const SchemaShellGuardDeny = "yaah.supervisor.shell_guard.deny.v1"
+
+// ShellGuardDenyKind is the deny fact's kind label, in the same
+// "supervisor:*" label family Scope.Inject writes.
+const ShellGuardDenyKind = "supervisor:deny"
+
+// shellGuardRuleName is the guard's rule name, and so the name its
+// denials are counted and recorded under: one constant, because the rule
+// a trace names and the rule status counts must never diverge.
+const shellGuardRuleName = "destructive_shell_guard"
+
 // shellGuardRule composes the blocking shell guard from the kernel's
 // DestructiveToolGuard (adoption plan B2, decision D3: "default-deny
 // for bash"), reusing the kernel's deny action verbatim. The kernel's
@@ -276,7 +305,7 @@ func destructiveMatch(kernelMatch func(kerneltrace.EffectEvent) bool) func(kerne
 func shellGuardRule(plan effectpolicy.Plan) supervisor.SupervisionRule {
 	guard := supervisor.DestructiveToolGuard()
 	return supervisor.SupervisionRule{
-		Name: "destructive_shell_guard",
+		Name: shellGuardRuleName,
 		Match: func(e kerneltrace.EffectEvent) bool {
 			if e.Mode != kerneltrace.Declaration {
 				return false
@@ -492,23 +521,77 @@ func NewService(mgr *goatherd.ScopeManager, bus *kerneltrace.EffectBus, runs *Re
 // recordFiring counts one rule firing for the status surface (adoption
 // plan B4).
 func (s *Service) recordFiring(rule string, iv *supervisor.Intervention) {
+	s.record(rule, iv.ScopeID, string(iv.Type), "", "")
+}
+
+// recordDenial counts one blocking deny and keeps its detail — the
+// command that was refused and the reason the model was given — beside
+// the count, on the same status surface (adoption plan B4's deny path).
+func (s *Service) recordDenial(rule, scopeID, kind, command, reason string) {
+	s.record(rule, scopeID, kind, command, reason)
+}
+
+// record aggregates one firing under its rule, scope, kind, command,
+// and reason. Advisory firings leave the last two empty.
+func (s *Service) record(rule, scopeID, kind, command, reason string) {
 	s.firingsMu.Lock()
 	if s.firings == nil {
 		s.firings = map[firingKey]int{}
 	}
-	s.firings[firingKey{rule: rule, scope: iv.ScopeID, kind: string(iv.Type)}]++
+	s.firings[firingKey{rule: rule, scope: scopeID, kind: kind, command: command, reason: reason}]++
 	s.firingsMu.Unlock()
 }
 
+// appendDenyFact records one blocked call in the refused scope's trace:
+// the durable half of the deny's legibility, so a post-hoc reader of the
+// sub-agent's own trace sees the command the guard refused, the tool
+// that carried it, and the reason given. It is a Capture fact under a
+// schema ref of its own, so a reader of the kernel's
+// goatherd.supervisor.* records is unaffected, and no rule matches it
+// (the rules read declarations, except the error-rate rule, which reads
+// captures carrying "success" — this payload has none).
+//
+// A scope the manager cannot address — a check for an owner that never
+// forked, as a test or a hand-driven call has — records no fact: the
+// firing still holds the detail, and a trace failure must never change
+// the verdict.
+func (s *Service) appendDenyFact(scopeID, tool, command, reason string) {
+	scope, ok := s.mgr.Get(scopeID)
+	if !ok {
+		slog.Debug("supervisor: shell guard deny not recorded — scope not addressable",
+			"scope", scopeID)
+		return
+	}
+	payload := map[string]any{
+		"rule":   shellGuardRuleName,
+		"tool":   tool,
+		"cmd":    command,
+		"reason": reason,
+	}
+	if _, err := scope.AppendFact(context.Background(), SchemaShellGuardDeny, ShellGuardDenyKind, payload); err != nil {
+		slog.Warn("supervisor: shell guard deny not recorded in the trace",
+			"scope", scopeID, "err", err)
+	}
+}
+
 // Firings returns the session's counted rule firings (adoption plan
-// B4), sorted by rule then scope then kind — a deterministic snapshot
-// for `supervisor status`. Empty when no rule has acted.
+// B4), sorted by rule then scope then kind then the deny detail — a
+// deterministic snapshot for `supervisor status`. A deny carries the
+// refused command and the reason with it; an advisory firing carries
+// neither. Empty when no rule has acted.
 func (s *Service) Firings() []Firing {
 	s.firingsMu.Lock()
 	defer s.firingsMu.Unlock()
 	out := make([]Firing, 0, len(s.firings))
 	for k, n := range s.firings {
-		out = append(out, Firing{Rule: k.rule, Scope: k.scope, Kind: k.kind, Count: n})
+		out = append(out, Firing{
+			Rule:    k.rule,
+			Scope:   k.scope,
+			Kind:    k.kind,
+			Count:   n,
+			Command: k.command,
+			Reason:  k.reason,
+		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Rule != out[j].Rule {
@@ -517,7 +600,13 @@ func (s *Service) Firings() []Firing {
 		if out[i].Scope != out[j].Scope {
 			return out[i].Scope < out[j].Scope
 		}
-		return out[i].Kind < out[j].Kind
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		if out[i].Command != out[j].Command {
+			return out[i].Command < out[j].Command
+		}
+		return out[i].Reason < out[j].Reason
 	})
 	return out
 }

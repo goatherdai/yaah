@@ -21,4 +21,13 @@ type Firing struct {
 	Scope string
 	Kind  string
 	Count int
+
+	// Command and Reason carry a blocking deny's detail: the shell
+	// command the guard refused and the reason it gave the model.
+	// Both are empty for advisory firings, which steer rather than
+	// refuse. A deny aggregates per command and reason, so the same
+	// refused command counted twice is one line and two different
+	// commands stay two — the count never hides what was refused.
+	Command string
+	Reason  string
 }

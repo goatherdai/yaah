@@ -1,0 +1,57 @@
+# Shepherd ↔ yaah supervision parity
+
+How yaah's supervision surface maps onto Shepherd's — what is adopted,
+what is declined, and what remains open. "Shepherd" here means the
+Python v0.3.1 runtime cloned at `.scratch/shepherd/` (commit `d34d5ca`).
+The port path is Shepherd → goatherd-kernel/runtime → yaah; yaah's
+supervision surface is a thin decoration over the imported kernel
+machinery.
+
+## Shepherd's supervision is three facilities, not one
+
+1. **Gating combinators** (`shepherd_runtime/combinators/{gating,types}.py`)
+   — `gate`/`budget`/`timeout` wrappers that bound a step's execution.
+2. **Permission plans** (`effects/policy.py`, `dialect/permission_plan.py`)
+   — `Match`/`Plan` effect surfaces plus monitor assignment.
+3. **Effects supervisor handler** (`effects/` supervisor handler) — an
+   unrelated per-effect hook, distinct from the permission-plan system.
+
+`JudgePredicate = Callable[[Any, "EffectStreamLike"], bool]` is a
+deterministic predicate, not an LLM call.
+
+## Mapping
+
+| Shepherd | yaah | Status |
+| --- | --- | --- |
+| Permission-plan `Match`/`Plan` | `internal/effectpolicy` (`Match`, `Plan`, `Conforms`) | Adopted (Stage 1) |
+| Monitor assignment / `PermissionPlan` | `internal/permissionplan` (`Authority` → `Compile` → monitors + `Digest`) | Adopted (Stage 1) |
+| Jail monitor | `internal/dispatch/dispatch_authority.go` — grants/network/containment lowered from the plan; digest recorded as `yaah.subagent.authority.v1` | Adopted (Stage 2) |
+| Settlement monitor | `internal/dispatch/git_delta.go` — delta posture declared in the plan; digest cited at settle as `authority_plan_digest` | Adopted (Stage 3) |
+| Gating combinators (`gate`/`budget`/`timeout`) | not ported | Declined — ties to the workflow DSL (`yaah-hxk3.5`) |
+| Citation checking | not ported | Declined (`yaah-hxk3.2`) |
+| Effects supervisor handler | advisory rules engine (`destructive_tool`, `high_error_rate`, `stuck_detection`) | Diverged — see below |
+
+## Advisory-rules divergence
+
+Shepherd's effects supervisor handler is a per-effect hook. yaah's
+advisory rules are a scope-based `EffectBus` engine with three rules
+(destructive tool, high error rate, stuck detection); the root scope is
+exempt by policy, and only the manual `supervisor` tool reaches the
+orchestrator. This is a deliberate divergence, not a port gap.
+
+## Settlement posture
+
+`authorityForDispatch` declares `DeltaApply`: yaah's `select`/`apply`
+write the manifest's post-images directly, and the orchestrator invoking
+the verb is the review. `DeltaReview` is declined as a distinct posture
+because yaah has no review-gate config knob. The worktree-merge lane
+(`internal/dispatch/proposal_merge.go`) is the remaining settlement lane
+not yet tied to the plan digest.
+
+## Open parity
+
+`docs/goatherd-parity.md` is the ledger of record. Open items: `yaah-hxk3.1`
+(supervision, Partial — the biggest gap), `hxk3.2` (citation checking, not
+ported), `hxk3.4` (contexts/effect fold, Partial), `hxk3.5`
+(task/step/combinators, not ported), `hxk3.3` (scorecard, ongoing);
+umbrella `yaah-1tkp`.
