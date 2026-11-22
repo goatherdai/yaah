@@ -117,6 +117,12 @@ var defaultOrchestratorBelt = []string{
 	"toolbelt", // the lazy toolbelt's loader (yaah-6mi9.5); rides the spine
 	"wait_for", // wake pair: registration-gated to interactive sessions (registerWakeTools)
 	"watch",    //
+
+	// workflow_run is the workflow-in-session surface (Scope B): an
+	// always-on tool is an acknowledged floor cost of ~780 tokens/call,
+	// admitted deliberately so the orchestrator runs a document in-process
+	// instead of shelling out to `yaah workflow run`.
+	"workflow_run",
 	"write",
 }
 
