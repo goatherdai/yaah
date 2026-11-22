@@ -247,6 +247,11 @@ func TestHostChangedPaths(t *testing.T) {
 	}
 }
 
+// testAuthorityPlanDigest stands in for the compiled permission-plan digest a
+// real seal records: 64 hex characters, the shape permissionplan.Digest
+// produces.
+const testAuthorityPlanDigest = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+
 // deltaFixture is one real repository with a root scope, the pieces a container
 // proposal's settlement needs.
 type deltaFixture struct {
@@ -256,7 +261,10 @@ type deltaFixture struct {
 	basisState  kerneltrace.WorkspaceState
 	basisDigest string
 	sessionID   string
-	registry    *ProposalRegistry
+	// authorityPlanDigest is the declaration identity the fixture seals with, so
+	// a rehydrated proposal can be checked against it.
+	authorityPlanDigest string
+	registry            *ProposalRegistry
 }
 
 func newDeltaFixture(t *testing.T) *deltaFixture {
@@ -283,29 +291,30 @@ func newDeltaFixtureWith(t *testing.T, prep func(repo string)) *deltaFixture {
 	if err != nil {
 		t.Fatalf("digest host basis: %v", err)
 	}
-	return &deltaFixture{fx: fx, repo: repo, rootID: rootID, basisState: state, basisDigest: digest, sessionID: "test-session", registry: NewProposalRegistry()}
+	return &deltaFixture{fx: fx, repo: repo, rootID: rootID, basisState: state, basisDigest: digest, sessionID: "test-session", authorityPlanDigest: testAuthorityPlanDigest, registry: NewProposalRegistry()}
 }
 
 // add persists a delta and registers it as an open proposal.
 func (f *deltaFixture) add(t *testing.T, id string, delta *GitDelta) *retainedProposal {
 	t.Helper()
-	dir, digest, err := persistGitDelta(context.Background(), f.repo, id, delta, "review for "+id, "wrote "+id, "", f.sessionID, f.rootID, "host", f.basisState, f.basisDigest)
+	dir, digest, err := persistGitDelta(context.Background(), f.repo, id, delta, "review for "+id, "wrote "+id, "", f.sessionID, f.rootID, "host", f.basisState, f.basisDigest, f.authorityPlanDigest)
 	if err != nil {
 		t.Fatalf("persistGitDelta: %v", err)
 	}
 	p := &retainedProposal{
-		id:          id,
-		delta:       delta,
-		result:      "wrote " + id,
-		parentID:    f.rootID,
-		mgr:         f.fx.mgr,
-		repoPath:    f.repo,
-		basisState:  f.basisState,
-		basisDigest: f.basisDigest,
-		artifactDir: dir,
-		deltaDigest: digest,
-		world:       "container",
-		target:      "host",
+		id:                  id,
+		delta:               delta,
+		result:              "wrote " + id,
+		parentID:            f.rootID,
+		mgr:                 f.fx.mgr,
+		repoPath:            f.repo,
+		basisState:          f.basisState,
+		basisDigest:         f.basisDigest,
+		artifactDir:         dir,
+		deltaDigest:         digest,
+		authorityPlanDigest: f.authorityPlanDigest,
+		world:               "container",
+		target:              "host",
 	}
 	f.registry.add(p)
 	return p

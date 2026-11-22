@@ -266,7 +266,11 @@ func loadGitDeltaProposal(dir, repoPath string, mgr *goatherd.ScopeManager, root
 		basisDigest: basis.Digest,
 		artifactDir: dir,
 		deltaDigest: meta.ManifestDigest,
-		world:       "container",
+		// A rehydrated proposal cites the same declaration the seal did, so
+		// its settlement fact names the plan the world enforced rather than a
+		// digest this process cannot know.
+		authorityPlanDigest: meta.AuthorityPlanDigest,
+		world:               "container",
 	}, "", nil
 }
 

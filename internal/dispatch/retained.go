@@ -334,7 +334,11 @@ type retainedProposal struct {
 	basisDigest string
 	artifactDir string
 	deltaDigest string
-	world       string
+	// authorityPlanDigest is the compiled permission plan the world that
+	// produced this proposal enforced — the seal fact's citation, carried so
+	// settlement can record the declaration it is the commit-time monitor for.
+	authorityPlanDigest string
+	world               string
 	// target is "host" for a host-git settlement or "session" for a manifest
 	// that settles into the container session's workspace. session is the
 	// live world for the latter; a session-target proposal is not rehydrated.

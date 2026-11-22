@@ -32,8 +32,18 @@ const SchemaDispatchAuthority = "yaah.subagent.authority.v1"
 //     speaks. An empty mode declares no clause: lowering keeps the documented
 //     allow_all default, but the config did not declare egress, and a plan
 //     records declarations, not defaults.
-//   - Delta is left unset. Settlement is its own lane and its own increment;
-//     declaring a policy here would assign a monitor this change does not wire.
+//   - Delta declares DeltaApply, because one declaration covers both monitors:
+//     the same declaration that shapes the jail also settles its proposal. yaah's
+//     settlement is an orchestrator-mediated whole-path apply — select and apply
+//     write the manifest's post-images onto the target directly, and nothing
+//     waits behind a second gate once the orchestrator invokes the verb. The
+//     orchestrator invoking the verb IS the review, so the declared posture is
+//     apply, and Compile assigns the clause the settlement monitor at commit.
+//     DeltaReview is declined as a distinct posture rather than mapped from some
+//     condition: yaah has no separate review-gate config knob, so declaring
+//     "review" would claim a gate settlement does not enforce. Note the clause
+//     depends on no jail either way — the settlement monitor lives in the parent
+//     world, so an advisory dispatch declares it exactly as a jailed one does.
 //   - Containment and Fallback come from agents.subagent.containment, which is
 //     the axis that decides whether a jail monitor exists at all:
 //     "jail"/"paddock" claims the jail outright. "auto" and the empty default
@@ -73,6 +83,11 @@ func authorityForDispatch(rt RetainedRuntime, role string) (permissionplan.Autho
 		return permissionplan.Authority{}, err
 	}
 	a.Network = network
+
+	// One declaration, two monitors: the delta posture is declared here too, so
+	// the plan's digest covers settlement as well as confinement. See the doc
+	// comment above for why the posture is apply.
+	a.Delta = permissionplan.DeltaApply
 
 	containment, fallback, err := containmentPosture(rt.Containment)
 	if err != nil {

@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -37,11 +38,34 @@ func TestAuthorityForDispatch(t *testing.T) {
 		if got.Network != permissionplan.NetworkDenyAll {
 			t.Errorf("network = %q, want deny_all", got.Network)
 		}
-		if got.Delta != permissionplan.DeltaUnset {
-			t.Errorf("delta = %q, want it left for the settlement lane", got.Delta)
+		if got.Delta != permissionplan.DeltaApply {
+			t.Errorf("delta = %q, want apply: the orchestrator invoking select/apply is the review", got.Delta)
 		}
 		if got.Containment != permissionplan.ContainmentJail || got.Fallback != permissionplan.FallbackRefuse {
 			t.Errorf("containment/fallback = %q/%q, want jail/refuse", got.Containment, got.Fallback)
+		}
+	})
+
+	t.Run("the delta clause is enforced by the settlement monitor", func(t *testing.T) {
+		plan, err := compileDispatchPlan(RetainedRuntime{Containment: "paddock"}, "developer")
+		if err != nil {
+			t.Fatalf("compileDispatchPlan: %v", err)
+		}
+		found := false
+		for _, a := range plan.Assignments() {
+			if a.Monitor != permissionplan.MonitorSettlement {
+				continue
+			}
+			found = true
+			if a.Timing != permissionplan.TimingCommit {
+				t.Errorf("delta assignment timing = %q, want commit", a.Timing)
+			}
+			if want := "delta(" + permissionplan.DeltaApply.String() + ")"; a.Label != want {
+				t.Errorf("delta assignment label = %q, want %q", a.Label, want)
+			}
+		}
+		if !found {
+			t.Fatal("a declared delta posture must compile to a settlement assignment: one declaration, two monitors")
 		}
 	})
 
@@ -387,6 +411,50 @@ func TestDispatchPlanGate_FailClosed(t *testing.T) {
 func withContainment(a permissionplan.Authority, c permissionplan.Containment, f permissionplan.Fallback) permissionplan.Authority {
 	a.Containment, a.Fallback = c, f
 	return a
+}
+
+// TestSettlementCitesJailPlanDigest is the "one declaration, two lanes"
+// invariant: the digest the jail lane compiles for a config is the digest the
+// container seal persists, so a proposal sealed by that world carries the same
+// declaration identity into settlement. The two lanes share a declaration only
+// if their digests agree; a mismatch here would mean one of them lowered its own
+// copy of the config.
+func TestSettlementCitesJailPlanDigest(t *testing.T) {
+	f := newDeltaFixture(t)
+	rt := RetainedRuntime{
+		Containment:     "paddock",
+		Network:         "deny_all",
+		Grants:          []config.GrantConfig{{Path: "src", Access: "readwrite"}},
+		ContainerWorlds: true,
+		DispatchWorlds:  &DispatchWorlds{Config: sessionTestConfig()},
+	}
+	jail, err := resolveDispatchAuthority(rt, "developer")
+	if err != nil {
+		t.Fatalf("resolveDispatchAuthority: %v", err)
+	}
+	plan, err := compileDispatchPlan(rt, "developer")
+	if err != nil {
+		t.Fatalf("compileDispatchPlan: %v", err)
+	}
+	if jail.planIdentity() != plan.Digest() {
+		t.Fatalf("the world's plan digest %q is not the compiled declaration %q",
+			jail.planIdentity(), plan.Digest())
+	}
+
+	// Seal exactly as the container lane does: the world's authority digest goes
+	// into the manifest's metadata beside it.
+	if _, _, err := persistGitDelta(context.Background(), f.repo, "proposal:two-lanes",
+		rehydrateDelta(), "", "", "", f.sessionID, f.rootID, "host",
+		f.basisState, f.basisDigest, jail.planIdentity()); err != nil {
+		t.Fatalf("persistGitDelta: %v", err)
+	}
+	reg, warnings := LoadProposalRegistry(f.repo, f.fx.mgr, f.rootID, f.sessionID)
+	if len(warnings) != 0 || len(reg.all()) != 1 {
+		t.Fatalf("proposals = %d, warnings %v; want one", len(reg.all()), warnings)
+	}
+	if got := reg.all()[0].authorityPlanDigest; got != jail.planIdentity() {
+		t.Fatalf("settlement cites %q, want the jail lane's %q", got, jail.planIdentity())
+	}
 }
 
 // TestCompileDispatchPlan_DigestIdentity pins the digest as a declaration
