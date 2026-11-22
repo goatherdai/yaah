@@ -98,11 +98,16 @@ func loadConfig(opts SessionOptions, skipOtel bool) (*sessionConfig, error) {
 		return nil, fmt.Errorf("config: %w", verr)
 	}
 
+	// Provider instance and name from ONE resolution (yaah-1614): resolved
+	// separately, a configured-but-unusable provider left the instance on the
+	// first usable entry while the name kept naming the configured one, so
+	// errors were attributed to an endpoint that never served the request.
+	provider, providerName := resolveProviderAndName(cfg)
 	out := &sessionConfig{
 		cfg:          cfg,
-		provider:     resolveProvider(cfg),
+		provider:     provider,
 		modelName:    resolveModel(cfg),
-		providerName: resolveProviderName(cfg),
+		providerName: providerName,
 	}
 
 	// --- OpenTelemetry ---------------------------------------------------

@@ -41,6 +41,11 @@ Count things. Batch ALL independent counts into ONE turn.
 - Preferred: use the glob tool and read its "N files total" footer as
   the authoritative count — the footer is a tool-reported total, so
   using it is NOT parsing output by hand.
+- Reading the footer:
+  - A truncated result ends with exactly
+    `...[truncated: N files total]...` — N is the total match count.
+  - A short (non-truncated) result has NO footer: the returned list is
+    complete, so its line count is the total.
 - If bash is available, `find . -maxdepth 1 -mindepth 1 | wc -l` works
   too; report its raw stdout.
 - If a tool call is denied, do NOT retry it — fall back to glob in the

@@ -80,8 +80,10 @@ func newStandaloneWorkflowRunner() (jobs.TaskRunner, func(), error) {
 	// no usable provider fails here, before a store is opened or the
 	// process-wide role registry is rebuilt, so the refusal leaves no
 	// footprint.
-	providerName := resolveProviderName(cfg)
-	provider := resolveProvider(cfg)
+	// One resolution names the provider that serves (yaah-1614): the dispatch
+	// session is opened under that name, so a fallback must be reported as
+	// itself, not as the configured entry it replaced.
+	provider, providerName := resolveProviderAndName(cfg)
 	if _, none := provider.(*providers.NoProviderStub); none || provider == nil {
 		return nil, nil, fmt.Errorf("no provider configured: %s holds no provider with a usable credential, and a workflow run will not invent one — add a provider there (or point agents.default.provider at a usable entry) and check it with 'yaah doctor'", configPathLabel())
 	}

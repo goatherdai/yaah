@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	agentctx "github.com/goatherdai/yaah/internal/agent/context"
 	"github.com/goatherdai/yaah/internal/agent/errorclassify"
 	"github.com/goatherdai/yaah/internal/types"
 )
@@ -66,8 +67,26 @@ type Client struct {
 	// emitted while a stream is being consumed. Zero means 5s. Tests
 	// shorten it to observe per-chunk heartbeats.
 	HeartbeatInterval time.Duration
-	prematureCount    int // tracks premature-stream-close replays within a single Call
-	dialectSeq        int // monotonic ID counter for dialect-recovered tool calls
+
+	// OnMessagesReplaced, when non-nil, is invoked after a recovery inside
+	// Call replaces the replayed message list wholesale — currently only the
+	// provider-swap trim. The loop wires it to its persistence rebase so the
+	// stored transcript and message cursor match the baseline the loop
+	// adopts; without it the DB keeps the discarded rows and a resumed
+	// session reloads the foreign history the trim just dropped (yaah-1109
+	// review).
+	OnMessagesReplaced func(msgs []types.Message)
+
+	// CanonicalMessages, when non-nil, returns the loop's conversation for
+	// the current turn: before the request-only transforms (pruning, orphan
+	// repair) and without the transient wrap-up/budget notice buildTurnRequest
+	// appends after the user prompt. The swap trim needs it because the
+	// request alone cannot name the operator's current request once a notice
+	// is the last user message in the payload (yaah-1109 review).
+	CanonicalMessages func() []types.Message
+
+	prematureCount int // tracks premature-stream-close replays within a single Call
+	dialectSeq     int // monotonic ID counter for dialect-recovered tool calls
 }
 
 // CallResult holds the outcome of a single LLM call. Response metadata
@@ -182,6 +201,11 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 	compactAttempts := 0
 	stripAttempts := 0
 	providerSwapped := false
+	// swapTrimmed bounds the yaah-1109 history trim to one per Call: a
+	// provider still rejecting the trimmed payload cannot be served from
+	// this session at all, and the replay would only re-send the same
+	// request.
+	swapTrimmed := false
 	respFormatDropped := false
 	outputBudgetRaised := false
 	var outputBudgetErr error
@@ -350,6 +374,63 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			c.swappedFromPrimary = true
 			attempt--
 			continue
+		}
+
+		// yaah-1109: the swap moved the session onto a thinking-mode endpoint
+		// that cannot consume the swapped-out primary's history. Its assistant
+		// turns carry no reasoning signature, so the request omits the thinking
+		// blocks the endpoint demands and it answers 400 asking for them back.
+		// Neither remedy the classifier knows helps: stripping is the opposite
+		// of what it asks, and no config change applies once thinking is already
+		// on. The one recovery that needs no provider cooperation is to stop
+		// replaying the foreign turns — a turn that is never sent needs no
+		// reasoning replayed with it — so the request is cut back to the current
+		// user turn and replayed. Trimming beats dead-ending the session: a
+		// fallback that cannot be used is worth little, and the current user
+		// message is all the new provider needs. The trimmed baseline is reported
+		// through Compacted so the loop adopts it and later turns do not fail
+		// this way once per turn. When there is nothing to trim (no assistant
+		// turns, or no user turn to cut back to) the swap cannot be rescued and
+		// the abort below surfaces the swap diagnosis.
+		//
+		// Two further conditions gate the adoption. The cut lands on the
+		// operator's own request, located against canonical history because a
+		// transient wrap-up/budget notice is a user-role message sitting after
+		// it, and the trimmed history must be one the endpoint can actually
+		// replay: a swap that fired mid-tool-loop keeps the current turn's own
+		// unsigned assistant turns, so that payload would be refused for the
+		// same reason and adopting it would replace the session baseline with a
+		// history that still cannot be served, hiding the swap diagnosis behind
+		// a second identical 400. Both refusals fall through to the abort
+		// below.
+		if classified.Reason == errorclassify.ReasonThinkingModeRequired && c.swappedFromPrimary && !swapTrimmed &&
+			hasUnsignedAssistantTurns(req.Messages) {
+			var canonical []types.Message
+			if c.CanonicalMessages != nil {
+				canonical = c.CanonicalMessages()
+			}
+			trimmed, ok := agentctx.TrimToCurrentUserTurn(req.Messages, canonical)
+			if ok && !hasUnsignedAssistantTurns(trimmed) {
+				// Loud, in the same channel as the response_format drop: silently
+				// discarding turns changes what the model can see.
+				fmt.Fprintf(os.Stderr, "warning: provider swap replayed history from a non-thinking provider; dropped %d earlier message(s) so the fallback can serve this turn\n",
+					len(req.Messages)-len(trimmed))
+				req.Messages = trimmed
+				compacted = true
+				compactedMessages = req.Messages
+				// The loop adopts this baseline at its defined compaction
+				// point, so the persisted transcript and cursor must be rebased
+				// to it here — otherwise the discarded rows stay in the DB and
+				// a resumed session reloads exactly the foreign history this
+				// trim dropped (review B7).
+				if c.OnMessagesReplaced != nil {
+					c.OnMessagesReplaced(trimmed)
+				}
+				swapTrimmed = true
+				// Recovery replay, not a retry: no MaxRetries slot and no backoff.
+				attempt--
+				continue
+			}
 		}
 
 		switch {
@@ -542,6 +623,20 @@ func isDegenerateStream(err error) bool {
 	}
 	return strings.Contains(msg, "streamed response produced no content") ||
 		strings.Contains(msg, "non-streaming response produced no content")
+}
+
+// hasUnsignedAssistantTurns reports whether the history carries assistant turns
+// without a reasoning signature — the shape a non-thinking provider produces and
+// a swapped-to thinking-mode endpoint refuses to replay (yaah-1109). Signed
+// history needs no trim: the swap is not what the 400 is about, and the
+// classifier's config advice applies.
+func hasUnsignedAssistantTurns(messages []types.Message) bool {
+	for _, m := range messages {
+		if m.Role == "assistant" && m.ReasoningSignature == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func stripReasoningContent(messages []types.Message) []types.Message {

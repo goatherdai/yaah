@@ -33,6 +33,139 @@ func TestSplitTailKeepsFinalExchangeInOversizedTurn(t *testing.T) {
 	}
 }
 
+// TrimToCurrentUserTurn cuts a replayed history back to the current user turn so
+// a provider swap onto a thinking-mode endpoint can serve it (yaah-1109).
+func TestTrimToCurrentUserTurn(t *testing.T) {
+	const notice = "[system] Budget notice: 1 working turn(s) remain before this run is force-ended."
+	cases := []struct {
+		name string
+		in   []types.Message
+		// canonical is the loop's own history for the turn: what the trim must
+		// cut back to, without the request-only transient notices.
+		canonical []types.Message
+		// want is the role:content sequence of the expected result; nil means
+		// "nothing to trim, the history comes back untouched with ok=false".
+		want []string
+	}{
+		{
+			name: "drops foreign turns and keeps the system prompt",
+			in: []types.Message{
+				msg("system", "sys"),
+				msg("user", "first"),
+				msg("assistant", "old answer"),
+				msg("tool", "old result"),
+				msg("user", "second"),
+				msg("assistant", "older answer"),
+				msg("user", "current"),
+			},
+			want: []string{"system:sys", "user:current"},
+		},
+		{
+			name: "keeps the tool loop of the current turn intact",
+			in: []types.Message{
+				msg("system", "sys"),
+				msg("user", "first"),
+				msg("assistant", "old answer"),
+				msg("user", "current"),
+				msg("assistant", "", types.ToolCall{ID: "c1", Function: types.ToolCallFn{Name: "read", Arguments: "{}"}}),
+				msg("tool", "result"),
+			},
+			want: []string{"system:sys", "user:current", "assistant:", "tool:result"},
+		},
+		{
+			name: "a trailing budget notice is not mistaken for the request",
+			in: []types.Message{
+				msg("system", "sys"),
+				msg("user", "first"),
+				msg("assistant", "old answer"),
+				msg("user", "current"),
+				msg("user", notice),
+			},
+			canonical: []types.Message{
+				msg("system", "sys"),
+				msg("user", "first"),
+				msg("assistant", "old answer"),
+				msg("user", "current"),
+			},
+			want: []string{"system:sys", "user:current", "user:" + notice},
+		},
+		{
+			// The pre-fix behavior, correct only when the loop appended no
+			// transient notice: nothing better to match against.
+			name: "without canonical history the final user message is the boundary",
+			in: []types.Message{
+				msg("system", "sys"),
+				msg("user", "first"),
+				msg("assistant", "old answer"),
+				msg("user", "current"),
+				msg("user", notice),
+			},
+			want: []string{"system:sys", "user:" + notice},
+		},
+		{
+			// A mid-tool-loop turn keeps its own unsigned assistant turns; the
+			// boundary is still the user message. Whether such a history is
+			// safe to adopt is the caller's call (llm.Call refuses it).
+			name: "a mid-tool-loop turn is cut back whole",
+			in: []types.Message{
+				msg("system", "sys"),
+				msg("user", "first"),
+				msg("assistant", "old answer"),
+				msg("user", "current"),
+				msg("assistant", "", types.ToolCall{ID: "c1", Function: types.ToolCallFn{Name: "read", Arguments: "{}"}}),
+				msg("tool", "result"),
+				msg("user", notice),
+			},
+			canonical: []types.Message{
+				msg("system", "sys"),
+				msg("user", "first"),
+				msg("assistant", "old answer"),
+				msg("user", "current"),
+				msg("assistant", "", types.ToolCall{ID: "c1", Function: types.ToolCallFn{Name: "read", Arguments: "{}"}}),
+				msg("tool", "result"),
+			},
+			want: []string{"system:sys", "user:current", "assistant:", "tool:result", "user:" + notice},
+		},
+		{
+			name: "a single turn is left alone",
+			in:   []types.Message{msg("system", "sys"), msg("user", "current")},
+		},
+		{
+			name: "history without a user turn is left alone",
+			in:   []types.Message{msg("system", "sys"), msg("assistant", "old answer")},
+		},
+		{
+			name: "empty history is left alone",
+			in:   nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := TrimToCurrentUserTurn(tc.in, tc.canonical)
+			if tc.want == nil {
+				if ok {
+					t.Fatalf("ok = true, want false — nothing to trim")
+				}
+				if len(got) != len(tc.in) {
+					t.Fatalf("len = %d, want the untouched %d", len(got), len(tc.in))
+				}
+				return
+			}
+			if !ok {
+				t.Fatal("ok = false, want true")
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("len(trimmed) = %d, want %d (%v)", len(got), len(tc.want), tc.want)
+			}
+			for i, want := range tc.want {
+				if got[i].Role+":"+got[i].Content != want {
+					t.Errorf("message %d = %q, want %q", i, got[i].Role+":"+got[i].Content, want)
+				}
+			}
+		})
+	}
+}
+
 func TestSplitTailNormalBudget(t *testing.T) {
 	messages := []types.Message{
 		msg("system", "sys"),
