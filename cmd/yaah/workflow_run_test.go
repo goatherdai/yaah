@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,7 +26,7 @@ import (
 func swapRunRunner(t *testing.T, fn jobs.TaskRunner, calls *int) {
 	t.Helper()
 	prev := workflowRunRunner
-	workflowRunRunner = func() (jobs.TaskRunner, func(), error) {
+	workflowRunRunner = func(io.Writer) (jobs.TaskRunner, func(), error) {
 		return func(ctx context.Context, prompt string, params jobs.SubAgentParams) (string, error) {
 			if calls != nil {
 				*calls++
@@ -102,7 +103,7 @@ agents:
 	if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte(cfg), 0o644); err != nil {
 		t.Fatalf("writing the config: %v", err)
 	}
-	r, cleanup, err := newStandaloneWorkflowRunner()
+	r, cleanup, err := newStandaloneWorkflowRunner(os.Stderr)
 	if err != nil {
 		t.Fatalf("compose the standalone runner: %v", err)
 	}

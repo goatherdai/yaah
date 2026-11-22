@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"strings"
+	"unicode"
+
 	"github.com/goatherdai/yaah/internal/tui/components/command"
 )
 
@@ -141,6 +144,24 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 			return false
 		}
 		t.searchMessages(arg)
+		return true
+	case command.CmdWorkflow:
+		if t.OnWorkflowRun == nil {
+			t.SetEphemeral("workflow not available in this session")
+			return false
+		}
+		arg = strings.TrimSpace(arg)
+		verb := arg
+		rest := ""
+		if i := strings.IndexFunc(arg, unicode.IsSpace); i >= 0 {
+			verb = arg[:i]
+			rest = strings.TrimSpace(arg[i:])
+		}
+		if verb != "run" || rest == "" {
+			t.SetEphemeral("usage: :workflow run <spec.yaml|spec.json>")
+			return false
+		}
+		t.OnWorkflowRun(rest)
 		return true
 	default:
 		// Reachable for commands that are declared and parseable but have no

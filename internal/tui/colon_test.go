@@ -328,3 +328,51 @@ func TestHandleCommand_ModeRefusedWhenUnwired(t *testing.T) {
 		t.Fatal(":mode with no OnModeSelect wired should be refused, not consumed")
 	}
 }
+
+func TestHandleCommand_WorkflowRefusedWhenUnwired(t *testing.T) {
+	ui := newColonUI(t)
+	if ui.HandleCommand(command.CmdWorkflow, "run a.yaml") {
+		t.Fatal(":workflow with no OnWorkflowRun wired should be refused, not consumed")
+	}
+}
+
+func TestHandleCommand_WorkflowBadArgReportsUsage(t *testing.T) {
+	ui := newColonUI(t)
+	var called string
+	ui.OnWorkflowRun = func(spec string) { called = spec }
+
+	for _, arg := range []string{"", "explain a.yaml", "   "} {
+		if ui.HandleCommand(command.CmdWorkflow, arg) {
+			t.Fatalf(":workflow %q (bad arg) should be refused, not consumed", arg)
+		}
+	}
+	if called != "" {
+		t.Fatalf("bad :workflow arg reached the callback: %q", called)
+	}
+}
+
+func TestHandleCommand_WorkflowRunCallsCallback(t *testing.T) {
+	ui := newColonUI(t)
+	var called string
+	ui.OnWorkflowRun = func(spec string) { called = spec }
+
+	if !ui.HandleCommand(command.CmdWorkflow, "run specs/demo.yaml") {
+		t.Fatal(":workflow run <spec> should be consumed")
+	}
+	if called != "specs/demo.yaml" {
+		t.Fatalf("callback spec = %q, want %q", called, "specs/demo.yaml")
+	}
+}
+
+func TestHandleCommand_WorkflowAcceptsTabSeparator(t *testing.T) {
+	ui := newColonUI(t)
+	var called string
+	ui.OnWorkflowRun = func(spec string) { called = spec }
+
+	if !ui.HandleCommand(command.CmdWorkflow, "run\tspecs/demo.yaml") {
+		t.Fatal(":workflow run<TAB><spec> should be consumed, not refused")
+	}
+	if called != "specs/demo.yaml" {
+		t.Fatalf("callback spec = %q, want %q", called, "specs/demo.yaml")
+	}
+}

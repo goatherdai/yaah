@@ -143,7 +143,7 @@ func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) er
 		return workflowExitError(a)
 	}
 
-	run, cleanup, rerr := workflowRunRunner()
+	run, cleanup, rerr := workflowRunRunner(cmd.ErrOrStderr())
 	if rerr != nil {
 		return rerr
 	}

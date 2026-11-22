@@ -130,6 +130,15 @@ func TestParse_Mode(t *testing.T) {
 	}
 }
 
+func TestParse_Workflow(t *testing.T) {
+	tests := []string{"workflow", "workflow run a.yaml", "workflow run spec.json"}
+	for _, input := range tests {
+		if got := Parse(input); got != CmdWorkflow {
+			t.Errorf("Parse(%q) = %v, want CmdWorkflow", input, got)
+		}
+	}
+}
+
 func TestParse_Unknown(t *testing.T) {
 	if got := Parse("nonexistent"); got != CmdNone {
 		t.Errorf("Parse(nonexistent) = %v, want CmdNone", got)
@@ -194,6 +203,8 @@ func TestSplit_CommandAndArg(t *testing.T) {
 		{"search keyword", CmdSearch, "keyword"},
 		{"model gpt-4", CmdModel, "gpt-4"},
 		{"model", CmdModel, ""},
+		{"workflow run a.yaml", CmdWorkflow, "run a.yaml"},
+		{"workflow", CmdWorkflow, ""},
 		{"clear", CmdClear, ""},
 		{"  quit  ", CmdQuit, ""},
 		{"steer", CmdSteer, ""},
@@ -223,7 +234,7 @@ func TestParse_BareArgCommand(t *testing.T) {
 }
 
 func TestRequiresArg(t *testing.T) {
-	for _, cmd := range []Cmd{CmdSteer, CmdFollowUp, CmdSearch} {
+	for _, cmd := range []Cmd{CmdSteer, CmdFollowUp, CmdSearch, CmdWorkflow} {
 		if !RequiresArg(cmd) {
 			t.Errorf("RequiresArg(%v) = false, want true", cmd)
 		}
@@ -244,7 +255,7 @@ func TestDefaultEntries_CoversArgCommands(t *testing.T) {
 	for _, e := range DefaultEntries() {
 		have[e.Cmd] = true
 	}
-	for _, cmd := range []Cmd{CmdSteer, CmdFollowUp, CmdSearch} {
+	for _, cmd := range []Cmd{CmdSteer, CmdFollowUp, CmdSearch, CmdWorkflow} {
 		if !have[cmd] {
 			t.Errorf("palette is missing an entry for %v", cmd)
 		}
