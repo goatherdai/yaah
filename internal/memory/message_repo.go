@@ -93,6 +93,21 @@ func (d *DB) embedMessageAsync(id, role, content string) <-chan struct{} {
 	return done
 }
 
+// HasToolResult reports whether the session already persisted a tool result
+// for the given tool_call_id. A tool result must be unique per call: on
+// replay providers reject a second result for the same call, and a
+// re-executed tool (after a crash/resume, or an overlapping run) can append
+// a duplicate at a fresh index that the (session_id, idx) conflict guard
+// cannot catch.
+func (d *DB) HasToolResult(sessionID, toolCallID string) (bool, error) {
+	var exists bool
+	err := d.sql.QueryRow(
+		`SELECT EXISTS(SELECT 1 FROM messages WHERE session_id = ? AND role = 'tool' AND tool_call_id = ?)`,
+		sessionID, toolCallID,
+	).Scan(&exists)
+	return exists, err
+}
+
 // MaxMessageIdx returns the highest persisted message index for a session,
 // or -1 when the session has no rows. It is the recovery anchor for a
 // persister whose cursor fell behind the store (an interrupted or

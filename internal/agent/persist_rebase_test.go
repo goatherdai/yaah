@@ -297,3 +297,35 @@ func TestSessionPersister_SetMsgIdxReconciles(t *testing.T) {
 		}
 	}
 }
+
+// TestSessionPersister_DropsDuplicateToolResult pins that a tool result whose
+// tool_call_id was already persisted for the session is skipped rather than
+// appended at a fresh index, which would make the transcript unreplayable
+// (providers reject a second result for one tool call).
+func TestSessionPersister_DropsDuplicateToolResult(t *testing.T) {
+	db := newPersistTestDB(t, "sess-dup")
+	p := NewSessionPersister(db, nil, "sess-dup")
+
+	p.Persist(types.AssistantMsg("call", []types.ToolCall{{
+		ID:   "call_1",
+		Type: "function",
+		Function: types.ToolCallFn{
+			Name:      "bash",
+			Arguments: `{}`,
+		},
+	}}))
+	p.Persist(types.ToolResultMsg("call_1", "bash", "result"))
+	// The same call persisted again is a re-execution artifact.
+	p.Persist(types.ToolResultMsg("call_1", "bash", "result"))
+
+	if p.MsgIdx() != 2 {
+		t.Fatalf("MsgIdx after duplicate tool result = %d; want 2 (duplicate must not advance the cursor)", p.MsgIdx())
+	}
+	msgs, err := db.GetMessages("sess-dup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("rows = %d; want 2 (assistant + one tool result)", len(msgs))
+	}
+}

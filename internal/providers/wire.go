@@ -82,6 +82,7 @@ type lowerOptions struct {
 // source of truth: when a per-model `thinking:` is declared, an explicit false
 // must NOT be overridden just because history happens to carry reasoning.
 func lowerMessages(msgs []types.Message, opts lowerOptions) []wireMessage {
+	msgs = dedupeToolResults(msgs)
 	if opts.CopilotMode {
 		msgs = mergeSystemMessages(msgs)
 	}
@@ -109,6 +110,30 @@ func lowerMessages(msgs []types.Message, opts lowerOptions) []wireMessage {
 	out := make([]wireMessage, len(msgs))
 	for i, m := range msgs {
 		out[i] = lowerMessage(m, opts)
+	}
+	return out
+}
+
+// dedupeToolResults drops a tool message whose tool_call_id was already
+// answered in the current assistant turn. A duplicate result is a persistence
+// artifact — a tool re-executed after a crash/resume appends its result at a
+// fresh index — and providers reject it on replay ("Messages with role 'tool'
+// must be a response to a preceding message with 'tool_calls'"). Dedup lives
+// at the wire boundary so it never disturbs the in-memory transcript or the
+// persister's index cursor, which must stay equal to len(messages).
+func dedupeToolResults(msgs []types.Message) []types.Message {
+	out := make([]types.Message, 0, len(msgs))
+	seen := make(map[string]struct{})
+	for _, m := range msgs {
+		if m.Role == "assistant" {
+			seen = make(map[string]struct{})
+		} else if m.Role == "tool" && m.ToolCallID != "" {
+			if _, dup := seen[m.ToolCallID]; dup {
+				continue
+			}
+			seen[m.ToolCallID] = struct{}{}
+		}
+		out = append(out, m)
 	}
 	return out
 }

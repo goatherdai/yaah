@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -198,6 +199,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 
 	var lastResult CallResult
 	var lastErr error
+	var lastClassified errorclassify.ClassifiedError
 	compactAttempts := 0
 	stripAttempts := 0
 	providerSwapped := false
@@ -316,6 +318,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		// errors (providers.APIError); string parsing is gone.
 		meta := errorclassify.ErrorMeta{
 			NumMessages: len(req.Messages),
+			Provider:    c.ProviderName,
 			Model:       req.Model,
 			// yaah-31j: a thinking-mode endpoint demanding replayed thinking
 			// blocks cannot consume history produced by the swapped-out
@@ -324,6 +327,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			ProviderSwapped: c.swappedFromPrimary,
 		}
 		classified := errorclassify.Classify(err, meta)
+		lastClassified = classified
 
 		// A repeated-token loop is deterministic, not a flake: the same model
 		// handed the same prompt runs the same loop, so an unchanged replay
@@ -520,12 +524,14 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 					continue
 				}
 			}
+			logTerminalFailure(classified, err)
 			if classified.Message != "" {
 				return attach(result), fmt.Errorf("%s: %w", classified.Message, err)
 			}
 			return attach(result), err
 
 		case classified.ShouldAbort:
+			logTerminalFailure(classified, err)
 			// Surface the actionable diagnosis: the classification explains
 			// WHAT to change, the provider error is the cause. Returning err
 			// alone discards the guidance entirely.
@@ -553,16 +559,43 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			}
 			stopHB()
 		} else if !classified.Retryable {
+			logTerminalFailure(classified, err)
 			if outputBudgetErr != nil {
 				return attach(result), recoveryFailure(classified.Message, outputBudgetErr, req.MaxTokens, err)
 			}
 			return attach(result), err
 		}
 	}
+	// Retries exhausted (or the loop exited): log the final classified
+	// failure so the raw provider body is never silently discarded.
+	if lastErr != nil {
+		logTerminalFailure(lastClassified, lastErr)
+	}
 	if outputBudgetErr != nil {
 		return attach(lastResult), recoveryFailure("", outputBudgetErr, req.MaxTokens, lastErr)
 	}
 	return attach(lastResult), lastErr
+}
+
+// logTerminalFailure records the raw provider error plus its classification at
+// the point the client gives up and returns the failure to the caller. The
+// classification carries the recovery action; the raw error carries the
+// provider's own message (e.g. deepseek's response body), which is exactly the
+// part that is otherwise lost when only the canned summary is surfaced.
+func logTerminalFailure(classified errorclassify.ClassifiedError, err error) {
+	if err == nil {
+		return
+	}
+	slog.Error("llm call failed",
+		"reason", classified.Reason.String(),
+		"classification", classified.Message,
+		"status", classified.Meta.StatusCode,
+		"provider", classified.Meta.Provider,
+		"model", classified.Meta.Model,
+		"messages", classified.Meta.NumMessages,
+		"provider_swapped", classified.Meta.ProviderSwapped,
+		"error", err,
+	)
 }
 
 // beat reports one liveness heartbeat through the injected Heartbeat, if any.

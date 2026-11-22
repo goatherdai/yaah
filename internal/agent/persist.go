@@ -64,6 +64,17 @@ func (p *SessionPersister) Persist(msg types.Message) {
 	if p.db == nil {
 		return
 	}
+	if msg.Role == "tool" && msg.ToolCallID != "" {
+		if exists, err := p.db.HasToolResult(p.sessionID, msg.ToolCallID); err == nil && exists {
+			// A tool result for a call this session already answered. The
+			// duplicate is a re-execution artifact; persisting it would make
+			// the transcript unreplayable (providers reject a second result
+			// for one tool call). Skip without advancing the cursor so the
+			// next message lands on this index and the transcript stays
+			// contiguous.
+			return
+		}
+	}
 	m := p.newMessage(msg, p.msgIdx)
 	// Title transition, mirroring the store's one-shot rule (user-role
 	// messages only, while the title column is empty). Fires here — during
