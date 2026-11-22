@@ -3,8 +3,10 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -111,5 +113,63 @@ func TestGlobNative_directoryPrefixedPatterns(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestGlobRipgrep_truncationFooterKeepsCount pins the ripgrep path's
+// truncation footer to the native walker's shape. Without it, a capped
+// ripgrep result drops "how many files matched", and consumers that read the
+// footer as their authoritative count have nothing to read.
+func TestGlobRipgrep_truncationFooterKeepsCount(t *testing.T) {
+	if !rgAvailable() {
+		t.Skip("rg not available")
+	}
+	tmp := t.TempDir()
+	// Enough short-named files that the joined list exceeds
+	// toolResultMaxBytes, so the cap (and its footer) is exercised for real
+	// rather than through a lowered threshold.
+	const want = 400
+	for i := 0; i < want; i++ {
+		name := fmt.Sprintf("f%03d.go", i)
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte("x"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s) error: %v", name, err)
+		}
+	}
+
+	gt := &GlobTool{}
+	ctx := context.Background()
+	ws := workspaceOf(gt.WS, gt.PV)
+	filter, err := newNestedWorktreeFilter(ctx, ws, tmp)
+	if err != nil {
+		t.Fatalf("newNestedWorktreeFilter() error: %v", err)
+	}
+	result, err := gt.globRipgrep(ctx, "*.go", tmp, filter)
+	if err != nil {
+		t.Fatalf("globRipgrep() error: %v", err)
+	}
+
+	// The listing really was capped: body plus footer can only be larger than
+	// the cap, and the cap keeps it near toolResultMaxBytes.
+	if len(result) <= toolResultMaxBytes {
+		t.Fatalf("expected the %d-file listing to exceed toolResultMaxBytes (%d), got %d bytes",
+			want, toolResultMaxBytes, len(result))
+	}
+	footer := fmt.Sprintf("...[truncated: %d files total]...", want)
+	if !strings.HasSuffix(result, footer) {
+		tail := result
+		if len(tail) > 96 {
+			tail = tail[len(tail)-96:]
+		}
+		t.Fatalf("expected footer %q at end of result, got tail %q", footer, tail)
+	}
+	if strings.Contains(result, truncationMarker) {
+		t.Errorf("bare %q marker should be replaced by the count footer", truncationMarker)
+	}
+	if !strings.Contains(result, "f000.go") {
+		t.Errorf("expected the head of the listing to survive the cap")
+	}
+	last := fmt.Sprintf("f%03d.go", want-1)
+	if strings.Contains(result, last) {
+		t.Errorf("expected the listing to be cut before %s", last)
 	}
 }

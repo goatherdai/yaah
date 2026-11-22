@@ -111,7 +111,15 @@ func (t *GlobTool) globRipgrep(ctx context.Context, pattern, path string, filter
 	sort.Strings(lines)
 
 	result = strings.Join(lines, "\n")
-	return truncateResult(result), nil
+	if len(result) > toolResultMaxBytes {
+		result = truncateResult(result)
+		// Keep the total count, exactly as the native walker does: the bare
+		// marker hides "how many files matched", which consumers read as
+		// their authoritative count.
+		result = strings.TrimSuffix(result, truncationMarker) +
+			fmt.Sprintf("\n...[truncated: %d files total]...", len(lines))
+	}
+	return result, nil
 }
 
 func (t *GlobTool) globNative(ctx context.Context, pattern, path string) (string, error) {
