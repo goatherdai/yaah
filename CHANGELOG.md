@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.201.0](https://github.com/goatherdai/yaah/compare/v0.200.3...v0.201.0) (2026-11-22)
+
+
+### Features
+
+* **tui:** run a workflow spec from :workflow run ([#350](https://github.com/goatherdai/yaah/issues/350)) ([e439eb2](https://github.com/goatherdai/yaah/commit/e439eb2d0ac5f3a9f15803e6dddbe8fdf08cbc2a))
+
 ## [0.200.3](https://github.com/goatherdai/yaah/compare/v0.200.2...v0.200.3) (2026-11-22)
 
 
