@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.202.0](https://github.com/goatherdai/yaah/compare/v0.201.0...v0.202.0) (2026-11-22)
+
+
+### Features
+
+* **supervision:** unify jail + settlement authority behind a digest-citable PermissionPlan ([#353](https://github.com/goatherdai/yaah/issues/353)) ([9494cf1](https://github.com/goatherdai/yaah/commit/9494cf1dd65c3e15c1cd380c01974b86511e1d5e))
+
 ## [0.201.0](https://github.com/goatherdai/yaah/compare/v0.200.3...v0.201.0) (2026-11-22)
 
 
