@@ -19,9 +19,13 @@ func write(t *testing.T, path, content string) {
 }
 
 func TestSearchDirsOrder(t *testing.T) {
-	t.Setenv("YAAH_HOME", "/home/y")
-	got := SearchDirs("/ws", "/extra1", "/extra2")
-	want := []string{"/extra1", "/extra2", "/ws/workflows", "/home/y/workflows"}
+	home := t.TempDir()
+	t.Setenv("YAAH_HOME", home)
+	cwd := t.TempDir()
+	extra1 := filepath.Join(t.TempDir(), "extra1")
+	extra2 := filepath.Join(t.TempDir(), "extra2")
+	got := SearchDirs(cwd, extra1, extra2)
+	want := []string{extra1, extra2, filepath.Join(cwd, "workflows"), filepath.Join(home, "workflows")}
 	if len(got) != len(want) {
 		t.Fatalf("SearchDirs = %v, want %v", got, want)
 	}
@@ -86,6 +90,7 @@ func TestResolve(t *testing.T) {
 	write(t, filepath.Join(home, "workflows", "bar.yaml"), "kind: Workflow\n")
 	write(t, filepath.Join(home, "workflows", "foo.yaml"), "kind: Workflow\n")
 
+	absRef := filepath.Join(t.TempDir(), "abs", "foo.yaml")
 	cases := []struct {
 		name string
 		ref  string
@@ -94,7 +99,7 @@ func TestResolve(t *testing.T) {
 		{"bare name workspace wins", "foo", filepath.Join(cwd, "workflows", "foo.yaml")},
 		{"bare name global", "bar", filepath.Join(home, "workflows", "bar.yaml")},
 		{"relative path with ext", "sub/foo.yaml", filepath.Join(cwd, "sub", "foo.yaml")},
-		{"absolute path", "/abs/foo.yaml", "/abs/foo.yaml"},
+		{"absolute path", absRef, absRef},
 		{"relative path with separator", "sub/foo", filepath.Join(cwd, "sub", "foo")},
 	}
 	for _, tc := range cases {

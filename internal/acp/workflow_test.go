@@ -3,6 +3,7 @@ package acp
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -64,7 +65,14 @@ func TestServer_handleWorkflowList(t *testing.T) {
 			}
 			return []WorkflowInfo{{Name: "a", Path: "/w/a.yaml"}}, nil
 		}
-		msg := Message{ID: json.RawMessage("1"), Params: json.RawMessage(`{"cwd":"/w"}`)}
+		// A platform-absolute cwd so cwdpath.Canonical accepts it on Windows
+		// (which requires a drive letter, not a leading slash).
+		cwd := filepath.Join(t.TempDir(), "w")
+		params, err := json.Marshal(map[string]string{"cwd": cwd})
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg := Message{ID: json.RawMessage("1"), Params: params}
 		var result json.RawMessage
 		s.handleWorkflowList(msg,
 			func(_ json.RawMessage, r any) { result, _ = json.Marshal(r) },
