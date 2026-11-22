@@ -324,6 +324,7 @@ func (r *Run) commit(ev Event, external bool) error {
 		r.seq++
 		r.events = append(r.events, describe(r.seq, ev))
 		r.recordTrace(ev)
+		r.emitProgress(ev)
 		return nil
 	}
 	r.seq++
@@ -333,6 +334,17 @@ func (r *Run) commit(ev Event, external bool) error {
 	// trace disagree with its log.
 	r.recordTrace(ev)
 
+	if err := r.fold(ev); err != nil {
+		return err
+	}
+	r.emitProgress(ev)
+	return nil
+}
+
+// fold applies one logged event's state transition. It exists apart from
+// commit so the progress seam fires after a successful fold, not before a
+// transition that is about to be rejected.
+func (r *Run) fold(ev Event) error {
 	switch e := ev.(type) {
 	case RunStartedEvent:
 		return r.onRunStarted(e)
@@ -387,6 +399,17 @@ func (r *Run) commit(ev Event, external bool) error {
 		return nil
 	}
 	return fmt.Errorf("workflow/exec: unhandled event %T", ev)
+}
+
+// emitProgress projects a committed event to the progress seam, if one is
+// configured. It fires for reported and derived events alike: a view wants the
+// full node lifecycle (queued, running, succeeded, failed, ...), and the
+// terminal node states are derived by the reducer rather than submitted, so
+// Apply-only delivery would never surface them.
+func (r *Run) emitProgress(ev Event) {
+	if r.cfg.Progress != nil {
+		r.cfg.Progress(projectProgress(ev))
+	}
 }
 
 func (r *Run) derive(ev Event) error { return r.commit(ev, false) }

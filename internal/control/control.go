@@ -66,6 +66,29 @@ type WorkflowRunReport struct {
 
 func (*WorkflowRunReport) marker() {}
 
+// WorkflowProgress carries one live node/run transition from a workflow
+// executing inside the session (workflow-in-session Scope B). Unlike
+// WorkflowRunReport, which reports once at completion, this fires as the run
+// advances so a surface can show per-node progress without waiting for the
+// final report.
+type WorkflowProgress struct {
+	// NodePath is the node this fact is about; empty for run-level facts
+	// (State "started" or "finished").
+	NodePath string
+	// State is one of the small vocabulary a view renders directly:
+	// "started" (run-level), "queued", "running", "succeeded", "failed",
+	// "skipped", "cancelled", or "finished" (run-level).
+	State string
+	// Attempt is the 1-based attempt ordinal when State is "running"; 0
+	// otherwise.
+	Attempt int
+	// Reason is the terminal fact's cause (failed/skipped/cancelled); empty
+	// otherwise.
+	Reason string
+}
+
+func (*WorkflowProgress) marker() {}
+
 // Error carries an error for display.
 type Error struct{ Err error }
 

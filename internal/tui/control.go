@@ -128,6 +128,26 @@ func (t *App) handleControlMsg(msg control.Msg) {
 		}
 		t.markDirty()
 
+	case *control.WorkflowProgress:
+		// Live per-node progress (workflow-in-session Scope B). In-flight
+		// transitions are ephemeral status — the node is still moving — while
+		// a run marker or a node's terminal outcome is a durable dim line the
+		// user can read after the run has advanced past it.
+		line := workflowProgressLine(m)
+		if m.State == "queued" || m.State == "running" {
+			t.SetEphemeral("workflow: " + line)
+			return
+		}
+		t.flushPendingTokens()
+		theme := t.Theme.Dim
+		if m.State == "failed" {
+			theme = t.Theme.Error
+		}
+		t.conversationLog = append(t.conversationLog, convItem{
+			text: fmt.Sprintf("[%s]workflow: %s[-]", theme, line),
+		})
+		t.markDirty()
+
 	case *control.Error:
 		errText := ""
 		if m.Err != nil {
@@ -141,6 +161,39 @@ func (t *App) handleControlMsg(msg control.Msg) {
 		})
 		t.markDirty()
 		t.showErrorDialog("Error", errText)
+	}
+}
+
+// workflowProgressLine renders one workflow progress fact as a compact,
+// tview-safe line. Node paths are escaped so a path cannot inject color tags.
+func workflowProgressLine(m *control.WorkflowProgress) string {
+	node := m.NodePath
+	if node == "" {
+		node = "run"
+	}
+	switch m.State {
+	case "started", "finished":
+		if m.Reason != "" {
+			return fmt.Sprintf("%s %s: %s", node, m.State, tview.Escape(m.Reason))
+		}
+		return fmt.Sprintf("%s %s", node, m.State)
+	case "queued", "succeeded", "skipped", "cancelled":
+		if m.Reason != "" {
+			return fmt.Sprintf("%s %s: %s", tview.Escape(node), m.State, tview.Escape(m.Reason))
+		}
+		return fmt.Sprintf("%s %s", tview.Escape(node), m.State)
+	case "running":
+		if m.Attempt > 1 {
+			return fmt.Sprintf("%s running (attempt %d)", tview.Escape(node), m.Attempt)
+		}
+		return fmt.Sprintf("%s running", tview.Escape(node))
+	case "failed":
+		if m.Reason != "" {
+			return fmt.Sprintf("%s failed: %s", tview.Escape(node), tview.Escape(m.Reason))
+		}
+		return fmt.Sprintf("%s failed", tview.Escape(node))
+	default:
+		return fmt.Sprintf("%s %s", tview.Escape(node), tview.Escape(m.State))
 	}
 }
 

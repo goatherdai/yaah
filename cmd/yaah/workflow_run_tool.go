@@ -8,6 +8,7 @@ import (
 
 	"github.com/goatherdai/yaah/internal/prompts"
 	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/workflow/exec"
 	"github.com/spf13/cobra"
 )
 
@@ -26,7 +27,17 @@ import (
 // its diagnostics rather than dispatched on. The report the tool returns is
 // the command's own textual report — the orchestrator reads the same status,
 // reason and outputs a human would.
-type WorkflowRunTool struct{}
+// WorkflowRunTool exposes `yaah workflow run` to the orchestrator as a tool
+// (workflow-in-session Scope B, piece A). It is a thin adapter over
+// runWorkflowRun: the run is synchronous, and the tool's result is the run
+// report the command would have printed.
+type WorkflowRunTool struct {
+	// progress, when non-nil, receives each committed external lifecycle
+	// event's projection as the run executes. installControlBridges wires it
+	// to the control surface for the TUI; it stays nil in a headless session,
+	// where there is no view to feed and the report at completion is enough.
+	progress func(exec.ProgressEvent)
+}
 
 func (t *WorkflowRunTool) Name() string { return "workflow_run" }
 
@@ -85,6 +96,7 @@ func (t *WorkflowRunTool) Execute(ctx context.Context, args string) (string, err
 	}
 	err := runWorkflowRun(c, p.Spec, workflowRunOptions{
 		workflowOptions: workflowOptions{strict: p.Strict, params: p.Params},
+		progress:        t.progress,
 	})
 	if err != nil && buf.Len() == 0 {
 		return "", err

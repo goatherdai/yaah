@@ -130,6 +130,47 @@ type Event interface {
 	target() string
 }
 
+// ProgressEvent is the live-progress projection of one committed external
+// event (workflow-in-session Scope B). It carries only what a view renders:
+// which node, what happened to it, and, for terminal facts, why. Run-level
+// facts (run_started, budget_exceeded, run_finished) carry an empty NodePath.
+//
+// It is deliberately narrower than Event: the scheduler's full vocabulary
+// includes settlement, fanout, loop, branch, aggregate, select, and gate
+// mechanics that a progress view does not render. projectProgress is the
+// single place that reduces an event to that view's vocabulary, so the
+// projection cannot drift from the events it is derived from.
+type ProgressEvent struct {
+	// Kind is the EventKind of the event this projection came from.
+	Kind EventKind
+	// NodePath is the node the fact is about; empty for run-level facts.
+	NodePath string
+	// Attempt is the 1-based attempt ordinal for dispatch_started; zero
+	// otherwise.
+	Attempt int
+	// Reason is the terminal fact's cause (node_failed, node_skipped,
+	// node_cancelled); empty otherwise.
+	Reason string
+}
+
+// projectProgress reduces one committed event to a ProgressEvent.
+func projectProgress(ev Event) ProgressEvent {
+	p := ProgressEvent{Kind: ev.Kind(), NodePath: ev.target()}
+	switch e := ev.(type) {
+	case DispatchStartedEvent:
+		if e.Attempt != nil {
+			p.Attempt = e.Attempt.Number
+		}
+	case NodeFailedEvent:
+		p.Reason = e.Reason
+	case NodeSkippedEvent:
+		p.Reason = e.Reason
+	case NodeCancelledEvent:
+		p.Reason = e.Reason
+	}
+	return p
+}
+
 // RunStartedEvent opens a run. The reducer takes the run clock here, so
 // elapsed time and the event log start from the same instant.
 type RunStartedEvent struct{ RunID string }
