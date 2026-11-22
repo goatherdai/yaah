@@ -38,6 +38,7 @@ const (
 	CmdModel
 	CmdAgent
 	CmdMode
+	CmdWorkflow
 )
 
 // Parse maps a colon command string (without the leading ":") to a Cmd.
@@ -75,6 +76,7 @@ var commandNames = []struct {
 	{"model", CmdModel},
 	{"agent", CmdAgent},
 	{"mode", CmdMode},
+	{"workflow", CmdWorkflow},
 }
 
 // splitName splits input at the first run of whitespace, so every separator
@@ -89,7 +91,7 @@ func splitName(input string) (name, arg string) {
 // takesArg reports whether cmd consumes the rest of the line.
 func takesArg(cmd Cmd) bool {
 	switch cmd {
-	case CmdSteer, CmdFollowUp, CmdSearch, CmdModel, CmdAgent, CmdMode:
+	case CmdSteer, CmdFollowUp, CmdSearch, CmdModel, CmdAgent, CmdMode, CmdWorkflow:
 		return true
 	default:
 		return false
@@ -129,7 +131,7 @@ func Name(cmd Cmd) string {
 // RequiresArg reports whether cmd is useless without an argument.
 func RequiresArg(cmd Cmd) bool {
 	switch cmd {
-	case CmdSteer, CmdFollowUp, CmdSearch:
+	case CmdSteer, CmdFollowUp, CmdSearch, CmdWorkflow:
 		return true
 	default:
 		return false
@@ -152,6 +154,8 @@ func Usage(cmd Cmd) string {
 		return ":agent [name]"
 	case CmdMode:
 		return ":mode [read-only|full]"
+	case CmdWorkflow:
+		return ":workflow run <spec.yaml|spec.json>"
 	default:
 		return ""
 	}
@@ -172,6 +176,7 @@ func DefaultEntries() []Entry {
 		{"compact", "Compact context window", CmdCompact},
 		{"stop", "Abort running agent", CmdStop},
 		{"steer", "Inject steering text (requires arg)", CmdSteer},
+		{"workflow", "Run a workflow spec file (requires arg)", CmdWorkflow},
 		{"followup", "Queue text as a follow-up message (requires arg)", CmdFollowUp},
 		{"model", "Switch model", CmdModel},
 		{"agent", "Pick the persona (switches this session)", CmdAgent},

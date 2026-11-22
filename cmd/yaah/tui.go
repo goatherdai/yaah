@@ -1,6 +1,7 @@
 package yaah
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -163,6 +164,29 @@ func runTUI() error {
 	}
 	app.OnCompact = func() {
 		go sess.Compact()
+	}
+	app.OnWorkflowRun = func(specPath string) {
+		// Read-only guard before we spend anything.
+		if st, err := os.Stat(specPath); err != nil || st.IsDir() {
+			sendCtrlMsg(controlCh, nil, &control.WorkflowRunReport{
+				Path:   specPath,
+				OK:     false,
+				Report: fmt.Sprintf("cannot read spec: %v", err),
+			}, tuiSendTimeout)
+			return
+		}
+		go func() { // do not block the UI; a run can take minutes
+			var buf bytes.Buffer
+			c := &cobra.Command{Use: "workflow run"}
+			c.SetOut(&buf) // capture the CLI's own report text
+			c.SetErr(&buf)
+			err := runWorkflowRun(c, specPath, workflowRunOptions{})
+			sendCtrlMsg(controlCh, nil, &control.WorkflowRunReport{
+				Path:   specPath,
+				OK:     err == nil,
+				Report: buf.String(),
+			}, tuiSendTimeout)
+		}()
 	}
 	app.OnClear = func() {}
 	app.OnSteer = func(text string) {

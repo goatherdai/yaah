@@ -54,6 +54,18 @@ func (m *CompactionSummary) Header() string {
 	return fmt.Sprintf("context compacted (%s): %d → %d tokens", m.Method, m.Before, m.After)
 }
 
+// WorkflowRunReport carries a completed :workflow run report so surfaces can
+// render it in the conversation stream. Render-only, like CompactionSummary:
+// the report already lives in the run record, so it must never be persisted
+// as a chat message.
+type WorkflowRunReport struct {
+	Path   string
+	OK     bool
+	Report string // rendered body (markdown)
+}
+
+func (*WorkflowRunReport) marker() {}
+
 // Error carries an error for display.
 type Error struct{ Err error }
 

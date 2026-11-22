@@ -84,6 +84,9 @@ type App struct {
 	OnFollowUp func(text string)
 	OnStop     func()
 
+	// OnWorkflowRun receives a spec file path the user typed at :workflow run.
+	OnWorkflowRun func(specPath string)
+
 	// ShowApprovalFn overrides the approval modal for testing.
 	// If nil (default), the tview-based approval.Show modal is used.
 	ShowApprovalFn func(name, args string, onAnswer func(bool))

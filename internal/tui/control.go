@@ -102,6 +102,33 @@ func (t *App) handleControlMsg(msg control.Msg) {
 		}
 		t.markDirty()
 
+	case *control.WorkflowRunReport:
+		// A durable conversation entry, like CompactionSummary: the run's
+		// report is worth reading in place. Render-only — the report lives
+		// in the run record, so it is never persisted as a chat message.
+		t.flushPendingTokens()
+		theme := t.Theme.Dim
+		if !m.OK {
+			theme = t.Theme.Error
+		}
+		status := "ok"
+		if !m.OK {
+			status = "failed"
+		}
+		t.conversationLog = append(t.conversationLog, convItem{
+			text: fmt.Sprintf("[%s]workflow %s: %s[-]", theme, m.Path, status),
+		})
+		if m.Report != "" {
+			// The markdown renderer emits its own color tags; wrapping
+			// this item in tview tags would render them literally.
+			t.conversationLog = append(t.conversationLog, convItem{
+				text:       m.Report,
+				isMarkdown: true,
+			})
+		}
+		t.setActivity(activity.Idle, "")
+		t.markDirty()
+
 	case *control.Error:
 		errText := ""
 		if m.Err != nil {
