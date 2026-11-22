@@ -102,3 +102,69 @@ func TestCacheControlOptedIn(t *testing.T) {
 		t.Error("OpenAI client with opt-in must send cache_control")
 	}
 }
+
+// TestResolveProviderAndName_FallbackNamesTheServingProvider pins yaah-1614:
+// when the configured provider is configured but unusable, resolution falls back
+// to the first usable entry — and the NAME must follow the instance, otherwise
+// every error label names an endpoint that never saw the request.
+func TestResolveProviderAndName_FallbackNamesTheServingProvider(t *testing.T) {
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{
+			// Remote base URL with an unsubstituted ${VAR}: no credential, so
+			// the entry cannot authenticate and is skipped.
+			"broken": {API: "openai", BaseURL: "https://broken.example.invalid", APIKey: "${YAAH_TEST_UNSET_KEY}"},
+			"zeta":   {API: "openai", BaseURL: "https://zeta.example.invalid", APIKey: "real-key"},
+		},
+	}
+	cfg.Agent.Default.Provider = "broken"
+
+	prov, name := resolveProviderAndName(cfg)
+	if prov == nil {
+		t.Fatal("expected a provider instance")
+	}
+	if _, stub := prov.(*providers.NoProviderStub); stub {
+		t.Fatal("a usable provider is configured; the stub must not be returned")
+	}
+	if name != "zeta" {
+		t.Errorf("name = %q, want %q — the returned name must be the provider that actually serves", name, "zeta")
+	}
+}
+
+// TestResolveProviderAndName_ConfiguredProviderKeepsItsName: no fallback means
+// the configured provider is both the instance and the label.
+func TestResolveProviderAndName_ConfiguredProviderKeepsItsName(t *testing.T) {
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{
+			"alpha": {API: "openai", BaseURL: "https://alpha.example.invalid", APIKey: "real-key"},
+			"zeta":  {API: "anthropic", BaseURL: "https://zeta.example.invalid", APIKey: "real-key"},
+		},
+	}
+	cfg.Agent.Default.Provider = "zeta"
+
+	prov, name := resolveProviderAndName(cfg)
+	if _, stub := prov.(*providers.NoProviderStub); stub {
+		t.Fatal("the configured provider is usable; the stub must not be returned")
+	}
+	if name != "zeta" {
+		t.Errorf("name = %q, want zeta", name)
+	}
+}
+
+// TestResolveProviderAndName_NoUsableProviderNamesTheConfiguredOne: nothing
+// served the request, so the label stays the entry the user has to fix.
+func TestResolveProviderAndName_NoUsableProviderNamesTheConfiguredOne(t *testing.T) {
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{
+			"broken": {API: "openai", BaseURL: "https://broken.example.invalid", APIKey: ""},
+		},
+	}
+	cfg.Agent.Default.Provider = "broken"
+
+	prov, name := resolveProviderAndName(cfg)
+	if _, stub := prov.(*providers.NoProviderStub); !stub {
+		t.Fatalf("provider = %T, want the NoProviderStub", prov)
+	}
+	if name != "broken" {
+		t.Errorf("name = %q, want broken — the stub names the entry that has to be fixed", name)
+	}
+}

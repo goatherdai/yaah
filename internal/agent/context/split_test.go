@@ -33,6 +33,81 @@ func TestSplitTailKeepsFinalExchangeInOversizedTurn(t *testing.T) {
 	}
 }
 
+// TrimToLastUserTurn cuts a replayed history back to the current user turn so a
+// provider swap onto a thinking-mode endpoint can serve it (yaah-1109).
+func TestTrimToLastUserTurn(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []types.Message
+		// want is the role:content sequence of the expected result; nil means
+		// "nothing to trim, the history comes back untouched with ok=false".
+		want []string
+	}{
+		{
+			name: "drops foreign turns and keeps the system prompt",
+			in: []types.Message{
+				msg("system", "sys"),
+				msg("user", "first"),
+				msg("assistant", "old answer"),
+				msg("tool", "old result"),
+				msg("user", "second"),
+				msg("assistant", "older answer"),
+				msg("user", "current"),
+			},
+			want: []string{"system:sys", "user:current"},
+		},
+		{
+			name: "keeps the tool loop of the current turn intact",
+			in: []types.Message{
+				msg("system", "sys"),
+				msg("user", "first"),
+				msg("assistant", "old answer"),
+				msg("user", "current"),
+				msg("assistant", "", types.ToolCall{ID: "c1", Function: types.ToolCallFn{Name: "read", Arguments: "{}"}}),
+				msg("tool", "result"),
+			},
+			want: []string{"system:sys", "user:current", "assistant:", "tool:result"},
+		},
+		{
+			name: "a single turn is left alone",
+			in:   []types.Message{msg("system", "sys"), msg("user", "current")},
+		},
+		{
+			name: "history without a user turn is left alone",
+			in:   []types.Message{msg("system", "sys"), msg("assistant", "old answer")},
+		},
+		{
+			name: "empty history is left alone",
+			in:   nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := TrimToLastUserTurn(tc.in)
+			if tc.want == nil {
+				if ok {
+					t.Fatalf("ok = true, want false — nothing to trim")
+				}
+				if len(got) != len(tc.in) {
+					t.Fatalf("len = %d, want the untouched %d", len(got), len(tc.in))
+				}
+				return
+			}
+			if !ok {
+				t.Fatal("ok = false, want true")
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("len(trimmed) = %d, want %d (%v)", len(got), len(tc.want), tc.want)
+			}
+			for i, want := range tc.want {
+				if got[i].Role+":"+got[i].Content != want {
+					t.Errorf("message %d = %q, want %q", i, got[i].Role+":"+got[i].Content, want)
+				}
+			}
+		})
+	}
+}
+
 func TestSplitTailNormalBudget(t *testing.T) {
 	messages := []types.Message{
 		msg("system", "sys"),

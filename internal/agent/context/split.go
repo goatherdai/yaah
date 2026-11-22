@@ -161,6 +161,42 @@ func ProtectReasoningTurns(messages []types.Message, keepStart, protectTurns int
 	return boundary
 }
 
+// TrimToLastUserTurn cuts the replayed history back to the current user turn:
+// the leading message (the session's system prompt) plus everything from the
+// final user message on. ok is false when nothing would be dropped — no user
+// turn to cut back to, or the history is already a single turn.
+//
+// It exists for provider swaps (yaah-1109). A fallback onto a thinking-mode
+// endpoint cannot consume assistant turns produced by the swapped-out
+// non-thinking primary: those turns carry no reasoning signature, so the
+// request omits the thinking blocks the endpoint demands and it answers 400
+// ("the thinking mode must be passed back"). Dropping the foreign turns is the
+// one recovery that needs no provider cooperation — a turn that is never sent
+// needs no reasoning replayed with it — and the current user message is all the
+// new provider needs to serve the turn.
+func TrimToLastUserTurn(messages []types.Message) ([]types.Message, bool) {
+	last := -1
+	for i := len(messages) - 1; i >= 1; i-- {
+		if messages[i].Role == "user" {
+			last = i
+			break
+		}
+	}
+	if last <= 0 {
+		return messages, false
+	}
+	// Index 0 is the system prompt (the loop prepends it) and is never
+	// dropped: without it the model loses its identity and tool contract, so
+	// the trim would cure the 400 by breaking the session.
+	trimmed := make([]types.Message, 0, len(messages)-last+1)
+	trimmed = append(trimmed, messages[0])
+	trimmed = append(trimmed, messages[last:]...)
+	if len(trimmed) == len(messages) {
+		return messages, false
+	}
+	return trimmed, true
+}
+
 // isReasoningAssistant reports whether m is an assistant message carrying
 // reasoning_content.
 func isReasoningAssistant(m types.Message) bool {

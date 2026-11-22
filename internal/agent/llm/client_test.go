@@ -290,3 +290,115 @@ func TestCall_thinkingRequiredAbortsWithoutStripping(t *testing.T) {
 		t.Errorf("provider called %d times, want 1 (non-retryable abort)", p.stripped)
 	}
 }
+
+// swapThinkingModeProvider is a thinking-mode endpoint: it rejects any request
+// replaying an assistant turn without a reasoning signature — the shape a
+// swapped-out non-thinking primary produces — and serves everything else.
+// messages records every payload it was handed, so a test can assert what was
+// actually replayed.
+type swapThinkingModeProvider struct {
+	messages [][]types.Message
+}
+
+func (p *swapThinkingModeProvider) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
+	p.messages = append(p.messages, req.Messages)
+	for _, m := range req.Messages {
+		if m.Role == "assistant" && m.ReasoningSignature == "" {
+			return nil, statusError{
+				msg:    "The `content[].thinking` in the thinking mode must be passed back to the API.",
+				status: 400,
+			}
+		}
+	}
+	return &types.ChatResponse{Choices: []types.Choice{{
+		Message:      types.Message{Role: "assistant", Content: "served", ReasoningSignature: "sig-1"},
+		FinishReason: "stop",
+	}}}, nil
+}
+
+// TestCall_swapTrimsForeignThinkinglessHistory pins yaah-1109: after a swap onto
+// a thinking-mode provider, the replayed history produced by the non-thinking
+// primary carries no reasoning signature, so the endpoint answers 400 demanding
+// the thinking blocks back. Neither stripping nor a config change applies — the
+// history itself is the problem — so the client trims it back to the current
+// user turn and replays, reporting the trimmed baseline for the loop to adopt.
+func TestCall_swapTrimsForeignThinkinglessHistory(t *testing.T) {
+	primary := &degeneratePrimaryProvider{}
+	fallback := &swapThinkingModeProvider{}
+	history := []types.Message{
+		types.SystemMsg("system prompt"),
+		types.UserMsg("first ask"),
+		{Role: "assistant", Content: "old answer"}, // no signature: the primary was not a thinking provider
+		types.UserMsg("second ask"),
+		{Role: "assistant", Content: "older answer"},
+		types.UserMsg("current ask"),
+	}
+	c := &Client{
+		Provider:         primary,
+		FallbackProvider: fallback,
+		Model:            "primary-model",
+		FallbackModel:    "thinking-model",
+		MaxRetries:       2,
+		RetryBackoff:     time.Millisecond,
+	}
+
+	res, err := c.Call(context.Background(), types.ChatRequest{Model: "primary-model", Messages: history})
+	if err != nil {
+		t.Fatalf("Call() error after the swap trim: %v", err)
+	}
+	if res.Message.Content != "served" {
+		t.Fatalf("content = %q, want %q", res.Message.Content, "served")
+	}
+	if !res.Compacted {
+		t.Error("the trimmed baseline must be reported as Compacted so the loop adopts it")
+	}
+	want := []types.Message{types.SystemMsg("system prompt"), types.UserMsg("current ask")}
+	if len(res.CompactedMessages) != len(want) {
+		t.Fatalf("CompactedMessages = %+v, want %+v", res.CompactedMessages, want)
+	}
+	for i := range want {
+		if res.CompactedMessages[i].Content != want[i].Content {
+			t.Errorf("CompactedMessages[%d].Content = %q, want %q", i, res.CompactedMessages[i].Content, want[i].Content)
+		}
+	}
+	if len(fallback.messages) != 2 {
+		t.Fatalf("fallback attempts = %d, want 2 (foreign replay, then trimmed replay)", len(fallback.messages))
+	}
+	if len(fallback.messages[0]) != len(history) {
+		t.Errorf("first fallback attempt replayed %d messages, want the full %d", len(fallback.messages[0]), len(history))
+	}
+	if len(fallback.messages[1]) != len(want) {
+		t.Errorf("replay carried %d messages, want the trimmed %d", len(fallback.messages[1]), len(want))
+	}
+}
+
+// TestCall_swapWithoutTrimmableHistoryKeepsTheSwapDiagnosis: the trim is only a
+// recovery when there is foreign history to drop. With nothing to trim (no
+// assistant turns) the swap cannot be rescued, and the error must still name the
+// swap instead of handing out the config advice.
+func TestCall_swapWithoutTrimmableHistoryKeepsTheSwapDiagnosis(t *testing.T) {
+	primary := &degeneratePrimaryProvider{}
+	fallback := &swapStateProvider{}
+	c := &Client{
+		Provider:         primary,
+		FallbackProvider: fallback,
+		Model:            "primary-model",
+		FallbackModel:    "thinking-model",
+		MaxRetries:       2,
+		RetryBackoff:     time.Millisecond,
+	}
+
+	_, err := c.Call(context.Background(), types.ChatRequest{
+		Model:    "primary-model",
+		Messages: []types.Message{types.SystemMsg("system prompt"), types.UserMsg("current ask")},
+	})
+	if err == nil {
+		t.Fatal("expected the thinking-replay error to surface")
+	}
+	if !strings.Contains(err.Error(), "swapped-out primary") {
+		t.Fatalf("error must attribute the failure to the mid-session swap, got: %s", err.Error())
+	}
+	if strings.Contains(err.Error(), "set `thinking: true`") {
+		t.Fatalf("config advice must not be given after a swap, got: %s", err.Error())
+	}
+}

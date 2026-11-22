@@ -417,17 +417,29 @@ func resolveProviderByName(pmap map[string]config.Provider, name string) agent.P
 	return nil
 }
 
-// resolveProvider picks the best available provider from the config.
-func resolveProvider(cfg *config.Config) agent.Provider {
-	providerName := resolveProviderName(cfg)
-	if p, ok := cfg.Providers[providerName]; ok {
-		if prov, ok2 := makeProvider(providerName, p); ok2 {
-			warnPromptCachingNotOptedIn(cfg, providerName, prov)
-			return prov
+// resolveProviderAndName picks the best available provider from the config and
+// returns the name it actually resolved to in lockstep with the instance
+// (yaah-1614).
+//
+// The instance and its name must come from one decision. Resolved separately,
+// an unusable configured provider left the instance on the first usable entry
+// (alphabetically) while resolveProviderName kept reporting the configured
+// one, so every error envelope labelled a provider that never served the
+// request — undiagnosable precisely when the configured provider is the broken
+// one.
+func resolveProviderAndName(cfg *config.Config) (agent.Provider, string) {
+	configured := resolveProviderName(cfg)
+	if p, ok := cfg.Providers[configured]; ok {
+		if prov, usable := makeProvider(configured, p); usable {
+			warnPromptCachingNotOptedIn(cfg, configured, prov)
+			return prov, configured
 		}
 	}
 
 	// Deterministic fallback: prefer the first provider by sorted name.
+	// Loud, not silent: the session is about to run on an endpoint the user
+	// did not ask for, so both names are logged — the configured one to fix,
+	// and the selected one that every later error label will carry.
 	names := make([]string, 0, len(cfg.Providers))
 	for name := range cfg.Providers {
 		names = append(names, name)
@@ -435,14 +447,20 @@ func resolveProvider(cfg *config.Config) agent.Provider {
 	sort.Strings(names)
 	for _, name := range names {
 		p := cfg.Providers[name]
-		if prov, ok := makeProvider(name, p); ok {
+		if prov, usable := makeProvider(name, p); usable {
+			slog.Warn("configured provider is not usable (missing or unresolved credential?); falling back to the first usable provider",
+				"configured", configured, "selected", name)
 			warnPromptCachingNotOptedIn(cfg, name, prov)
-			return prov
+			return prov, name
 		}
 	}
 
-	// Last resort: return a stub that explains the issue
-	return &providers.NoProviderStub{}
+	// Last resort: a stub that explains the issue. The configured name is the
+	// one returned with it: nothing served the request, and that entry is what
+	// the user has to fix.
+	slog.Warn("no configured provider is usable; the session will run on a stub that explains how to fix it",
+		"configured", configured)
+	return &providers.NoProviderStub{}, configured
 }
 
 // makeModelLister adapts makeProvider to the providers.ModelLister

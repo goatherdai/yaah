@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	agentctx "github.com/goatherdai/yaah/internal/agent/context"
 	"github.com/goatherdai/yaah/internal/agent/errorclassify"
 	"github.com/goatherdai/yaah/internal/types"
 )
@@ -182,6 +183,11 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 	compactAttempts := 0
 	stripAttempts := 0
 	providerSwapped := false
+	// swapTrimmed bounds the yaah-1109 history trim to one per Call: a
+	// provider still rejecting the trimmed payload cannot be served from
+	// this session at all, and the replay would only re-send the same
+	// request.
+	swapTrimmed := false
 	respFormatDropped := false
 	outputBudgetRaised := false
 	var outputBudgetErr error
@@ -350,6 +356,39 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			c.swappedFromPrimary = true
 			attempt--
 			continue
+		}
+
+		// yaah-1109: the swap moved the session onto a thinking-mode endpoint
+		// that cannot consume the swapped-out primary's history. Its assistant
+		// turns carry no reasoning signature, so the request omits the thinking
+		// blocks the endpoint demands and it answers 400 asking for them back.
+		// Neither remedy the classifier knows helps: stripping is the opposite
+		// of what it asks, and no config change applies once thinking is already
+		// on. The one recovery that needs no provider cooperation is to stop
+		// replaying the foreign turns — a turn that is never sent needs no
+		// reasoning replayed with it — so the request is cut back to the current
+		// user turn and replayed. Trimming beats dead-ending the session: a
+		// fallback that cannot be used is worth little, and the current user
+		// message is all the new provider needs. The trimmed baseline is reported
+		// through Compacted so the loop adopts it and later turns do not fail
+		// this way once per turn. When there is nothing to trim (no assistant
+		// turns, or no user turn to cut back to) the swap cannot be rescued and
+		// the abort below surfaces the swap diagnosis.
+		if classified.Reason == errorclassify.ReasonThinkingModeRequired && c.swappedFromPrimary && !swapTrimmed &&
+			hasUnsignedAssistantTurns(req.Messages) {
+			if trimmed, ok := agentctx.TrimToLastUserTurn(req.Messages); ok {
+				// Loud, in the same channel as the response_format drop: silently
+				// discarding turns changes what the model can see.
+				fmt.Fprintf(os.Stderr, "warning: provider swap replayed history from a non-thinking provider; dropped %d earlier message(s) so the fallback can serve this turn\n",
+					len(req.Messages)-len(trimmed))
+				req.Messages = trimmed
+				compacted = true
+				compactedMessages = req.Messages
+				swapTrimmed = true
+				// Recovery replay, not a retry: no MaxRetries slot and no backoff.
+				attempt--
+				continue
+			}
 		}
 
 		switch {
@@ -542,6 +581,20 @@ func isDegenerateStream(err error) bool {
 	}
 	return strings.Contains(msg, "streamed response produced no content") ||
 		strings.Contains(msg, "non-streaming response produced no content")
+}
+
+// hasUnsignedAssistantTurns reports whether the history carries assistant turns
+// without a reasoning signature — the shape a non-thinking provider produces and
+// a swapped-to thinking-mode endpoint refuses to replay (yaah-1109). Signed
+// history needs no trim: the swap is not what the 400 is about, and the
+// classifier's config advice applies.
+func hasUnsignedAssistantTurns(messages []types.Message) bool {
+	for _, m := range messages {
+		if m.Role == "assistant" && m.ReasoningSignature == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func stripReasoningContent(messages []types.Message) []types.Message {
