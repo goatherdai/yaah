@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/goatherdai/yaah/internal/agent/supervision"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -20,9 +21,9 @@ import (
 // Deny-first is the contract: the check returns a reason exactly when
 // the call must not dispatch. The structured tools (write, edit,
 // delete) are the approved path for changes — their review is the
-// merge gate's job (Phase C), not this net; the shell is denied
-// outright because a shell can execute anything a pattern matcher
-// cannot see.
+// merge gate's job (Phase C), not this net; a shell call is denied
+// unless the dispatching role's allow_commands admits its command
+// (empty allowlist = deny every shell call, the historical default).
 type SupervisorGuardMiddleware struct {
 	// check denies a call by returning a non-empty reason. Nil means
 	// the guard is disabled and every call passes.
@@ -32,8 +33,13 @@ type SupervisorGuardMiddleware struct {
 	ownerID string
 }
 
-func NewSupervisorGuardMiddleware(check func(ownerID, toolName, argsJSON string) string, ownerID string) *SupervisorGuardMiddleware {
-	return &SupervisorGuardMiddleware{check: check, ownerID: ownerID}
+// NewSupervisorGuardMiddleware builds the guard for one sub-agent loop.
+// allow is the dispatching role's resolved shell-command allowlist; nil
+// inherits the global default the check already carries, and an
+// explicitly empty list denies every shell call (see
+// supervision.WithShellAllowlist).
+func NewSupervisorGuardMiddleware(check func(ownerID, toolName, argsJSON string) string, ownerID string, allow []string) *SupervisorGuardMiddleware {
+	return &SupervisorGuardMiddleware{check: supervision.WithShellAllowlist(check, allow), ownerID: ownerID}
 }
 
 func (m *SupervisorGuardMiddleware) Name() string { return "supervisor_guard" }

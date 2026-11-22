@@ -853,3 +853,112 @@ func TestDestructiveFileRule_WriteClassification(t *testing.T) {
 		})
 	}
 }
+
+// newGuardServiceAllow assembles the guard-enabled service of
+// newGuardService with a global shell-command allowlist, so a test can
+// pin what the allowlist admits and what it still denies.
+func newGuardServiceAllow(t *testing.T, allow []string) func(ownerID, toolName, argsJSON string) string {
+	t.Helper()
+	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	bus := kerneltrace.NewEffectBus(64)
+	t.Cleanup(bus.Close)
+	store.WithBus(bus)
+
+	svc := NewService(goatherd.NewScopeManager(store), bus, NewRegistry(),
+		AdvisoryRules{ShellGuardAllowCommands: allow}, true, false, "scope:sess-root")
+	t.Cleanup(svc.Close)
+	return svc.GuardCheck()
+}
+
+// TestGuardCheck_CommandAllowlist pins the allowlist escape hatch on the
+// blocking guard: a command matching a pattern dispatches, everything
+// else is denied — the guard no longer denies a shell call outright, but
+// only what its allowlist cannot name. The list defaults to empty, so
+// TestGuardCheck_DeniesShellBeforeDispatch still pins deny-all.
+func TestGuardCheck_CommandAllowlist(t *testing.T) {
+	check := newGuardServiceAllow(t, []string{"git status*", "go test*"})
+	if check == nil {
+		t.Fatal("GuardCheck must be non-nil when the guard is enabled")
+	}
+
+	for _, tc := range []struct {
+		name string
+		tool string
+		args string
+		deny bool
+	}{
+		{name: "allowlisted git status", tool: "bash", args: `{"command":"git status -s"}`, deny: false},
+		{name: "allowlisted go test", tool: "bash", args: `{"command":"go test ./..."}`, deny: false},
+		// The glob is anchored in full: a command that merely contains an
+		// allowlisted prefix is not admitted.
+		{name: "anchored match", tool: "bash", args: `{"command":"echo git status"}`, deny: true},
+		{name: "outside the allowlist", tool: "bash", args: `{"command":"rm -rf /tmp/probe"}`, deny: true},
+		// Fail closed: no command, no admission.
+		{name: "empty command", tool: "bash", args: `{}`, deny: true},
+		{name: "powershell is a separate tool", tool: "powershell", args: `{"command":"Get-ChildItem"}`, deny: true},
+		{name: "allowlisted background_process start", tool: "background_process", args: `{"action":"start","command":"git status"}`, deny: false},
+		// A command is the hazard: the read-only actions carry none.
+		{name: "background_process status", tool: "background_process", args: `{"action":"status","id":"p1"}`, deny: false},
+		{name: "structured tool", tool: "write", args: `{"path":"/workspace/file","content":"x"}`, deny: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reason := check("sub-worker", tc.tool, tc.args)
+			if tc.deny && reason == "" {
+				t.Errorf("%s %s must be denied", tc.tool, tc.args)
+			}
+			if !tc.deny && reason != "" {
+				t.Errorf("%s %s must pass, got %q", tc.tool, tc.args, reason)
+			}
+		})
+	}
+}
+
+// TestWithShellAllowlist pins the per-role narrowing the runner applies
+// at dispatch time: a role's own list replaces the global verdict, a nil
+// list inherits it, and an explicit empty list is deny-all — never
+// "inherit" (the two must not be confused, or a role meaning to lock the
+// shell down would silently keep the global commands).
+func TestWithShellAllowlist(t *testing.T) {
+	global := func(ownerID, toolName, argsJSON string) string { return "global deny" }
+
+	t.Run("nil inherits the global check", func(t *testing.T) {
+		check := WithShellAllowlist(global, nil)
+		if got := check("o", "bash", `{"command":"git status"}`); got != "global deny" {
+			t.Errorf("nil allowlist must leave the global verdict, got %q", got)
+		}
+	})
+
+	t.Run("a role list replaces the global verdict", func(t *testing.T) {
+		check := WithShellAllowlist(global, []string{"git status*"})
+		if got := check("o", "bash", `{"command":"git status -s"}`); got != "" {
+			t.Errorf("allowlisted command must pass, got %q", got)
+		}
+		if got := check("o", "bash", `{"command":"rm -rf /tmp/x"}`); got == "" {
+			t.Error("a command outside the role allowlist must be denied")
+		}
+		if got := check("o", "read", `{"path":"/x"}`); got != "global deny" {
+			t.Errorf("non-shell tools stay the global check's business, got %q", got)
+		}
+	})
+
+	t.Run("an explicit empty list is deny-all", func(t *testing.T) {
+		check := WithShellAllowlist(global, []string{})
+		if got := check("o", "bash", `{"command":"git status"}`); got == "" {
+			t.Error("an empty role allowlist must deny every shell call")
+		}
+		if got := check("o", "bash", `{}`); got == "" {
+			t.Error("a shell call with no command must be denied")
+		}
+	})
+
+	t.Run("background_process reads stay the global check's business", func(t *testing.T) {
+		check := WithShellAllowlist(func(ownerID, toolName, argsJSON string) string { return "" }, []string{"git status*"})
+		if got := check("o", "background_process", `{"action":"status","id":"p1"}`); got != "" {
+			t.Errorf("status carries no command and must pass, got %q", got)
+		}
+	})
+}

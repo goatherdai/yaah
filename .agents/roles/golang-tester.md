@@ -25,6 +25,23 @@ tools:
   - calculate
   - staticcheck
   - go_mod
+allow_commands:
+  - "git status*"
+  - "git diff*"
+  - "git log*"
+  - "git show*"
+  - "ls*"
+  - "find*"
+  - "cat*"
+  - "grep*"
+  - "wc*"
+  - "go test*"
+  - "go vet*"
+  - "go build*"
+  - "gofmt -l*"
+  - "go list*"
+  - "go env*"
+  - "go version"
 max_turns: 8
 min_turns: 4
 timeout: 600

@@ -1150,12 +1150,13 @@ func buildGoatherdInfra(st *loopInfraStage, cfg *config.Config, ws *workspaceSta
 			// only, since tracing is already the opt-in.
 			supervisorCfg := cfg.Agent.Default.Supervisor
 			rules := supervision.AdvisoryRules{
-				DestructiveTool:      supervisorCfg.DestructiveRuleEnabled(),
-				HighErrorRate:        supervisorCfg.HighErrorRateEnabled(),
-				ErrorRateThreshold:   supervisorCfg.ErrorRateThreshold(),
-				ErrorRateWindow:      supervisorCfg.ErrorRateWindow(),
-				StuckDetection:       supervisorCfg.StuckDetectionEnabled(),
-				StuckRepeatThreshold: supervisorCfg.StuckRepeatThreshold(),
+				DestructiveTool:         supervisorCfg.DestructiveRuleEnabled(),
+				HighErrorRate:           supervisorCfg.HighErrorRateEnabled(),
+				ErrorRateThreshold:      supervisorCfg.ErrorRateThreshold(),
+				ErrorRateWindow:         supervisorCfg.ErrorRateWindow(),
+				StuckDetection:          supervisorCfg.StuckDetectionEnabled(),
+				StuckRepeatThreshold:    supervisorCfg.StuckRepeatThreshold(),
+				ShellGuardAllowCommands: supervisorCfg.DestructiveGuardAllow(),
 			}
 			// The blocking shell guard (adoption plan B2) rides the
 			// same service: the engine gate covers it, and its check

@@ -22,8 +22,8 @@ func TestGlobMatch(t *testing.T) {
 		{`docs\x.md`, `docs\x.md`, true}, // backslash path normalized both sides
 	}
 	for _, tc := range cases {
-		if got := globMatch(tc.pattern, tc.value); got != tc.want {
-			t.Errorf("globMatch(%q, %q) = %v, want %v", tc.pattern, tc.value, got, tc.want)
+		if got := GlobMatch(tc.pattern, tc.value); got != tc.want {
+			t.Errorf("GlobMatch(%q, %q) = %v, want %v", tc.pattern, tc.value, got, tc.want)
 		}
 	}
 }

@@ -105,6 +105,15 @@ type Frontmatter struct {
 	// exactly as before.
 	Permissions permissions.Rules `yaml:"permissions,omitempty"`
 
+	// AllowCommands is the role's shell-command allowlist for the
+	// blocking sub-agent guard: patterns matched in full against the raw
+	// command line, `*`/`?` globs (`git status*` admits `git status -s`).
+	// Nil inherits the global default
+	// (agents.default.supervisor.rules.destructive_guard.allow_commands);
+	// an explicit empty list denies every shell call. The key keeps
+	// omitempty so files without it marshal exactly as before.
+	AllowCommands []string `yaml:"allow_commands,omitempty"`
+
 	// Headless declares what a headless run does with this role's `ask`
 	// permission rules. A sub-agent dispatch installs no approval
 	// middleware — nobody is attached to the run — so an `ask` rule is

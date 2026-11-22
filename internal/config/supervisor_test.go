@@ -293,3 +293,45 @@ agents:
 		t.Error("explicit destructive_guard: false must disable")
 	}
 }
+
+// TestSupervisorDestructiveGuardAllowCommands pins the global default
+// shell-command allowlist at the config surface: absent means nil — the
+// guard's deny-all — and a configured list parses verbatim so the wiring
+// can hand it to the rule. The list is a separate axis from the guard's
+// own switch; setting one must not disturb the other.
+func TestSupervisorDestructiveGuardAllowCommands(t *testing.T) {
+	writeConfig(t, `
+agents:
+  default:
+`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Agent.Default.Supervisor.DestructiveGuardAllow(); got != nil {
+		t.Errorf("DestructiveGuardAllow() = %v, want nil (deny-all) when unconfigured", got)
+	}
+
+	writeConfig(t, `
+agents:
+  default:
+    supervisor:
+      rules:
+        destructive_guard:
+          enabled: true
+          allow_commands:
+            - "git status*"
+            - "go test*"
+`)
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := cfg.Agent.Default.Supervisor.DestructiveGuardAllow()
+	if len(got) != 2 || got[0] != "git status*" || got[1] != "go test*" {
+		t.Errorf("DestructiveGuardAllow() = %v, want [git status* go test*]", got)
+	}
+	if !cfg.Agent.Default.Supervisor.DestructiveGuardEnabled() {
+		t.Error("allow_commands must not disturb the guard's own switch")
+	}
+}

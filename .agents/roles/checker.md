@@ -16,6 +16,14 @@ tools:
     - bash
     - go_test
     - staticcheck
+allow_commands:
+    - "gofmt -l*"
+    - "go test*"
+    - "go vet*"
+    - "go build*"
+    - "go list*"
+    - "go env*"
+    - "go version"
 max_turns: 3
 timeout: 120
 max_iterations: 0

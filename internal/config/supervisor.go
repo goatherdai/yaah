@@ -46,12 +46,13 @@ type SupervisorRulesConfig struct {
 	// inject-only; the blocking guard is B2). Nil = enabled.
 	DestructiveTool *SupervisorRuleSwitch `yaml:"destructive_tool"`
 
-	// DestructiveGuard denies sub-agent shell calls before execution
-	// (adoption plan B2, decision D3: default-deny for the shell — a
-	// shell can execute anything a pattern matcher cannot see). The
-	// structured tools are the approved path for changes; their review
-	// is the merge gate's job (Phase C), not this net. Nil = enabled.
-	DestructiveGuard *SupervisorRuleSwitch `yaml:"destructive_guard"`
+	// DestructiveGuard denies a sub-agent shell call that its allowlist
+	// does not admit, before execution (adoption plan B2, decision D3:
+	// default-deny for the shell — a shell can execute anything a pattern
+	// matcher cannot see). The structured tools are the approved path for
+	// changes; their review is the merge gate's job (Phase C), not this
+	// net. Nil = enabled, with an empty allowlist (deny every shell call).
+	DestructiveGuard *SupervisorShellGuardConfig `yaml:"destructive_guard"`
 
 	// HighErrorRate injects guidance when a scope's recent tool error
 	// rate crosses the threshold. Nil = enabled with defaults.
@@ -67,6 +68,22 @@ type SupervisorRulesConfig struct {
 // switch.
 type SupervisorRuleSwitch struct {
 	Enabled *bool `yaml:"enabled"`
+}
+
+// SupervisorShellGuardConfig carries the blocking shell guard's switch
+// and its global command allowlist.
+type SupervisorShellGuardConfig struct {
+	Enabled *bool `yaml:"enabled"`
+
+	// AllowCommands is the global default allowlist: the shell commands a
+	// sub-agent may run, as patterns matched in full against the raw
+	// command string (`*` and `?` globs, `*` also crossing arguments —
+	// `git status*` admits `git status -s`). Empty (the default) admits
+	// nothing, which is the guard's default-deny: a shell can execute
+	// anything a pattern matcher cannot see. A role's own allow list —
+	// the config role entry's allow_commands, else the role file's —
+	// replaces this list for that role rather than adding to it.
+	AllowCommands []string `yaml:"allow_commands"`
 }
 
 // SupervisorHighErrorRateConfig carries the error-rate rule's switch
@@ -102,6 +119,18 @@ func (s SupervisorConfig) DestructiveRuleEnabled() bool {
 // (adoption plan B2), defaulting to enabled when unconfigured.
 func (s SupervisorConfig) DestructiveGuardEnabled() bool {
 	return s.Rules.DestructiveGuard == nil || s.Rules.DestructiveGuard.Enabled == nil || *s.Rules.DestructiveGuard.Enabled
+}
+
+// DestructiveGuardAllow returns the global default shell-command
+// allowlist for the blocking guard (supervisor.rules.destructive_guard.
+// allow_commands). Nil when unconfigured — the guard then admits no
+// shell call at all. A dispatching role's own allowlist replaces this
+// list (see agents.subagent.roles.<role>.allow_commands).
+func (s SupervisorConfig) DestructiveGuardAllow() []string {
+	if s.Rules.DestructiveGuard == nil {
+		return nil
+	}
+	return s.Rules.DestructiveGuard.AllowCommands
 }
 
 // HighErrorRateEnabled reports the error-rate rule's switch, defaulting

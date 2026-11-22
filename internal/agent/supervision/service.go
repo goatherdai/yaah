@@ -24,6 +24,7 @@ import (
 	"github.com/goatherdai/goatherd-runtime"
 	supervisor "github.com/goatherdai/goatherd-runtime/supervisor"
 
+	"github.com/goatherdai/yaah/internal/permissions"
 	"github.com/goatherdai/yaah/internal/supervisionapi"
 	"github.com/goatherdai/yaah/internal/types"
 )
@@ -50,6 +51,13 @@ type AdvisoryRules struct {
 
 	// StuckRepeatThreshold carries the rule's tuning; zero means 3.
 	StuckRepeatThreshold int
+
+	// ShellGuardAllowCommands is the global default allowlist for the
+	// blocking shell guard (B2): shell commands that may dispatch, as
+	// patterns matched in full against the raw command. Empty is
+	// deny-all — the guard's historical default-deny for the shell.
+	// A dispatching role's own allowlist replaces this list.
+	ShellGuardAllowCommands []string
 }
 
 // Any reports whether at least one advisory rule is on — the wiring's
@@ -122,12 +130,9 @@ func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 			"tool": toolName,
 			"args": json.RawMessage(argsJSON),
 		}
-		if toolName == "bash" || toolName == "powershell" || toolName == "background_process" {
-			var args struct {
-				Command string `json:"command"`
-			}
-			if json.Unmarshal([]byte(argsJSON), &args) == nil && args.Command != "" {
-				payload["cmd"] = args.Command
+		if shellGuardTool(toolName) {
+			if cmd := toolCommand(argsJSON); cmd != "" {
+				payload["cmd"] = cmd
 			}
 		}
 		iv := s.guard.CheckCall(kerneltrace.EffectEvent{
@@ -261,7 +266,12 @@ func destructiveMatch(kernelMatch func(kerneltrace.EffectEvent) bool) func(kerne
 // cannot see" hazard, in a second door. Its read-only actions
 // (status, output) and stop pass: a command is the hazard, and only
 // the start action carries one.
-func shellGuardRule() supervisor.SupervisionRule {
+//
+// allow is the guard's deny-all escape hatch: a command matching one of
+// these globs dispatches, everything else is denied. Empty is the
+// historical default-deny — the rule never inspects the command it
+// cannot admit.
+func shellGuardRule(allow []string) supervisor.SupervisionRule {
 	guard := supervisor.DestructiveToolGuard()
 	return supervisor.SupervisionRule{
 		Name: "destructive_shell_guard",
@@ -271,14 +281,102 @@ func shellGuardRule() supervisor.SupervisionRule {
 			}
 			switch e.KindLabel {
 			case "bash", "powershell":
-				return true
+				// A shell call with no command is unclassifiable —
+				// it cannot match an allowlist, so it is denied.
+				cmd, _ := e.Payload["cmd"].(string)
+				return !commandAllowed(allow, cmd)
 			case "background_process":
 				cmd, _ := e.Payload["cmd"].(string)
-				return cmd != ""
+				if cmd == "" {
+					// Read-only actions carry no command: nothing to admit.
+					return false
+				}
+				return !commandAllowed(allow, cmd)
 			}
 			return false
 		},
 		Action: guard.Action,
+	}
+}
+
+// shellGuardTool reports whether the shell guard inspects this tool's
+// command: both shells, plus background_process's command-running action
+// (the same set GuardCheck stamps a "cmd" onto).
+func shellGuardTool(toolName string) bool {
+	switch toolName {
+	case "bash", "powershell", "background_process":
+		return true
+	}
+	return false
+}
+
+// toolCommand extracts the shell command a call carries under
+// "command". Empty when it carries none — an unparseable payload, or
+// background_process's read-only actions.
+func toolCommand(argsJSON string) string {
+	var args struct {
+		Command string `json:"command"`
+	}
+	if json.Unmarshal([]byte(argsJSON), &args) != nil {
+		return ""
+	}
+	return args.Command
+}
+
+// commandAllowed reports whether the shell guard's allowlist admits this
+// command. Patterns are the permissions ruleset's own globs, matched in
+// full against the raw command string (permissions.GlobMatch):
+// `git status*` admits `git status -s` and refuses `echo git status`.
+//
+// Fail closed on both ends: an empty command matches nothing even
+// against a "*" pattern (an absent command is not a command), and an
+// empty allowlist admits nothing — the guard's default-deny.
+func commandAllowed(allow []string, command string) bool {
+	if command == "" {
+		return false
+	}
+	for _, pattern := range allow {
+		if permissions.GlobMatch(pattern, command) {
+			return true
+		}
+	}
+	return false
+}
+
+// WithShellAllowlist narrows a guard check to one role's shell-command
+// allowlist. A sub-agent loop's owner ID is the trace session, not the
+// role name, so the guard cannot resolve a role's allowlist when it
+// denies — the dispatching runner resolves it (config role entry >
+// role file > global default) and wraps the check here, alongside the
+// DestructiveGuard it already passes into the loop.
+//
+// A nil allowlist inherits: the check is returned unchanged and the
+// global default it was built with stays the authority. An explicitly
+// empty list is deny-all, which is the pass-through it reads as — every
+// shell call is refused with a reason naming the role's allowlist.
+// Non-shell tools and background_process's read-only actions are the
+// global check's business either way.
+func WithShellAllowlist(check func(ownerID, toolName, argsJSON string) string, allow []string) func(ownerID, toolName, argsJSON string) string {
+	if check == nil || allow == nil {
+		return check
+	}
+	return func(ownerID, toolName, argsJSON string) string {
+		if !shellGuardTool(toolName) {
+			return check(ownerID, toolName, argsJSON)
+		}
+		cmd := toolCommand(argsJSON)
+		if cmd == "" {
+			if toolName == "background_process" {
+				// status/output/stop carry no command — the same
+				// pass the global rule gives them.
+				return check(ownerID, toolName, argsJSON)
+			}
+			return "shell call carries no command to check against the role's allowlist"
+		}
+		if commandAllowed(allow, cmd) {
+			return ""
+		}
+		return fmt.Sprintf("command %q is not in this role's allow_commands allowlist", cmd)
 	}
 }
 
@@ -332,7 +430,7 @@ func NewService(mgr *goatherd.ScopeManager, bus *kerneltrace.EffectBus, runs *Re
 		// intervention the advisory drain would have to drop. Its
 		// CheckCall is the whole surface.
 		guard = supervisor.NewSupervisor(mgr, nil)
-		guard.AddRule(shellGuardRule())
+		guard.AddRule(shellGuardRule(rules.ShellGuardAllowCommands))
 	}
 	svc.guard = guard
 	return svc

@@ -23,6 +23,11 @@ tools:
     - read
     - json_query
     - ls
+allow_commands:
+    - "find*"
+    - "wc*"
+    - "grep*"
+    - "ls*"
 max_turns: 3
 timeout: 120
 max_iterations: 0

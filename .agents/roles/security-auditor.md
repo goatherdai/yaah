@@ -21,10 +21,25 @@ tools:
   - json_query
   - git
   - diff
-max_iterations: 30
+allow_commands:
+  - "git status*"
+  - "git diff*"
+  - "git log*"
+  - "git show*"
+  - "ls*"
+  - "find*"
+  - "cat*"
+  - "grep*"
+  - "wc*"
+  - "go vet*"
+  - "gofmt -l*"
+  - "gitleaks*"
+  - "semgrep*"
+
+max_iterations: 60
 max_turns: 20
 min_turns: 12
-timeout: 180
+timeout: 300
 ---
 
 You are a SECURITY AUDITOR sub-agent on yaah's team. Scan code for

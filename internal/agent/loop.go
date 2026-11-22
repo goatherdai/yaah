@@ -197,8 +197,11 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 		TraceStore:      l.Config.TraceStore,
 		RetainedContext: l.Config.RetainedContext,
 		// The blocking pre-dispatch guard (adoption plan B2) rides the
-		// sub-agent pipeline; the orchestrator pipeline ignores it.
+		// sub-agent pipeline; the orchestrator pipeline ignores it. The
+		// role's resolved shell allowlist rides with it so the guard
+		// narrows to this dispatch's role rather than the global default.
 		DestructiveGuard: l.Config.DestructiveGuard,
+		ShellGuardAllow:  l.Config.ShellGuardAllow,
 	}
 }
 
