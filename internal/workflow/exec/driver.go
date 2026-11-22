@@ -36,9 +36,11 @@ func (r *Run) Execute(ctx context.Context) (Result, error) {
 }
 
 // Advance performs one scheduler cycle: sample the budgets, start what the
-// ready queue and the concurrency cap allow, then commit the oldest
-// outstanding attempt's completion. It reports whether the cycle did anything;
-// a cycle that does nothing means the run is finished.
+// ready queue and the concurrency cap allow, then commit the oldest outstanding
+// attempt's completion — sampling the outstanding deadlines in that commit loop,
+// so the cycle also ends the attempts whose nodes ran out of time. It reports
+// whether the cycle did anything; a cycle that does nothing means the run is
+// finished.
 //
 // The driver never mutates lifecycle state. It reads the reducer, calls the
 // door, and submits the resulting event — which is why the same sequence comes
@@ -270,11 +272,20 @@ func (r *Run) commitHead(ctx context.Context) (bool, error) {
 		if err := ctx.Err(); err != nil {
 			return true, r.stop(RunCancelled, "context ended: "+err.Error())
 		}
-		if err := r.rt.Block(ctx); err != nil {
+		if a, timeout, ok := r.timedOut(); ok {
+			return true, r.timeoutAttempt(a, timeout)
+		}
+		if err := r.rt.Block(ctx, r.nextDeadline()); err != nil {
 			if cerr := ctx.Err(); cerr != nil {
 				return true, r.stop(RunCancelled, "context ended: "+cerr.Error())
 			}
 			return true, r.abandonHead(head, fmt.Sprintf("Runtime.Block: %v", err))
+		}
+		// A completion and an elapsed deadline both wake Block with nil; the
+		// clock decides which. Re-sample here so a deadline that elapsed during
+		// the wait is enforced in this cycle, not a later one.
+		if a, timeout, ok := r.timedOut(); ok {
+			return true, r.timeoutAttempt(a, timeout)
 		}
 		if r.anyCompleted() {
 			continue
@@ -424,15 +435,112 @@ func (r *Run) breach() (string, string, bool) {
 }
 
 // deadline converts the wall-clock ceiling into the instant the lane should
-// stop at, for the adapter to enforce in flight. The scheduler has no timers,
-// so it samples the clock at event boundaries (breach) and hands the deadline
-// to the only component that can act on it mid-dispatch.
+// stop at, for the adapter to enforce in flight. The scheduler has no timers, so
+// it samples the clock at event boundaries (breach, timedOut) and hands the
+// deadline to the component that can act on it mid-dispatch.
 func (r *Run) deadline() time.Time {
 	l := r.cfg.Limits
 	if l.MaxWallClock <= 0 || r.startedAt.IsZero() {
 		return time.Time{}
 	}
 	return r.startedAt.Add(l.MaxWallClock)
+}
+
+// timedOut reports the first outstanding attempt whose node's declared
+// timeout_seconds has elapsed, in dispatch order, and the bound it breached.
+//
+// It is the per-node half of the clock discipline `breach` documents: the
+// scheduler arms no timers, so a deadline is only ever SAMPLED, here in the
+// commit loop — before the run waits on the door, and only once the head's own
+// completion has been ruled out. That order is the rule: an envelope the door has
+// already reported is the fact, and the deadline decides only what the door has
+// not answered. A stalled head is therefore ended at the first boundary that
+// reads the clock, and every door wake re-samples it.
+//
+// An attempt whose node declared no timeout has no deadline and never appears
+// here, and backoff — honored before Start — is not part of the window, because
+// the window starts at the attempt's own start. A retry therefore gets a fresh
+// window: nothing carries over from the attempt that timed out.
+//
+// Dispatch order decides when two attempts are past their deadlines at once, so
+// one graph yields one sequence: they time out in the order they started. The
+// per-node bound is independent of the run's wall clock — a node timeout stops
+// one attempt and leaves the node its retries, where a wall-clock breach stops
+// the whole run.
+func (r *Run) timedOut() (*Attempt, time.Duration, bool) {
+	now := r.rt.Now()
+	for _, a := range r.outstanding {
+		if a.StartedAt.IsZero() {
+			continue
+		}
+		timeout := nodeTimeout(r.byPath[a.NodePath])
+		if timeout <= 0 {
+			continue
+		}
+		// A completion the door already reported is a fact, not a stall: the
+		// attempt is only waiting for its dispatch-order turn, so its deadline
+		// must not discard the result.
+		if _, done := r.rt.Completed(a.Handle); done {
+			continue
+		}
+		// Backoff is waited out before the door is asked, so the window starts
+		// after it: a retry's clock must not include its own backoff.
+		if now.Sub(a.StartedAt.Add(a.Backoff)) >= timeout {
+			return a, timeout, true
+		}
+	}
+	return nil, 0, false
+}
+
+// nextDeadline returns the earliest node deadline among in-flight attempts
+// that declare a timeout and have not already reported a completion. It is the
+// bound commitHead passes to Block, so a door that never wakes is still
+// returned to the scheduler at the moment a timeout must be sampled. Zero means
+// no in-flight attempt has a deadline and Block waits on the door alone.
+func (r *Run) nextDeadline() time.Time {
+	var earliest time.Time
+	for _, a := range r.outstanding {
+		if a.StartedAt.IsZero() {
+			continue
+		}
+		timeout := nodeTimeout(r.byPath[a.NodePath])
+		if timeout <= 0 {
+			continue
+		}
+		if _, done := r.rt.Completed(a.Handle); done {
+			continue
+		}
+		dl := a.StartedAt.Add(a.Backoff).Add(timeout)
+		if earliest.IsZero() || dl.Before(earliest) {
+			earliest = dl
+		}
+	}
+	return earliest
+}
+
+// timeoutAttempt enforces one node timeout. The order is fixed and is stop()'s,
+// narrowed to one attempt: the attempt leaves the driver's queue first, so a
+// cancelled attempt is never polled again and its late envelope can never be
+// committed; then the door is asked to stop the work in the world; then the
+// reducer folds the conclusion. A door that cannot stop the attempt does not
+// change the outcome — the node is timed out either way — it is recorded so an
+// attempt that may still be running is visible.
+func (r *Run) timeoutAttempt(a *Attempt, timeout time.Duration) error {
+	r.dropOutstanding(a.NodePath)
+	var cancelErr string
+	if err := r.rt.Cancel(a.Handle); err != nil {
+		cancelErr = err.Error()
+	}
+	window := a.StartedAt.Add(a.Backoff)
+	return r.Apply(AttemptTimedOutEvent{
+		NodePath:   a.NodePath,
+		DispatchID: a.DispatchID,
+		Attempt:    a.Number,
+		Timeout:    timeout,
+		Elapsed:    r.rt.Now().Sub(window),
+		Deadline:   window.Add(timeout),
+		CancelErr:  cancelErr,
+	})
 }
 
 // disposition computes the run's status once nothing is left to schedule. The

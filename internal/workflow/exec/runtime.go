@@ -35,8 +35,11 @@ type Dispatch struct {
 	// would be a data race against the event loop.
 	Scope ir.Scope
 	// Timeout is the node's declared timeout_seconds, converted. Zero means
-	// the node declared none. The scheduler does not implement timeouts — it
-	// has no timers — so this is plumbing for the lane that does.
+	// the node declared none. It is the lane's fast path: an adapter that can
+	// stop work in flight arms a deadline from it. The scheduler enforces the
+	// same bound itself, as a deterministic backstop sampled at cycle
+	// boundaries (see Run.timedOut), because a scheduler has no timers and a
+	// door is not obliged to honor a request field.
 	Timeout time.Duration
 	// Deadline is the run's wall-clock budget expiry, when one is declared.
 	// Zero means undeclared.
@@ -105,11 +108,14 @@ type Runtime interface {
 	Completed(h Handle) (Completion, bool)
 
 	// Block waits until at least one started attempt has become completable,
-	// or ctx is done. It exists so a real adapter can idle without polling,
-	// and a synchronous fake returns immediately. Returning nil when nothing
-	// became completable is a door malfunction, not a spurious wake: the
-	// scheduler treats it as an error rather than spinning or hanging on it.
-	Block(ctx context.Context) error
+	// until the deadline (zero means none is armed), or ctx is done. It exists
+	// so a real adapter can idle without polling, and a synchronous fake
+	// returns immediately. The deadline is the earliest in-flight node timeout,
+	// so a door that never wakes is still returned to the scheduler at the
+	// bound it must enforce. Returning nil when nothing became completable and
+	// the deadline has not elapsed is a door malfunction, not a spurious wake:
+	// the scheduler treats it as an error rather than spinning or hanging.
+	Block(ctx context.Context, until time.Time) error
 
 	// Cancel asks a running attempt to stop. The run's state does not wait
 	// for the world to agree: the node is cancelled the moment the request is

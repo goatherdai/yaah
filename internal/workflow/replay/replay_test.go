@@ -232,7 +232,7 @@ func TestDoorClockAndTelemetryAreInert(t *testing.T) {
 	if !rt.Now().Equal(time.Unix(0, 0)) {
 		t.Errorf("Now = %v, want the recorded start frozen at the epoch", rt.Now())
 	}
-	if err := rt.Block(context.Background()); err != nil {
+	if err := rt.Block(context.Background(), time.Time{}); err != nil {
 		t.Errorf("Block: %v", err)
 	}
 	if err := rt.Cancel(exec.Handle{DispatchID: "nowhere"}); err != nil {

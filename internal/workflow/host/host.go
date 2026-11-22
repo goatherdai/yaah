@@ -210,20 +210,37 @@ func (rt *Runtime) Completed(h exec.Handle) (exec.Completion, bool) {
 	return c, ok
 }
 
-// Block waits until at least one started attempt has become completable, or
-// ctx is done. It never returns nil without a completion behind it — the
-// scheduler treats that as a door malfunction, and a run that spins on it is
-// the failure this door must not produce. The guarantee is the wake
-// channel's generation: a Block arms a wait on the channel the door holds at
-// arm time, and the only way that wait ends without ctx ending is a store
-// closing it — one completion that landed after the wait armed, still
-// outstanding and therefore still completable.
-func (rt *Runtime) Block(ctx context.Context) error {
+// Block waits until at least one started attempt has become completable, until
+// the deadline (zero means none), or ctx is done. A completion and an elapsed
+// deadline both return nil; returning nil with neither is a door malfunction
+// the scheduler treats as an error, and a run that spins on it is the failure
+// this door must not produce. The guarantee is the wake channel's generation:
+// a Block arms a wait on the channel the door holds at arm time, and the only
+// way that wait ends without ctx ending is a store closing it — one completion
+// that landed after the wait armed, still outstanding and therefore still
+// completable.
+func (rt *Runtime) Block(ctx context.Context, until time.Time) error {
 	rt.mu.Lock()
 	ch := rt.wake
 	rt.mu.Unlock()
+	if until.IsZero() {
+		select {
+		case <-ch:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	d := time.Until(until)
+	if d <= 0 {
+		return nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
 	select {
 	case <-ch:
+		return nil
+	case <-t.C:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

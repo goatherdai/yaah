@@ -90,6 +90,13 @@ const (
 	StatusError     = "error"
 )
 
+// StopReasonTimeout is the stop reason a timeout carries, spelled the way the
+// lane spells its own wall-clock stop. The scheduler reuses the word rather than
+// minting one of its own: which side of the door enforced the deadline is a fact
+// about the log (attempt_timed_out versus attempt_completed), not about the
+// attempt's outcome.
+const StopReasonTimeout = "timeout"
+
 // Completed reports whether the envelope says the attempt finished its work.
 // An empty or unknown status is not a completion: the scheduler refuses to
 // credit success to a lane that could not name its outcome, because a
