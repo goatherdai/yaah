@@ -515,3 +515,151 @@ func TestAuthorityFactPayloadShape(t *testing.T) {
 		t.Errorf("unshaped payload = %v", unshaped)
 	}
 }
+
+// TestBackslashGrantPath_CompilesAndMounts is the Windows-authored grant
+// spelling: config validation accepts `src\foo`, so it must compile into a plan
+// and lower into exactly the mount its forward-slash spelling does. Without the
+// canonical grant path seam the plan refused the backslash and the dispatch
+// failed before the world started.
+func TestBackslashGrantPath_CompilesAndMounts(t *testing.T) {
+	rt := RetainedRuntime{
+		Containment:     "paddock",
+		Network:         "deny_all",
+		Grants:          []config.GrantConfig{{Path: `src\foo`, Access: "readwrite"}},
+		ContainerWorlds: true,
+		DispatchWorlds:  &DispatchWorlds{Config: sessionTestConfig()},
+	}
+	slash := rt
+	slash.Grants = []config.GrantConfig{{Path: "src/foo", Access: "readwrite"}}
+
+	// The declaration: one clause, in the canonical spelling.
+	auth, err := authorityForDispatch(rt, "developer")
+	if err != nil {
+		t.Fatalf("authorityForDispatch(%q): %v", `src\foo`, err)
+	}
+	wantWrites := []permissionplan.WriteClause{{Root: "src/foo", Access: permissionplan.AccessReadWrite}}
+	if !reflect.DeepEqual(auth.Writes, wantWrites) {
+		t.Fatalf("writes = %+v, want the canonical spelling %+v", auth.Writes, wantWrites)
+	}
+
+	// The plan compiles, and it is the same plan the forward-slash spelling
+	// compiles to.
+	plan, err := compileDispatchPlan(rt, "developer")
+	if err != nil {
+		t.Fatalf("compileDispatchPlan(%q): %v", `src\foo`, err)
+	}
+	same, err := compileDispatchPlan(slash, "developer")
+	if err != nil {
+		t.Fatalf("compileDispatchPlan(%q): %v", "src/foo", err)
+	}
+	if plan.Digest() != same.Digest() {
+		t.Fatalf("backslash digest %s != forward-slash digest %s: the spellings must name one declaration",
+			plan.Digest(), same.Digest())
+	}
+
+	// The mount agrees with the declaration.
+	got, err := resolveDispatchAuthority(rt, "developer")
+	if err != nil {
+		t.Fatalf("resolveDispatchAuthority(%q): %v", `src\foo`, err)
+	}
+	want, err := resolveDispatchAuthority(slash, "developer")
+	if err != nil {
+		t.Fatalf("resolveDispatchAuthority(%q): %v", "src/foo", err)
+	}
+	if !reflect.DeepEqual(got.writableRoots, []string{"/workspace/src/foo"}) {
+		t.Fatalf("writable roots = %v, want [/workspace/src/foo]", got.writableRoots)
+	}
+	if !reflect.DeepEqual(got.writableRoots, want.writableRoots) || got.planIdentity() != want.planIdentity() {
+		t.Fatalf("backslash lowering = %v/%s, forward-slash = %v/%s; want one declaration",
+			got.writableRoots, got.planIdentity(), want.writableRoots, want.planIdentity())
+	}
+}
+
+// TestCanonicalGrantPath pins the seam itself: every spelling config validation
+// accepts for one directory lowers to one path, and the spellings it refuses
+// still refuse.
+func TestCanonicalGrantPath(t *testing.T) {
+	same := []string{"src/foo", "src\\foo", " src\\foo ", "src//foo", "src/./foo", `src\foo\bar\..`}
+	for _, raw := range same {
+		if got := canonicalGrantPath(raw); got != "src/foo" {
+			t.Errorf("canonicalGrantPath(%q) = %q, want src/foo", raw, got)
+		}
+	}
+	if _, err := resolveContainerGrants([]config.GrantConfig{{Path: `..\..\etc`, Access: "readwrite"}}, "/workspace"); err == nil {
+		t.Fatal(`a backslash grant that escapes the world must still refuse`)
+	}
+}
+
+// TestAuthorityForDispatch_BrokerHosts pins the broker allowlist as part of the
+// declaration: the admitted host set is what the Croft backend enforces, so two
+// dispatches with different allowlists must not cite one plan digest.
+func TestAuthorityForDispatch_BrokerHosts(t *testing.T) {
+	rt := RetainedRuntime{
+		Containment:  "paddock",
+		Network:      "broker",
+		NetworkHosts: []string{" API.Example.com. ", "docs.example.com"},
+	}
+	digest := func(t *testing.T, rt RetainedRuntime) string {
+		t.Helper()
+		plan, err := compileDispatchPlan(rt, "developer")
+		if err != nil {
+			t.Fatalf("compileDispatchPlan: %v", err)
+		}
+		return plan.Digest()
+	}
+
+	auth, err := authorityForDispatch(rt, "developer")
+	if err != nil {
+		t.Fatalf("authorityForDispatch: %v", err)
+	}
+	wantHosts := []string{"api.example.com", "docs.example.com"}
+	if !reflect.DeepEqual(auth.NetworkHosts, wantHosts) {
+		t.Fatalf("network hosts = %v, want the provisioning normalization %v", auth.NetworkHosts, wantHosts)
+	}
+
+	base := digest(t, rt)
+
+	t.Run("changing one allowed host changes the digest", func(t *testing.T) {
+		other := rt
+		other.NetworkHosts = []string{"api.example.com", "other.example.com"}
+		if got := digest(t, other); got == base {
+			t.Fatalf("two allowlists share the digest %s", got)
+		}
+	})
+
+	t.Run("the allowlist is a set: order and repeats do not change it", func(t *testing.T) {
+		for _, hosts := range [][]string{
+			{"docs.example.com", "api.example.com"},
+			{"docs.example.com", "API.EXAMPLE.COM.", "api.example.com"},
+		} {
+			permuted := rt
+			permuted.NetworkHosts = hosts
+			if got := digest(t, permuted); got != base {
+				t.Fatalf("allowlist %v digest = %s, want %s", hosts, got, base)
+			}
+		}
+	})
+
+	t.Run("hosts outside the broker posture do not reach the plan", func(t *testing.T) {
+		for _, mode := range []string{"", "allow_all", "deny_all"} {
+			withHosts := RetainedRuntime{
+				Containment:  "paddock",
+				Network:      mode,
+				NetworkHosts: []string{"api.example.com"},
+			}
+			got, err := authorityForDispatch(withHosts, "developer")
+			if err != nil {
+				t.Fatalf("authorityForDispatch(%q): %v", mode, err)
+			}
+			if len(got.NetworkHosts) != 0 {
+				t.Fatalf("mode %q carried hosts %v; the declaration claims an allowlist no broker enforces",
+					mode, got.NetworkHosts)
+			}
+			without := withHosts
+			without.NetworkHosts = nil
+			if digest(t, withHosts) != digest(t, without) {
+				t.Fatalf("mode %q: a dropped allowlist perturbed the digest", mode)
+			}
+		}
+	})
+}

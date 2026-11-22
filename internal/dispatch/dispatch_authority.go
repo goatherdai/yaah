@@ -152,7 +152,7 @@ func resolveContainerGrants(grants []config.GrantConfig, worldRoot string) (subs
 	}
 	g := substrate.DispatchGrants{Declared: true}
 	for _, grant := range grants {
-		rel := path.Clean(strings.TrimSpace(grant.Path))
+		rel := canonicalGrantPath(grant.Path)
 		if path.IsAbs(rel) {
 			return substrate.DispatchGrants{}, fmt.Errorf("%s: grants are world-relative, not absolute", grant.Path)
 		}
@@ -173,6 +173,20 @@ func resolveContainerGrants(grants []config.GrantConfig, worldRoot string) (subs
 		}
 	}
 	return g, nil
+}
+
+// canonicalGrantPath is the one grant-path spelling this package derives from a
+// configured grant: trimmed, with the separator a Windows-authored path may
+// carry folded into the one separator a container path understands, then
+// cleaned. Config validation normalizes a grant the same way, so a path that
+// validated is a path that lowers.
+//
+// Both seams call it — the plan's declaration (authorityForDispatch) and the
+// container lowering (resolveContainerGrants) — which is what keeps the
+// declaration and the mount in agreement: `src\foo` and `src/foo` name one
+// directory, are one write clause, and lower to one mount.
+func canonicalGrantPath(raw string) string {
+	return path.Clean(strings.ReplaceAll(strings.TrimSpace(raw), "\\", "/"))
 }
 
 // NormalizeBrokerHosts puts allowlist entries into the form both egress

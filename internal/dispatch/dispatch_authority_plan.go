@@ -66,8 +66,9 @@ func authorityForDispatch(rt RetainedRuntime, role string) (permissionplan.Autho
 	grants := dispatchGrants(rt, role)
 	a.Writes = make([]permissionplan.WriteClause, 0, len(grants))
 	for _, grant := range grants {
-		// The same normalization resolveContainerGrants applies, so the plan and
-		// the mount shape can never disagree about what a grant says.
+		// The same canonical spelling resolveContainerGrants lowers, so the
+		// plan and the mount shape can never disagree about what a grant says:
+		// `src\foo` and `src/foo` are one clause and one mount.
 		access := permissionplan.Access(strings.ToLower(strings.TrimSpace(grant.Access)))
 		switch access {
 		case permissionplan.AccessReadWrite, permissionplan.AccessReadOnly:
@@ -75,7 +76,7 @@ func authorityForDispatch(rt RetainedRuntime, role string) (permissionplan.Autho
 			return permissionplan.Authority{}, fmt.Errorf(
 				"%s: unknown access %q is not one of: readwrite, readonly", grant.Path, grant.Access)
 		}
-		a.Writes = append(a.Writes, permissionplan.WriteClause{Root: strings.TrimSpace(grant.Path), Access: access})
+		a.Writes = append(a.Writes, permissionplan.WriteClause{Root: canonicalGrantPath(grant.Path), Access: access})
 	}
 
 	network, err := networkPosture(rt.Network)
@@ -83,6 +84,15 @@ func authorityForDispatch(rt RetainedRuntime, role string) (permissionplan.Autho
 		return permissionplan.Authority{}, err
 	}
 	a.Network = network
+	// The allowlist qualifies the posture rather than sitting beside it: two
+	// dispatches whose brokers admit different hosts enforce different egress,
+	// so they must not cite one declaration. Normalized exactly as provisioning
+	// normalizes it, because the plan is a leaf package and must not learn how a
+	// broker matches a host. Every other posture carries none — the lowering
+	// drops hosts there, so the declaration does too.
+	if network == permissionplan.NetworkBroker {
+		a.NetworkHosts = NormalizeBrokerHosts(rt.NetworkHosts)
+	}
 
 	// One declaration, two monitors: the delta posture is declared here too, so
 	// the plan's digest covers settlement as well as confinement. See the doc

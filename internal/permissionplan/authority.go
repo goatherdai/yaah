@@ -3,6 +3,7 @@ package permissionplan
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -23,6 +24,15 @@ type Authority struct {
 	Writes []WriteClause
 	// Network is the declared egress posture; NetworkUnset declares none.
 	Network NetworkPosture
+	// NetworkHosts is the broker allowlist that qualifies Network, and it is
+	// only meaningful when Network is NetworkBroker: the allowlist is part of
+	// what "broker" means, so two declarations whose brokers admit different
+	// hosts enforce different egress and must not share a digest. The caller
+	// supplies hosts already normalized the way its broker matches them — this
+	// package is a leaf and does not know that vocabulary — and the compiler
+	// only makes the set order-insensitive. It must be empty for every other
+	// posture.
+	NetworkHosts []string
 	// Delta is the declared settlement posture; DeltaUnset declares none.
 	Delta DeltaPolicy
 	// Containment is how the declaration expects to be enforced. Only the
@@ -236,6 +246,11 @@ func Compile(a Authority) (PermissionPlan, error) {
 			match: effectpolicy.Exact(NetworkKind),
 		}
 		p.declare(c)
+		// The broker's allowlist qualifies that clause, so the plan carries it
+		// and the digest covers it: changing one admitted host changes the
+		// declaration's identity. validate has already refused hosts under any
+		// other posture, so this is empty for every other mode.
+		p.networkHosts = canonicalHosts(a.NetworkHosts)
 		if confined || acceptsUnenforced {
 			p.assign(Assignment{
 				Label:    c.label,
@@ -280,11 +295,36 @@ func (a Authority) validate() error {
 		return fmt.Errorf("%w: network posture %q is not one of: allow_all, deny_all, broker",
 			ErrInvalidDeclaration, string(a.Network))
 	}
+	if len(a.NetworkHosts) > 0 && a.Network != NetworkBroker {
+		return fmt.Errorf("%w: network hosts are declared under network posture %q; an allowlist is only meaningful for %q",
+			ErrInvalidDeclaration, a.Network.String(), string(NetworkBroker))
+	}
 	if a.Delta != DeltaUnset && !a.Delta.valid() {
 		return fmt.Errorf("%w: delta policy %q is not one of: review, apply",
 			ErrInvalidDeclaration, string(a.Delta))
 	}
 	return nil
+}
+
+// canonicalHosts returns the broker allowlist in the one form the plan's digest
+// covers: the distinct host names, sorted, so the same allowlist in a different
+// order — or with a repeated entry — is the same declaration. Matching
+// normalization (trimming, lower-casing, dropping a trailing dot) belongs to the
+// caller that knows its broker's vocabulary; an empty entry is not a host, so it
+// is dropped exactly as the broker drops it.
+func canonicalHosts(hosts []string) []string {
+	if len(hosts) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		if h == "" {
+			continue
+		}
+		out = append(out, h)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // lowerWrite validates one write clause and lowers it to its clause: the label

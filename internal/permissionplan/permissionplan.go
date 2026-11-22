@@ -247,6 +247,11 @@ type PermissionPlan struct {
 	clauses     []clause
 	assignments []Assignment
 	fallback    Fallback
+	// networkHosts is the broker allowlist the declaration qualified its egress
+	// posture with, in canonical set form (distinct, sorted). It is empty for
+	// every posture that is not the broker, and it is part of the plan's digest
+	// because it is part of what the declaration promised to enforce.
+	networkHosts []string
 }
 
 // declare records one clause of the declaration.
@@ -304,13 +309,15 @@ func (p PermissionPlan) covers(c clause) bool {
 // the plan's canonical serialization.
 //
 // The serialization is the sorted set of the plan's canonical lines — one per
-// declared clause, one per assignment, plus the declaration's fallback posture.
+// declared clause, one per assignment, one for the declaration's fallback
+// posture, and one for the broker's allowlist when the declaration has one.
 // Clause order is therefore not part of a plan's identity, while any difference
 // in a clause, its surface, the monitor assigned to it, that monitor's timing,
-// or the fallback changes the digest. The same declaration always compiles to
-// the same digest, which is what makes a plan citable: the jail and the
-// settlement step can each record the digest of the declaration they enforce,
-// and a reader can tell whether they enforced the same one.
+// the fallback, or the set of hosts the broker admits changes the digest. The
+// same declaration always compiles to the same digest, which is what makes a
+// plan citable: the jail and the settlement step can each record the digest of
+// the declaration they enforce, and a reader can tell whether they enforced the
+// same one.
 func (p PermissionPlan) Digest() string {
 	lines := p.canonicalLines()
 	sum := sha256.Sum256([]byte(strings.Join(lines, "\n") + "\n"))
@@ -320,8 +327,18 @@ func (p PermissionPlan) Digest() string {
 // canonicalLines is the plan's canonical serialization, one line per fact,
 // sorted so that declaration order cannot change it.
 func (p PermissionPlan) canonicalLines() []string {
-	lines := make([]string, 0, len(p.clauses)+len(p.assignments)+1)
+	lines := make([]string, 0, len(p.clauses)+len(p.assignments)+2)
 	lines = append(lines, "fallback="+p.fallback.String())
+	if len(p.networkHosts) > 0 {
+		// One line for the whole allowlist: it is a set, so the entries are
+		// quoted and joined rather than sorted in among the other lines, where
+		// a declaration difference would be spread across many lines.
+		quoted := make([]string, 0, len(p.networkHosts))
+		for _, h := range p.networkHosts {
+			quoted = append(quoted, strconv.Quote(h))
+		}
+		lines = append(lines, "network_hosts=["+strings.Join(quoted, " ")+"]")
+	}
 	for _, c := range p.clauses {
 		lines = append(lines, "declared clause="+strconv.Quote(c.label)+" surface="+c.match.Canonical().String())
 	}
@@ -342,9 +359,19 @@ func (p PermissionPlan) String() string {
 	for _, a := range p.assignments {
 		assignments = append(assignments, "{"+a.String()+"}")
 	}
-	return "plan(fallback=" + p.fallback.String() +
+	return "plan(fallback=" + p.fallback.String() + p.networkHostsString() +
 		" clauses=[" + strings.Join(clauses, " ") +
 		"] assignments=[" + strings.Join(assignments, " ") + "])"
+}
+
+// networkHostsString renders the broker allowlist for String, and renders
+// nothing at all when the declaration admits no hosts, so a plan without a
+// broker reads exactly as it did before the allowlist was part of the plan.
+func (p PermissionPlan) networkHostsString() string {
+	if len(p.networkHosts) == 0 {
+		return ""
+	}
+	return " network_hosts=[" + strings.Join(p.networkHosts, " ") + "]"
 }
 
 // The compiler's refusals. They are sentinels so a caller can tell an invalid

@@ -721,3 +721,76 @@ func TestZeroPlanCoversNothingAndRefusesNothing(t *testing.T) {
 		t.Fatalf("Fallback() = %s; want refuse", got)
 	}
 }
+
+// TestNetworkHostsArePartOfThePlan pins the broker allowlist as part of the
+// declared egress posture rather than a detail beside it: the allowlist is what
+// a brokered dispatch actually enforces, so two dispatches whose brokers admit
+// different hosts must not cite one plan.
+func TestNetworkHostsArePartOfThePlan(t *testing.T) {
+	compilePlan := func(t *testing.T, a Authority) PermissionPlan {
+		t.Helper()
+		p, err := Compile(a)
+		if err != nil {
+			t.Fatalf("Compile() error = %v; want nil", err)
+		}
+		return p
+	}
+	brokered := func(hosts ...string) Authority {
+		return Authority{
+			Network:      NetworkBroker,
+			NetworkHosts: hosts,
+			Containment:  ContainmentJail,
+		}
+	}
+
+	t.Run("one changed host is a different plan", func(t *testing.T) {
+		base := compilePlan(t, brokered("api.example.com", "docs.example.com")).Digest()
+		other := compilePlan(t, brokered("api.example.com", "other.example.com")).Digest()
+		if base == other {
+			t.Fatalf("two allowlists share the digest %s", base)
+		}
+		none := compilePlan(t, brokered()).Digest()
+		if none == base {
+			t.Fatalf("an allowlist and the absence of one share the digest %s", none)
+		}
+	})
+
+	t.Run("the allowlist is a set: order and repeats do not matter", func(t *testing.T) {
+		base := compilePlan(t, brokered("api.example.com", "docs.example.com")).Digest()
+		for name, a := range map[string]Authority{
+			"reordered": brokered("docs.example.com", "api.example.com"),
+			"repeated":  brokered("docs.example.com", "api.example.com", "api.example.com"),
+		} {
+			if got := compilePlan(t, a).Digest(); got != base {
+				t.Fatalf("%s allowlist digest = %s; want %s", name, got, base)
+			}
+		}
+	})
+
+	t.Run("a hostless broker reads exactly as it did", func(t *testing.T) {
+		p := compilePlan(t, brokered())
+		if strings.Contains(p.String(), "network_hosts") {
+			t.Fatalf("String() = %s; want no allowlist rendering for a hostless broker", p)
+		}
+	})
+
+	t.Run("the plan renders its allowlist, sorted", func(t *testing.T) {
+		p := compilePlan(t, brokered("b.example", "a.example"))
+		if !strings.Contains(p.String(), "network_hosts=[a.example b.example]") {
+			t.Fatalf("String() = %s; want the sorted allowlist", p)
+		}
+	})
+
+	t.Run("hosts under any other posture are refused", func(t *testing.T) {
+		for _, n := range []NetworkPosture{NetworkUnset, NetworkAllowAll, NetworkDenyAll} {
+			a := Authority{
+				Network:      n,
+				NetworkHosts: []string{"api.example.com"},
+				Containment:  ContainmentJail,
+			}
+			if _, err := Compile(a); !errors.Is(err, ErrInvalidDeclaration) {
+				t.Fatalf("Compile(posture %q) error = %v; want ErrInvalidDeclaration", n, err)
+			}
+		}
+	})
+}
