@@ -89,6 +89,31 @@ func recordConfinementDegradedFact(ctx context.Context, scope *goatherd.Scope, c
 	}
 }
 
+// report lowers this record to the form a caller outside the runner reads
+// through the context sink (jobs.CaptureSubAgentConfinement). It carries the
+// post-run truth, not the pre-run resolution: a jail that resolved and was then
+// lost at exec time is reported as the unconfined run it became, so a proposal
+// sealed afterwards cannot cite a containment the body never had. A nil record
+// (no confinement seam ran for this dispatch) reports nothing resolved, which a
+// caller must read as "no evidence" rather than as advisory.
+func (c *subAgentConfinement) report() tools.SubAgentConfinement {
+	if c == nil {
+		return tools.SubAgentConfinement{}
+	}
+	r := tools.SubAgentConfinement{
+		Requested: c.Requested,
+		Resolved:  c.Resolved,
+		Backend:   c.Backend,
+		Tier:      c.Tier,
+		Enforced:  c.Enforced,
+	}
+	if reason, ok := c.degraded(); ok {
+		r.Degraded = reason
+		r.Enforced = false
+	}
+	return r
+}
+
 // resolveSubAgentConfinement builds the syscall-jailed workspace for a sub-agent
 // workdir dispatch when agents.subagent.containment asks for one, and describes
 // what it resolved to (for the trace). It returns a nil workspace to leave the

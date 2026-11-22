@@ -330,3 +330,67 @@ func CaptureSubAgentStop(ctx context.Context, stop SubAgentStop) {
 		*ptr = stop
 	}
 }
+
+// SubAgentConfinement is the confinement a sub-agent run actually had: the jail
+// the runner resolved, whether it was established, and whether it survived the
+// run. It exists so a caller outside the runner can cite the enforcement a run
+// had rather than the one its config asked for — the dispatch lane seals a
+// worktree run into a proposal whose settlement records the declaration the
+// world enforced, and an advisory run cited as a jail (or a jailed run cited as
+// advisory) is a false statement in the causal record.
+//
+// The zero value is "nothing was resolved": a run that never reached the
+// confinement seam (a shared-host dispatch, an isolated container lane) reports
+// it, and a caller must read that as no evidence rather than as advisory.
+type SubAgentConfinement struct {
+	// Requested is the configured agents.subagent.containment value.
+	Requested string
+	// Resolved is "paddock" when the run entered a syscall jail and "advisory"
+	// when it ran on host paths. Empty means nothing was resolved.
+	Resolved string
+	// Backend and Tier name the enforcing backend when one was established.
+	Backend string
+	Tier    string
+	// Enforced reports that a usable backend actually established the jail.
+	Enforced bool
+	// Degraded, when non-empty, says why a jail that resolved was lost at run
+	// time — the reason the body ran unconfined anyway.
+	Degraded string
+}
+
+// Jailed reports whether the run actually ran under a syscall jail.
+func (c SubAgentConfinement) Jailed() bool {
+	return c.Resolved == "paddock" && c.Enforced && c.Degraded == ""
+}
+
+// Refused reports that the run demanded a jail (containment: paddock) this host
+// could not establish, so it refused to run rather than run unconfined. That is
+// a jail posture, not an advisory one: no unconfined body ever ran, and
+// describing it as advisory would name a lane the dispatch never entered.
+func (c SubAgentConfinement) Refused() bool {
+	return c.Resolved == "paddock" && !c.Enforced && c.Degraded == ""
+}
+
+// Reported reports whether the run resolved a confinement at all. False means
+// the dispatch learned nothing about this run's jail, so a citation must fall
+// back to what the config declared instead of claiming an observation.
+func (c SubAgentConfinement) Reported() bool { return c.Resolved != "" }
+
+// subAgentConfinementKey stores a *SubAgentConfinement the runner writes once it
+// has resolved (and, after the loop, has finished accounting for) the jail.
+type subAgentConfinementKey struct{}
+
+// WithSubAgentConfinement stores ptr in ctx so the runner can report the
+// confinement the run had. Only safe when the caller reads *ptr after joining
+// the runner (the foreground retained lane does).
+func WithSubAgentConfinement(ctx context.Context, ptr *SubAgentConfinement) context.Context {
+	return context.WithValue(ctx, subAgentConfinementKey{}, ptr)
+}
+
+// CaptureSubAgentConfinement writes conf through the sink stored in ctx, if
+// present.
+func CaptureSubAgentConfinement(ctx context.Context, conf SubAgentConfinement) {
+	if ptr, ok := ctx.Value(subAgentConfinementKey{}).(*SubAgentConfinement); ok && ptr != nil {
+		*ptr = conf
+	}
+}

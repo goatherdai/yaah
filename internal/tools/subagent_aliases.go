@@ -84,6 +84,17 @@ func CaptureSubAgentStop(ctx context.Context, stop SubAgentStop) {
 	jobs.CaptureSubAgentStop(ctx, stop)
 }
 
+// SubAgentConfinement is the confinement one run actually had (aliased from
+// jobs), so the runner can report the jail it established without importing the
+// dispatch lane's vocabulary.
+type SubAgentConfinement = jobs.SubAgentConfinement
+
+// CaptureSubAgentConfinement reports the run's jail through the sink in ctx, if
+// one was installed.
+func CaptureSubAgentConfinement(ctx context.Context, conf SubAgentConfinement) {
+	jobs.CaptureSubAgentConfinement(ctx, conf)
+}
+
 func WithSubAgentReadyNotifier(ctx context.Context, fn func()) context.Context {
 	return jobs.WithSubAgentReadyNotifier(ctx, fn)
 }
