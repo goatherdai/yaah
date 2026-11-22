@@ -332,3 +332,32 @@ func TestNodeTimeoutBackoffNotCounted(t *testing.T) {
 		t.Errorf("retry log line missing %q — backoff appears to count against the window:\n%s", want, eventLog(res))
 	}
 }
+
+// TestNodeTimeoutCancelFailedNotRetried pins the recovery split: a timeout is
+// retryable only when the door actually stopped the attempt. A failed Cancel
+// leaves the old work possibly still running, so the node must end terminal
+// rather than re-dispatch and overlap it.
+func TestNodeTimeoutCancelFailedNotRetried(t *testing.T) {
+	r, rt := newTimeoutRun(t, 5, retryTwice)
+	rt.Script = map[string][]Completion{"steps.slow": {Report("never read", 0)}}
+	rt.Hold = map[string]bool{"steps.slow": true}
+	rt.CancelErr = map[string]error{"steps.slow#1": fmt.Errorf("door lost the handle")}
+	res := driveTimeoutRun(t, r, pastDeadline(rt, 6*time.Second))
+
+	n := nodeOf(t, res, "steps.slow")
+	if n.State != StateFailed {
+		t.Fatalf("state = %s, want failed\nlog:\n%s", n.State, eventLog(res))
+	}
+	if got := len(n.Attempts); got != 1 {
+		t.Errorf("attempts = %d, want 1: a failed cancel must not retry", got)
+	}
+	if n.StopReason != StopReasonTimeout {
+		t.Errorf("stop reason = %q, want %q", n.StopReason, StopReasonTimeout)
+	}
+	if n.Retryable {
+		t.Errorf("retryable = true, want false when the door could not stop the attempt")
+	}
+	if n.CancelErr == "" {
+		t.Errorf("cancel error not recorded on the node")
+	}
+}

@@ -258,13 +258,16 @@ func (r *Run) attemptRecords(e AttemptCompletedEvent) []trace.Record {
 //
 // The shape is also what makes a replay re-derive the run: the replay door
 // answers a dispatch from exactly these fields (Status, Reason, Retryable), so a
-// timed-out attempt replays as the same retryable failure it was folded as.
+// timed-out attempt replays as the same failure — retryable or not — it was
+// folded as.
 func (r *Run) timeoutRecord(e AttemptTimedOutEvent) trace.Record {
 	rec := r.nodeRecord(trace.KindDispatch, e.NodePath, StatusError)
 	rec.Attempt = e.Attempt
 	rec.DispatchID = e.DispatchID
 	rec.Reason = StopReasonTimeout
-	retryable := true
+	// A failed Cancel makes the timeout terminal, not retryable: the old work
+	// may still be running, so the record must not invite a re-dispatch.
+	retryable := e.CancelErr == ""
 	rec.Retryable = &retryable
 	return rec
 }

@@ -685,7 +685,10 @@ func (r *Run) onAttemptCompleted(e AttemptCompletedEvent) error {
 //
 // The retryability is the scheduler's conclusion and is deliberately not a
 // derivation from prose: a timeout means the work did not finish in the time it
-// was given, which is the one recovery re-dispatching can answer.
+// was given, which is the one recovery re-dispatching can answer — but only
+// when the door actually stopped the attempt. A failed Cancel leaves the old
+// work possibly still running, so the timeout is terminal (retryable=false)
+// rather than re-dispatch that would overlap it.
 func (r *Run) onAttemptTimedOut(e AttemptTimedOutEvent) error {
 	st := r.state[e.NodePath]
 	if st == nil {
@@ -703,12 +706,16 @@ func (r *Run) onAttemptTimedOut(e AttemptTimedOutEvent) error {
 		st.CancelErr = e.CancelErr
 	}
 	a.Cancelled = true
+	// A timeout is retryable only when the door stopped the attempt; a failed
+	// Cancel means the old work may still be running, so re-dispatch would
+	// overlap it.
+	retryable := e.CancelErr == ""
 	c := Completion{
 		Status:     StatusError,
 		DispatchID: e.DispatchID,
 		StopReason: StopReasonTimeout,
 		DurationMs: e.Elapsed.Milliseconds(),
-		Recovery:   &Recovery{Retryable: true},
+		Recovery:   &Recovery{Retryable: retryable},
 	}
 	r.finishAttempt(a, AttemptCompletedEvent{
 		NodePath:   e.NodePath,
