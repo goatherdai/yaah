@@ -102,10 +102,11 @@ func TestSupervisorTool_StatusListsFirings(t *testing.T) {
 }
 
 // TestSupervisorTool_StatusShowsDeniedCommand pins the deny's legibility
-// in `supervisor status`: a blocked shell call reports the command the
-// guard refused and the reason it gave, beside the count — an operator
-// reading the session afterwards sees what was blocked and why, not just
-// that the guard fired.
+// in `supervisor status`: a blocked shell call reports the most recent
+// command the guard refused and the reason it gave, beside the count — an
+// operator reading the session afterwards sees what was blocked and why,
+// not just that the guard fired. The detail is labelled last_cmd because it
+// describes only the latest refusal; the count covers all of them.
 func TestSupervisorTool_StatusShowsDeniedCommand(t *testing.T) {
 	store, err := kerneltrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
@@ -140,7 +141,7 @@ func TestSupervisorTool_StatusShowsDeniedCommand(t *testing.T) {
 		"destructive_shell_guard",
 		"scope:sub-status",
 		"1x (deny)",
-		`cmd="` + cmd + `"`,
+		`last_cmd="` + cmd + `"`,
 		`reason="` + reason + `"`,
 	} {
 		if !strings.Contains(out, want) {

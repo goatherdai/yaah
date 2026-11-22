@@ -30,6 +30,32 @@ tools:
   - webfetch
   - go_outline
   - go_test
+# Shell-command allowlist for the blocking sub-agent guard. The guard
+# matches a pattern in full against the raw command, and it refuses any
+# command carrying a shell control or redirection operator (`;`, `&&`,
+# `|`, backtick, `$(`, `${`, `>`, `<`, newline) outright — no pattern can
+# admit one — so these entries describe single commands only. This role
+# does not modify source: every entry reads, or runs the suite.
+#
+# `find` is deliberately absent: its arguments (`-delete`, `-exec`) mutate
+# or execute, so no glob that covers the useful forms excludes the
+# dangerous ones. The role carries the structured `find` tool instead.
+allow_commands:
+  - "git status*"
+  - "git diff*"
+  - "git log*"
+  - "git show*"
+  - "ls*"
+  - "cat*"
+  - "grep*"
+  - "wc*"
+  - "go test*"
+  - "go vet*"
+  - "go build*"
+  - "gofmt -l*"
+  - "go list*"
+  - "go env*"
+  - "go version"
 max_iterations: 30
 max_turns: 8
 min_turns: 4

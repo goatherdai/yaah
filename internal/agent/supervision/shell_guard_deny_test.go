@@ -46,10 +46,12 @@ func denyFacts(t *testing.T, store *kerneltrace.SQLiteTraceStore, owner string) 
 }
 
 // TestGuardCheckDenyRecordsCommandAndReason pins the deny's legibility
-// on both surfaces: the status firing names the refused command and the
-// reason beside the count, aggregated per (command, reason) so a repeat
-// adds to one line and a different command gets its own, and the trace
-// keeps one fact per refusal on the refused scope's own owner path.
+// on both surfaces: the status firing counts the refusals for the rule,
+// scope, and kind with the MOST RECENT refused command and the reason
+// beside it — one line however many distinct commands were refused, so a
+// session that keeps inventing commands cannot grow status without bound
+// — and the trace keeps one fact per refusal on the refused scope's own
+// owner path.
 func TestGuardCheckDenyRecordsCommandAndReason(t *testing.T) {
 	svc, store := newGuardDenyService(t, nil)
 	check := svc.GuardCheck()
@@ -75,55 +77,61 @@ func TestGuardCheckDenyRecordsCommandAndReason(t *testing.T) {
 		t.Errorf("firing reason = %q, want the reason the model was given %q", f.Reason, reason)
 	}
 
-	// The same refusal twice is one line counting two — the status stays
-	// a summary, and the count still owes its detail.
+	// The same refusal twice is still one line, counting two.
 	check("sub-worker", "bash", `{"command":"`+cmd+`"}`)
 	firings = svc.Firings()
 	if len(firings) != 1 || firings[0].Count != 2 {
 		t.Fatalf("firings after a repeat = %+v, want one line counting 2", firings)
 	}
 
-	// A different command is its own line: the aggregate never hides
-	// what was refused behind a count.
+	// A different refused command folds into the same line — rule,
+	// scope, and kind aggregate — and becomes the detail it shows, so
+	// the count is complete and the line still names the latest refusal.
 	const other = "ls -la"
 	if r := check("sub-worker", "bash", `{"command":"`+other+`"}`); r == "" {
 		t.Fatal("a second unlisted command must be denied too")
 	}
 	firings = svc.Firings()
-	if len(firings) != 2 {
-		t.Fatalf("firings = %+v, want one line per refused command", firings)
+	if len(firings) != 1 {
+		t.Fatalf("firings = %+v, want one aggregate line per rule, scope, and kind", firings)
 	}
-	seen := map[string]int{}
-	for _, f := range firings {
-		seen[f.Command] = f.Count
-	}
-	if seen[cmd] != 2 || seen[other] != 1 {
-		t.Errorf("firing counts by command = %v, want %q=2 and %q=1", seen, cmd, other)
+	if f := firings[0]; f.Count != 3 || f.Command != other {
+		t.Errorf("firing = %+v, want count 3 with the latest command %q", f, other)
 	}
 
 	// The durable half: one fact per refusal, on the refused scope's
 	// owner path, naming the rule, the tool, the command, and the why.
+	// The writes are off the dispatch path, so the test joins them first.
+	svc.awaitDenyFacts()
 	facts := denyFacts(t, store, "sub-worker")
 	if len(facts) != 3 {
 		t.Fatalf("deny facts = %d, want one per refusal (3)", len(facts))
 	}
-	first := facts[0]
-	if first.Envelope.Mode != kerneltrace.Capture {
-		t.Errorf("deny fact mode = %v, want Capture (an outcome, not a declaration)", first.Envelope.Mode)
-	}
-	if first.View != nil && first.View.KindLabel != ShellGuardDenyKind {
-		t.Errorf("deny fact kind = %q, want %q", first.View.KindLabel, ShellGuardDenyKind)
-	}
-	want := map[string]string{
-		"rule":   shellGuardRuleName,
-		"tool":   "bash",
-		"cmd":    cmd,
-		"reason": reason,
-	}
-	for key, wantValue := range want {
-		if got := first.Body.Payload[key]; got != wantValue {
-			t.Errorf("deny fact %s = %v, want %q", key, got, wantValue)
+	// Writes are async, so order is not part of the contract: assert the
+	// multiset of refused commands and the shared fields, not which fact
+	// landed first.
+	cmds := map[string]int{}
+	for _, rec := range facts {
+		if rec.Envelope.Mode != kerneltrace.Capture {
+			t.Errorf("deny fact mode = %v, want Capture (an outcome, not a declaration)", rec.Envelope.Mode)
 		}
+		if rec.View != nil && rec.View.KindLabel != ShellGuardDenyKind {
+			t.Errorf("deny fact kind = %q, want %q", rec.View.KindLabel, ShellGuardDenyKind)
+		}
+		if got := rec.Body.Payload["rule"]; got != shellGuardRuleName {
+			t.Errorf("deny fact rule = %v, want %q", got, shellGuardRuleName)
+		}
+		if got := rec.Body.Payload["tool"]; got != "bash" {
+			t.Errorf("deny fact tool = %v, want %q", got, "bash")
+		}
+		if got := rec.Body.Payload["reason"]; got != reason {
+			t.Errorf("deny fact reason = %v, want %q", got, reason)
+		}
+		gotCmd, _ := rec.Body.Payload["cmd"].(string)
+		cmds[gotCmd]++
+	}
+	if cmds[cmd] != 2 || cmds[other] != 1 {
+		t.Errorf("deny fact commands = %v, want %q x2 and %q x1", cmds, cmd, other)
 	}
 }
 

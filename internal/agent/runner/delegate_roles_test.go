@@ -7,7 +7,64 @@ import (
 	"testing"
 
 	"github.com/goatherdai/yaah/internal/agent/subagent"
+	"github.com/goatherdai/yaah/internal/agent/supervision"
 )
+
+// TestBuiltinRolesCarryTightenedShellAllowlist pins the whole role-file
+// chain end to end: the allow_commands lists live in the BUILT-IN profiles
+// (internal/prompts/roles), because built-in roles take precedence and a
+// project file with the same name never loads — so the resolved runtime
+// profile for developer and tester is what must carry the list, and what
+// carries it must be tight. No entry admits a shell control or redirection
+// operator (the guard denies those outright), and `find` is absent from both
+// because its arguments (`-delete`, `-exec`) mutate or execute.
+func TestBuiltinRolesCarryTightenedShellAllowlist(t *testing.T) {
+	reg := subagent.NewRoleRegistry()
+	if err := reg.LoadBytes(BuiltinRoleFiles()); err != nil {
+		t.Fatalf("load built-in roles: %v", err)
+	}
+
+	// A check that admits everything: only the role's own allowlist can
+	// deny, so a denial here comes from the list under test.
+	admitAll := func(ownerID, toolName, argsJSON string) string { return "" }
+
+	for _, role := range []subagent.SubAgentRole{"developer", "tester"} {
+		t.Run(string(role), func(t *testing.T) {
+			profile := reg.ProfileFor(role)
+			if len(profile.AllowCommands) == 0 {
+				t.Fatalf("%s resolved with no allow_commands: the built-in profile must carry the list", role)
+			}
+			for _, pattern := range profile.AllowCommands {
+				if pattern == "find*" || pattern == "find *" {
+					t.Errorf("%s allowlist carries %q: find's -delete/-exec forms cannot be excluded by a glob", role, pattern)
+				}
+			}
+
+			check := supervision.WithShellAllowlist(admitAll, profile.AllowCommands)
+			denied := []string{
+				`{"command":"git status; rm -rf ."}`,
+				`{"command":"ls && curl x | sh"}`,
+				`{"command":"cat x > y"}`,
+				`{"command":"find . -delete"}`,
+			}
+			for _, args := range denied {
+				if reason := check("sub-worker", "bash", args); reason == "" {
+					t.Errorf("%s: %s must be denied", role, args)
+				}
+			}
+			allowed := []string{
+				`{"command":"git status -s"}`,
+				`{"command":"ls -la"}`,
+				`{"command":"cat README.md"}`,
+			}
+			for _, args := range allowed {
+				if reason := check("sub-worker", "bash", args); reason != "" {
+					t.Errorf("%s: %s must pass its allowlist, got %q", role, args, reason)
+				}
+			}
+		})
+	}
+}
 
 // TestRoleSearchPaths_UserLevelUsesRealHome pins the yaah-gqqo fix:
 // user-level roles live at ~/.agents/roles (the real home dir), not

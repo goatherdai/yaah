@@ -125,7 +125,12 @@ allow_commands:
 
 A `bash`/`powershell` (or command-running `background_process`) call whose
 command matches one of these dispatches; anything else is denied with a
-synthesized result. Omitting the key inherits —
+synthesized result. A command carrying a shell control or redirection
+operator — `;`, `&&`, `||`, `|`, a backtick, `$(`, `${`, `>`, `<`, or a
+newline — matches no pattern and is always denied: `git status*` compiles to
+a prefix match, which would otherwise admit `git status; rm -rf .` exactly as
+it admits `git status -s`. Write one entry per single command. Omitting the
+key inherits —
 `agents.default.supervisor.rules.destructive_guard.allow_commands`, else the
 built-in deny-all; an explicit `allow_commands: []` locks the role's shell
 down even when the global default admits commands. The config role entry

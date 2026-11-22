@@ -63,6 +63,8 @@ func TestShellAllowlistDenyRecordsOnBothSurfaces(t *testing.T) {
 		}
 	}
 
+	// The fact write is off the dispatch path, so join it before reading.
+	svc.awaitDenyFacts()
 	facts := denyFacts(t, store, "sub-worker")
 	if len(facts) != 1 {
 		t.Fatalf("deny facts = %d, want one per refusal", len(facts))
@@ -109,6 +111,8 @@ func TestShellAllowlistDenyWithoutCommandRecords(t *testing.T) {
 		t.Errorf("firing = %+v, want role_shell_allowlist/deny with an empty command and the refusal reason", f)
 	}
 
+	// The fact write is off the dispatch path, so join it before reading.
+	svc.awaitDenyFacts()
 	facts := denyFacts(t, store, "sub-worker")
 	if len(facts) != 1 {
 		t.Fatalf("deny facts = %d, want the no-command refusal recorded", len(facts))
@@ -177,6 +181,9 @@ func TestWithShellAllowlistWithoutRecorderIsUnchanged(t *testing.T) {
 				a, got, plainReasons[i])
 		}
 	}
+	// The recorder's fact writes run off the dispatch path; join them so
+	// the test does not tear the store down under a live writer.
+	svc.awaitDenyFacts()
 }
 
 // TestShellAllowlistDenyWithoutScope pins the unaddressable-scope path:
