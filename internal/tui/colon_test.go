@@ -363,3 +363,16 @@ func TestHandleCommand_WorkflowRunCallsCallback(t *testing.T) {
 		t.Fatalf("callback spec = %q, want %q", called, "specs/demo.yaml")
 	}
 }
+
+func TestHandleCommand_WorkflowAcceptsTabSeparator(t *testing.T) {
+	ui := newColonUI(t)
+	var called string
+	ui.OnWorkflowRun = func(spec string) { called = spec }
+
+	if !ui.HandleCommand(command.CmdWorkflow, "run\tspecs/demo.yaml") {
+		t.Fatal(":workflow run<TAB><spec> should be consumed, not refused")
+	}
+	if called != "specs/demo.yaml" {
+		t.Fatalf("callback spec = %q, want %q", called, "specs/demo.yaml")
+	}
+}

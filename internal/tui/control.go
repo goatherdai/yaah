@@ -116,7 +116,7 @@ func (t *App) handleControlMsg(msg control.Msg) {
 			status = "failed"
 		}
 		t.conversationLog = append(t.conversationLog, convItem{
-			text: fmt.Sprintf("[%s]workflow %s: %s[-]", theme, m.Path, status),
+			text: fmt.Sprintf("[%s]workflow %s: %s[-]", theme, tview.Escape(m.Path), status),
 		})
 		if m.Report != "" {
 			// The markdown renderer emits its own color tags; wrapping
@@ -126,7 +126,6 @@ func (t *App) handleControlMsg(msg control.Msg) {
 				isMarkdown: true,
 			})
 		}
-		t.setActivity(activity.Idle, "")
 		t.markDirty()
 
 	case *control.Error:

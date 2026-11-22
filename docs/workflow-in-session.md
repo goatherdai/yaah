@@ -152,11 +152,12 @@ plus `err` capture everything with zero refactoring of the run path.
 1. **Syntax `:workflow run <spec>`** (verb + path) rather than a bare
    `:workflow <spec>`. It matches `yaah workflow run` and leaves
    `:workflow resume` / `explain` slot-in for later.
-2. **Run records still land in the default workflow store** (`state.db`).
-   "Read-only" scopes the *spec* (we run a file, never author in-session);
-   writing the run record is what enables `workflow resume` and
-   `explain --from-trace` later, so we keep it. A throwaway in-memory store is
-   the fallback if a strictly side-effect-free A is preferred.
+2. **The run is one-shot** — an empty `statePath` means no reducer state is
+   persisted, exactly matching `yaah workflow run` without `--state`.
+   "Read-only" scopes the *spec* (we run a file, never author in-session); a
+   TUI run is therefore **not** resumable via `workflow resume`, and the
+   dispatch store used during the run is ephemeral. Durable state is
+   deliberately out of Scope A.
 3. **No live progress in A.** The report appears once, on completion. Per-node
    streaming is the Scope B hook (a `control.Msg` progress type over the
    existing channel — the seam is present, it is simply not built now).

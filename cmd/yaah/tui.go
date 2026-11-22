@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goatherdai/yaah/internal/control"
@@ -165,9 +166,11 @@ func runTUI() error {
 	app.OnCompact = func() {
 		go sess.Compact()
 	}
+	var runMu sync.Mutex
 	app.OnWorkflowRun = func(specPath string) {
 		// Read-only guard before we spend anything.
-		if st, err := os.Stat(specPath); err != nil || st.IsDir() {
+		st, err := os.Stat(specPath)
+		if err != nil {
 			sendCtrlMsg(controlCh, nil, &control.WorkflowRunReport{
 				Path:   specPath,
 				OK:     false,
@@ -175,16 +178,42 @@ func runTUI() error {
 			}, tuiSendTimeout)
 			return
 		}
+		if st.IsDir() {
+			sendCtrlMsg(controlCh, nil, &control.WorkflowRunReport{
+				Path:   specPath,
+				OK:     false,
+				Report: fmt.Sprintf("cannot read spec: %s is a directory, not a file", specPath),
+			}, tuiSendTimeout)
+			return
+		}
+		// Single-flight: the runner exchanges its run-specific retained
+		// runtime through a process-global pointer, so two overlapping runs
+		// would cross wires on proposal-lane work. Refuse rather than race.
+		if !runMu.TryLock() {
+			sendCtrlMsg(controlCh, nil, &control.WorkflowRunReport{
+				Path:   specPath,
+				OK:     false,
+				Report: "a workflow run is already in progress",
+			}, tuiSendTimeout)
+			return
+		}
 		go func() { // do not block the UI; a run can take minutes
+			defer runMu.Unlock()
 			var buf bytes.Buffer
 			c := &cobra.Command{Use: "workflow run"}
 			c.SetOut(&buf) // capture the CLI's own report text
 			c.SetErr(&buf)
 			err := runWorkflowRun(c, specPath, workflowRunOptions{})
+			report := buf.String()
+			if err != nil && strings.TrimSpace(report) == "" {
+				// The run failed before it could write a report; surface the
+				// error rather than an empty body under a "failed" header.
+				report = err.Error()
+			}
 			sendCtrlMsg(controlCh, nil, &control.WorkflowRunReport{
 				Path:   specPath,
 				OK:     err == nil,
-				Report: buf.String(),
+				Report: report,
 			}, tuiSendTimeout)
 		}()
 	}

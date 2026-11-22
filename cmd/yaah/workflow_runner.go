@@ -45,6 +45,7 @@ package yaah
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sync/atomic"
 	"time"
@@ -67,7 +68,7 @@ import (
 //
 // The retained runtime, when the run needs one, is composed here too — see
 // standaloneRetained() — and torn down in the same cleanup.
-func newStandaloneWorkflowRunner() (jobs.TaskRunner, func(), error) {
+func newStandaloneWorkflowRunner(diag io.Writer) (jobs.TaskRunner, func(), error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, nil, fmt.Errorf("workflow: %w", err)
@@ -103,7 +104,7 @@ func newStandaloneWorkflowRunner() (jobs.TaskRunner, func(), error) {
 	if contextWindow < 32000 {
 		contextWindow = 32000
 	}
-	db, sessionID := openWorkflowDispatchStore(ws.cwd, providerName, modelName)
+	db, sessionID := openWorkflowDispatchStore(ws.cwd, providerName, modelName, diag)
 
 	run, rerr := runner.NewStandaloneTaskRunner(runner.StandaloneOpts{
 		Cfg:                   cfg,
@@ -244,10 +245,13 @@ func standalonePathValidator(ws *workspaceStage) *tools.PathValidator {
 // run is over, owns the store's lifetime rather than leaking it to process
 // exit (a leaked handle also pins the file on Windows, where a temp home
 // cannot then be removed).
-func openWorkflowDispatchStore(cwd, providerName, modelName string) (*memory.DB, string) {
+func openWorkflowDispatchStore(cwd, providerName, modelName string, diag io.Writer) (*memory.DB, string) {
+	if diag == nil {
+		diag = os.Stderr
+	}
 	db, err := memory.OpenDefault()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: workflow: dispatch store unavailable, persistence disabled: %v\n", err)
+		fmt.Fprintf(diag, "warning: workflow: dispatch store unavailable, persistence disabled: %v\n", err)
 		return nil, ""
 	}
 	id := fmt.Sprintf("workflow-%d", time.Now().UnixNano())
@@ -257,7 +261,7 @@ func openWorkflowDispatchStore(cwd, providerName, modelName string) (*memory.DB,
 		CWD:       canonicalStoredCwd(cwd),
 		Model:     wireModelValue(providerName, modelName),
 	}); cerr != nil {
-		fmt.Fprintf(os.Stderr, "warning: workflow: dispatch session row failed, persistence disabled: %v\n", cerr)
+		fmt.Fprintf(diag, "warning: workflow: dispatch session row failed, persistence disabled: %v\n", cerr)
 		db.Close()
 		return nil, ""
 	}
