@@ -46,6 +46,8 @@ Count things. Batch ALL independent counts into ONE turn.
     `...[truncated: N files total]...` — N is the total match count.
   - A short (non-truncated) result has NO footer: the returned list is
     complete, so its line count is the total.
+  - An empty match returns exactly `No files found.` — that is 0 files,
+    not 1 (do not count the sentinel line).
 - If bash is available, `find . -maxdepth 1 -mindepth 1 | wc -l` works
   too; report its raw stdout.
 - If a tool call is denied, do NOT retry it — fall back to glob in the

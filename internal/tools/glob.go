@@ -112,12 +112,7 @@ func (t *GlobTool) globRipgrep(ctx context.Context, pattern, path string, filter
 
 	result = strings.Join(lines, "\n")
 	if len(result) > toolResultMaxBytes {
-		result = truncateResult(result)
-		// Keep the total count, exactly as the native walker does: the bare
-		// marker hides "how many files matched", which consumers read as
-		// their authoritative count.
-		result = strings.TrimSuffix(result, truncationMarker) +
-			fmt.Sprintf("\n...[truncated: %d files total]...", len(lines))
+		result = appendTruncationFooter(result, len(lines))
 	}
 	return result, nil
 }
@@ -183,13 +178,18 @@ func (t *GlobTool) globNative(ctx context.Context, pattern, path string) (string
 
 	result := strings.Join(matches, "\n")
 	if len(result) > toolResultMaxBytes {
-		result = truncateResult(result)
-		// Keep the total count: the old marker carried it, and "how many
-		// files matched" is not success detail the cap should hide.
-		result = strings.TrimSuffix(result, truncationMarker) +
-			fmt.Sprintf("\n...[truncated: %d files total]...", len(matches))
+		result = appendTruncationFooter(result, len(matches))
 	}
 	return result, nil
+}
+
+// appendTruncationFooter truncates an over-cap glob listing and appends the
+// total match count, so the "how many files matched" footer stays consistent
+// between the ripgrep and native walkers.
+func appendTruncationFooter(result string, count int) string {
+	result = truncateResult(result)
+	return strings.TrimSuffix(result, truncationMarker) +
+		fmt.Sprintf("\n...[truncated: %d files total]...", count)
 }
 
 // isAbsolutePattern reports whether a glob starts at a filesystem root.
