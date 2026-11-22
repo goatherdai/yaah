@@ -1,11 +1,9 @@
 package yaah
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/goatherdai/yaah/internal/acp"
@@ -267,44 +265,6 @@ func acpListWorkflows() func(cwd string) ([]acp.WorkflowInfo, error) {
 	}
 }
 
-// acpRunWorkflow adapts workflow_run's execution path to the workflow/run
-// callback. It resolves the spec against the search dirs, executes it, and
-// captures the rendered report. The run is synchronous here; the ACP server
-// invokes the callback off the dispatch loop (see handleWorkflowRun).
-func acpRunWorkflow() func(cwd, spec string) (acp.WorkflowRunResult, error) {
-	return func(cwd, spec string) (acp.WorkflowRunResult, error) {
-		resolved, err := discover.Resolve(cwd, spec)
-		if err != nil {
-			return acp.WorkflowRunResult{}, err
-		}
-		// Same single-flight gate as the TUI and tool paths: the runner
-		// exchanges run-specific retained runtime through a process-global
-		// pointer, so overlapping runs would cross wires.
-		if !workflowRunGate.TryLock() {
-			return acp.WorkflowRunResult{OK: false, Report: "a workflow run is already in progress"}, nil
-		}
-		defer workflowRunGate.Unlock()
-		var out, errOut bytes.Buffer
-		cmd := &cobra.Command{}
-		cmd.SetOut(&out)
-		cmd.SetErr(&errOut)
-		err = runWorkflowRun(cmd, resolved, workflowRunOptions{})
-		report := out.String()
-		if errOut.Len() > 0 {
-			report += "\n" + errOut.String()
-		}
-		if err != nil {
-			if strings.TrimSpace(report) == "" {
-				// The run failed before it could write a report; surface the
-				// error rather than handing the client an empty body.
-				report = err.Error()
-			}
-			return acp.WorkflowRunResult{OK: false, Report: report}, nil
-		}
-		return acp.WorkflowRunResult{OK: true, Report: report}, nil
-	}
-}
-
 func runACPServe(cmd *cobra.Command, args []string) error {
 	logf := func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, Dim("yaah acp-serve:")+" "+format+"\n", args...)
@@ -340,7 +300,6 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 	srv.AvailableCommands = acpAvailableCommands
 	srv.Logout = acpLogout
 	srv.ListWorkflows = acpListWorkflows()
-	srv.RunWorkflow = acpRunWorkflow()
 
 	// Saved approvals (yaah-x6vi.6): allow-always answers persist
 	// project-scoped so a later session in the workspace does not re-ask.

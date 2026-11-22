@@ -166,12 +166,6 @@ type Server struct {
 	// and returns the specs (an empty page is an empty array).
 	ListWorkflows func(cwd string) ([]WorkflowInfo, error)
 
-	// RunWorkflow, when non-nil, backs workflow/run
-	// (workflowCapabilities.run). It runs the named/path spec and returns
-	// the report; the server runs it off the dispatch loop so a long
-	// workflow does not stall other requests.
-	RunWorkflow func(cwd, spec string) (WorkflowRunResult, error)
-
 	// SaveApproval, when non-nil, backs `allow-always`: the decision is
 	// persisted project-scoped (cwd, tool, resource) so a later session in
 	// the same workspace does not re-ask. A returned error is logged, never
@@ -683,9 +677,6 @@ func (s *Server) dispatch(
 
 		case "workflow/list":
 			s.handleWorkflowList(msg, respOK, respErr)
-
-		case "workflow/run":
-			s.handleWorkflowRun(msg, c, respOK, respErr)
 
 		default:
 			respErr(msg.ID, codeMethodNotFound, "method not found: "+msg.Method)

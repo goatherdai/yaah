@@ -476,16 +476,7 @@ func (s *Server) capabilities() AgentCaps {
 	}
 	var wc *WorkflowCaps
 	if s.ListWorkflows != nil {
-		if wc == nil {
-			wc = &WorkflowCaps{}
-		}
-		wc.List = &WorkflowListCaps{}
-	}
-	if s.RunWorkflow != nil {
-		if wc == nil {
-			wc = &WorkflowCaps{}
-		}
-		wc.Run = &WorkflowRunCaps{}
+		wc = &WorkflowCaps{List: &WorkflowListCaps{}}
 	}
 	caps := AgentCaps{
 		LoadSession:        true,

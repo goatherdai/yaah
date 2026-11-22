@@ -123,6 +123,11 @@ func (t *WorkflowRunTool) Execute(ctx context.Context, args string) (string, err
 	err := runWorkflowRun(c, p.Spec, workflowRunOptions{
 		workflowOptions: workflowOptions{strict: p.Strict, params: p.Params},
 		progress:        t.progress,
+		// The run's dispatched steps execute in the session's working
+		// directory, not the server process's: a session may sit in a
+		// different workspace, and a run that dispatched in the server's own
+		// directory would act on the wrong tree.
+		workdir: toolWorkDir(t.WS),
 	})
 	if err != nil && buf.Len() == 0 {
 		return "", err

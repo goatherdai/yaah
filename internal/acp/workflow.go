@@ -2,7 +2,6 @@ package acp
 
 import (
 	"encoding/json"
-	"strings"
 
 	"github.com/goatherdai/yaah/internal/cwdpath"
 )
@@ -45,44 +44,4 @@ func (s *Server) handleWorkflowList(
 		specs = []WorkflowInfo{}
 	}
 	respOK(msg.ID, WorkflowListResult{Workflows: specs})
-}
-
-// handleWorkflowRun implements workflow/run (workflowCapabilities.run). The
-// callback runs the named/path spec and returns the report. A workflow can
-// take minutes, so the callback runs on a fresh goroutine and the response
-// is written when it finishes — the dispatch loop keeps reading requests.
-func (s *Server) handleWorkflowRun(
-	msg Message,
-	_ *connection,
-	respOK func(id json.RawMessage, result any),
-	respErr func(id json.RawMessage, code int, message string),
-) {
-	if s.RunWorkflow == nil {
-		respErr(msg.ID, codeMethodNotFound, "workflow/run is not available in this server configuration")
-		return
-	}
-	var p WorkflowRunParams
-	if len(msg.Params) > 0 {
-		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
-			return
-		}
-	}
-	if strings.TrimSpace(p.Spec) == "" {
-		respErr(msg.ID, codeInvalidParams, "invalid params: spec is required")
-		return
-	}
-	cwd, err := cwdpath.Canonical(p.Cwd)
-	if err != nil {
-		respErr(msg.ID, codeInvalidParams, err.Error())
-		return
-	}
-	go func() {
-		result, err := s.RunWorkflow(cwd, p.Spec)
-		if err != nil {
-			respErr(msg.ID, codeInternal, "run workflow: "+err.Error())
-			return
-		}
-		respOK(msg.ID, result)
-	}()
 }
