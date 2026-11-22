@@ -148,6 +148,13 @@ func runWorkflowResume(cmd *cobra.Command, runID string, opts workflowResumeOpti
 	if path == "" {
 		return fmt.Errorf("run %s records no spec path; pass --spec <path>", runID)
 	}
+	// A bare name resolves against the search dirs (default-location
+	// feature); a recorded or --spec path passes through unchanged.
+	if resolved, rerr := resolveWorkflowSpec(path, opts.workflowDirs); rerr != nil {
+		return rerr
+	} else {
+		path = resolved
+	}
 
 	calls, oerr := openWorkflowRegistry(opts.workflowRoot)
 	if oerr != nil {

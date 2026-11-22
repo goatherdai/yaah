@@ -75,6 +75,19 @@ func Show(app *tview.Application, pages *tview.Pages, entries []Entry, onSelect 
 		SetPlaceholder("filter workflows...").
 		SetPlaceholderTextColor(tcell.ColorGray)
 
+	filter.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
+		switch ev.Key() {
+		case tcell.KeyEscape:
+			dismiss()
+			return nil
+		case tcell.KeyDown, tcell.KeyEnter:
+			// Hand off to the list so the picker is navigable from the filter.
+			app.SetFocus(list)
+			return nil
+		}
+		return ev
+	})
+
 	filter.SetChangedFunc(func(text string) {
 		list.Clear()
 		text = strings.ToLower(text)
@@ -95,6 +108,8 @@ func Show(app *tview.Application, pages *tview.Pages, entries []Entry, onSelect 
 		SetTitleColor(tcell.ColorYellow)
 
 	pages.AddPage(modalPageName, modal.Wrap(inner), true, true)
-	app.SetFocus(list)
+	// Focus the filter so typing immediately filters (keyboard-first); ArrowDown
+	// or Enter moves to the list.
+	app.SetFocus(filter)
 	return dismiss
 }

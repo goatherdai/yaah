@@ -225,6 +225,14 @@ document always encodes to the same bytes.`, workflowSeverityHelp, workflowExitH
 // runWorkflow is the whole command: resolve the host authority, analyse the
 // document, print it, and map the verdict onto an exit code.
 func runWorkflow(cmd *cobra.Command, path string, opts workflowOptions, explain bool) error {
+	// A bare name resolves against the search dirs (default-location
+	// feature), so --workflow-dir and the ./workflows / ~/.yaah/workflows
+	// search apply to validate and explain too, not just run.
+	if resolved, err := resolveWorkflowSpec(path, opts.workflowDirs); err != nil {
+		return err
+	} else {
+		path = resolved
+	}
 	calls, oerr := openWorkflowRegistry(opts.workflowRoot)
 	if oerr != nil {
 		return oerr

@@ -123,3 +123,83 @@ func TestResolve(t *testing.T) {
 		}
 	})
 }
+
+// TestListMatchesResolveExtensionOrder pins the parity between listing and
+// running: when a directory holds both foo.json and foo.yaml, List must show
+// the same file Resolve runs (extension order .yaml > .yml > .json), not the
+// lexically first entry.
+func TestListMatchesResolveExtensionOrder(t *testing.T) {
+	t.Setenv("YAAH_HOME", t.TempDir())
+	cwd := t.TempDir()
+	write(t, filepath.Join(cwd, "workflows", "foo.json"), "kind: Workflow\n")
+	write(t, filepath.Join(cwd, "workflows", "foo.yaml"), "kind: Workflow\n")
+
+	got, err := List(cwd)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "foo" {
+		t.Fatalf("List = %+v, want one foo", got)
+	}
+	if got[0].Path != filepath.Join(cwd, "workflows", "foo.yaml") {
+		t.Errorf("List path = %q, want foo.yaml (Resolve's pick)", got[0].Path)
+	}
+	resolved, err := Resolve(cwd, "foo")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got[0].Path != resolved {
+		t.Errorf("List path %q != Resolve path %q", got[0].Path, resolved)
+	}
+}
+
+// TestListSkipsSymlinkToDir pins the symlink parity between listing and
+// running: an extension-bearing symlink whose target is a directory is not a
+// runnable spec, and both List and Resolve must reject it.
+func TestListSkipsSymlinkToDir(t *testing.T) {
+	t.Setenv("YAAH_HOME", t.TempDir())
+	cwd := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cwd, "workflows", "target"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(cwd, "workflows", "target"), filepath.Join(cwd, "workflows", "foo.yaml")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	got, err := List(cwd)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("List returned %+v, want none (symlink to a directory)", got)
+	}
+	if _, err := Resolve(cwd, "foo"); err == nil {
+		t.Fatal("Resolve(foo) succeeded for a symlink-to-directory, want not-found")
+	}
+}
+
+// TestListAbsolutesRelativeExtraDir pins the relative --workflow-dir fix:
+// a caller-supplied relative directory must be made absolute so listed specs
+// carry paths that open from any cwd.
+func TestListAbsolutesRelativeExtraDir(t *testing.T) {
+	t.Setenv("YAAH_HOME", t.TempDir())
+	base := t.TempDir()
+	write(t, filepath.Join(base, "workflow-specs", "rel.yaml"), "kind: Workflow\n")
+
+	// A relative extra dir resolves against the process cwd; chdir there so
+	// "workflow-specs" is unambiguous.
+	t.Chdir(base)
+	got, err := List(base, "workflow-specs")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "rel" {
+		t.Fatalf("List = %+v, want one rel", got)
+	}
+	if want := filepath.Join(base, "workflow-specs", "rel.yaml"); got[0].Path != want {
+		t.Errorf("listed path = %q, want %q", got[0].Path, want)
+	}
+	if !filepath.IsAbs(got[0].Path) {
+		t.Errorf("listed path not absolute: %q", got[0].Path)
+	}
+}

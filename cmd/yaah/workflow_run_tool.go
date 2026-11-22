@@ -8,6 +8,7 @@ import (
 
 	"github.com/goatherdai/yaah/internal/prompts"
 	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/workflow/discover"
 	"github.com/goatherdai/yaah/internal/workflow/exec"
 	"github.com/spf13/cobra"
 )
@@ -37,7 +38,16 @@ type WorkflowRunTool struct {
 	// to the control surface for the TUI; it stays nil in a headless session,
 	// where there is no view to feed and the report at completion is enough.
 	progress func(exec.ProgressEvent)
+
+	WS tools.Workspace
 }
+
+var _ tools.WorkspaceSetter = (*WorkflowRunTool)(nil)
+
+// SetWorkspace receives the session's workspace (injected by the registry),
+// so a bare spec name resolves against the session's working directory rather
+// than the server process's.
+func (t *WorkflowRunTool) SetWorkspace(ws tools.Workspace) { t.WS = ws }
 
 func (t *WorkflowRunTool) Name() string { return "workflow_run" }
 
@@ -79,6 +89,22 @@ func (t *WorkflowRunTool) Execute(ctx context.Context, args string) (string, err
 	if p.Spec == "" {
 		return "", fmt.Errorf("workflow_run: spec is required — the path to a workflow document")
 	}
+	// Resolve a bare name against the session's workspace, then hand an
+	// absolute path to runWorkflowRun (which otherwise re-resolves against
+	// the process cwd and would pick the wrong directory for a session with
+	// its own working directory).
+	if resolved, rerr := discover.Resolve(toolWorkDir(t.WS), p.Spec); rerr != nil {
+		return "", rerr
+	} else {
+		p.Spec = resolved
+	}
+	// Same single-flight gate as the TUI and ACP paths: the runner exchanges
+	// run-specific retained runtime through a process-global pointer, so
+	// overlapping runs would cross wires.
+	if !workflowRunGate.TryLock() {
+		return "", fmt.Errorf("workflow_run: a workflow run is already in progress")
+	}
+	defer workflowRunGate.Unlock()
 
 	// The command writes its report to the writer it is handed and returns an
 	// error for the two failure classes the CLI distinguishes: a document

@@ -403,15 +403,29 @@ func TestHandleCommand_WorkflowListRefusesArg(t *testing.T) {
 	}
 }
 
-func TestHandleCommand_WorkflowBareOpensPicker(t *testing.T) {
+func TestHandleCommand_WorkflowRunNoSpecOpensPicker(t *testing.T) {
+	ui := newColonUI(t)
+	var picked bool
+	ui.OnWorkflowRun = func(string) {}
+	ui.OnWorkflowPicker = func() { picked = true }
+
+	if !ui.HandleCommand(command.CmdWorkflow, "run") {
+		t.Fatal(":workflow run with no spec should open the picker, not be refused")
+	}
+	if !picked {
+		t.Fatal(":workflow run with no spec did not call OnWorkflowPicker")
+	}
+}
+
+func TestHandleCommand_WorkflowBareReportsUsage(t *testing.T) {
 	ui := newColonUI(t)
 	var picked bool
 	ui.OnWorkflowPicker = func() { picked = true }
 
-	if !ui.HandleCommand(command.CmdWorkflow, "") {
-		t.Fatal("bare :workflow should open the picker, not be refused")
+	if ui.HandleCommand(command.CmdWorkflow, "") {
+		t.Fatal("bare :workflow should be refused (usage), not consumed")
 	}
-	if !picked {
-		t.Fatal("bare :workflow did not call OnWorkflowPicker")
+	if picked {
+		t.Fatal("bare :workflow must not open the picker")
 	}
 }

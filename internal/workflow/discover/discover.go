@@ -36,12 +36,28 @@ var specExts = []string{".yaml", ".yml", ".json"}
 // directories win name collisions.
 func SearchDirs(cwd string, extra ...string) []string {
 	dirs := make([]string, 0, len(extra)+2)
-	dirs = append(dirs, extra...)
+	for _, d := range extra {
+		dirs = append(dirs, absDir(d))
+	}
 	if cwd != "" {
-		dirs = append(dirs, filepath.Join(cwd, "workflows"))
+		dirs = append(dirs, absDir(filepath.Join(cwd, "workflows")))
 	}
 	dirs = append(dirs, filepath.Join(config.HomeDir(), "workflows"))
 	return dirs
+}
+
+// absDir makes a caller-supplied directory absolute (resolved against the
+// process working directory). A relative --workflow-dir would otherwise leak
+// relative paths into every listed Spec, which the caller then fails to open
+// from a different directory.
+func absDir(dir string) string {
+	if dir == "" {
+		return dir
+	}
+	if a, err := filepath.Abs(dir); err == nil {
+		return a
+	}
+	return dir
 }
 
 // List scans SearchDirs and returns the discovered specs, deduplicated by
@@ -60,7 +76,11 @@ func List(cwd string, extra ...string) ([]Spec, error) {
 			return nil, fmt.Errorf("workflow/discover: read %s: %w", dir, err)
 		}
 		for _, e := range entries {
-			if e.IsDir() {
+			// Re-stat rather than trusting DirEntry.IsDir(), which does not
+			// follow a symlink: a symlink named foo.yaml pointing at a
+			// directory is not a runnable spec, and Resolve (which uses
+			// os.Stat) rejects it, so List must too.
+			if fi, err := os.Stat(filepath.Join(dir, e.Name())); err != nil || fi.IsDir() {
 				continue
 			}
 			ext := filepath.Ext(e.Name())
@@ -72,15 +92,30 @@ func List(cwd string, extra ...string) ([]Spec, error) {
 				continue
 			}
 			seen[name] = true
+			// specInDir picks the same file Resolve would (extension order),
+			// so the listed path is the one that actually runs.
 			out = append(out, Spec{
 				Name: name,
-				Path: filepath.Join(dir, e.Name()),
+				Path: specInDir(dir, name),
 				Dir:  dir,
 			})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// specInDir returns the document path Resolve would select for name in dir:
+// the first of <name>.yaml, <name>.yml, <name>.json that exists as a regular
+// file. List and Resolve share it so listing and running agree.
+func specInDir(dir, name string) string {
+	for _, ext := range specExts {
+		p := filepath.Join(dir, name+ext)
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	return ""
 }
 
 // Resolve resolves a run reference to a document path. A reference that
@@ -96,11 +131,8 @@ func Resolve(cwd, ref string, extra ...string) (string, error) {
 		return filepath.Join(cwd, ref), nil
 	}
 	for _, dir := range SearchDirs(cwd, extra...) {
-		for _, ext := range specExts {
-			p := filepath.Join(dir, ref+ext)
-			if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-				return p, nil
-			}
+		if p := specInDir(dir, ref); p != "" {
+			return p, nil
 		}
 	}
 	return "", &NotFoundError{Name: ref, Dirs: SearchDirs(cwd, extra...)}

@@ -16,10 +16,33 @@ import (
 	"github.com/goatherdai/yaah/internal/workflow/discover"
 )
 
+// toolWorkDir returns the session's working directory when the tool was
+// injected with a workspace, falling back to the process cwd otherwise
+// (standalone/tests). The fallback keeps the previous behaviour for tools
+// never mounted on a session.
+func toolWorkDir(ws tools.Workspace) string {
+	if ws != nil && ws.WorkDir() != "" {
+		return ws.WorkDir()
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		return cwd
+	}
+	return ""
+}
+
 // WorkflowListTool lists the workflow documents discoverable from the search
 // directories (./workflows then ~/.yaah/workflows). It is the discovery
 // companion to workflow_run: the agent lists, then runs a name from the list.
-type WorkflowListTool struct{}
+type WorkflowListTool struct {
+	WS tools.Workspace
+}
+
+var _ tools.WorkspaceSetter = (*WorkflowListTool)(nil)
+
+// SetWorkspace receives the session's workspace (injected by the registry),
+// so the tool lists the workflows of the session's working directory rather
+// than the server process's.
+func (t *WorkflowListTool) SetWorkspace(ws tools.Workspace) { t.WS = ws }
 
 func (t *WorkflowListTool) Name() string { return "workflow_list" }
 
@@ -39,10 +62,7 @@ func (t *WorkflowListTool) Execute(ctx context.Context, args string) (string, er
 	if err := tools.StrictToolArgs("workflow_list", t.Schema(), args, &p); err != nil {
 		return "", err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("workflow_list: %w", err)
-	}
+	cwd := toolWorkDir(t.WS)
 	specs, err := discover.List(cwd)
 	if err != nil {
 		return "", fmt.Errorf("workflow_list: %w", err)

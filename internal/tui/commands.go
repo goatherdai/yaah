@@ -155,13 +155,9 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 		}
 		switch verb {
 		case "":
-			// Bare :workflow opens the selector (default-location feature).
-			if t.OnWorkflowPicker == nil {
-				t.SetEphemeral("workflow not available in this session")
-				return false
-			}
-			t.OnWorkflowPicker()
-			return true
+			// Bare :workflow is useless without a verb (RequiresArg).
+			t.SetEphemeral("usage: " + command.Usage(command.CmdWorkflow))
+			return false
 		case "list":
 			if t.OnWorkflowList == nil {
 				t.SetEphemeral("workflow not available in this session")
@@ -179,8 +175,14 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 				return false
 			}
 			if rest == "" {
-				t.SetEphemeral("usage: :workflow run <spec.yaml|spec.json>")
-				return false
+				// No spec: open the selector, falling back to usage when the
+				// picker is unavailable.
+				if t.OnWorkflowPicker == nil {
+					t.SetEphemeral("usage: :workflow run <spec.yaml|spec.json>")
+					return false
+				}
+				t.OnWorkflowPicker()
+				return true
 			}
 			t.OnWorkflowRun(rest)
 			return true

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -123,6 +124,12 @@ Flags:
 // resolveWorkflowSpec resolves a run reference to a document path. A path
 // passes through (resolved against the process cwd); a bare name is searched
 // for in the workflow search directories (default-location feature).
+// workflowRunGate serializes workflow executions across every surface that
+// drives the same process-global retained-runtime state (TUI, ACP, and the
+// workflow_run tool). A run that cannot acquire it is refused rather than
+// racing another runner; the winner unlocks when the run finishes.
+var workflowRunGate sync.Mutex
+
 func resolveWorkflowSpec(ref string, dirs []string) (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/goatherdai/yaah/internal/acp"
@@ -276,6 +277,13 @@ func acpRunWorkflow() func(cwd, spec string) (acp.WorkflowRunResult, error) {
 		if err != nil {
 			return acp.WorkflowRunResult{}, err
 		}
+		// Same single-flight gate as the TUI and tool paths: the runner
+		// exchanges run-specific retained runtime through a process-global
+		// pointer, so overlapping runs would cross wires.
+		if !workflowRunGate.TryLock() {
+			return acp.WorkflowRunResult{OK: false, Report: "a workflow run is already in progress"}, nil
+		}
+		defer workflowRunGate.Unlock()
 		var out, errOut bytes.Buffer
 		cmd := &cobra.Command{}
 		cmd.SetOut(&out)
@@ -286,6 +294,11 @@ func acpRunWorkflow() func(cwd, spec string) (acp.WorkflowRunResult, error) {
 			report += "\n" + errOut.String()
 		}
 		if err != nil {
+			if strings.TrimSpace(report) == "" {
+				// The run failed before it could write a report; surface the
+				// error rather than handing the client an empty body.
+				report = err.Error()
+			}
 			return acp.WorkflowRunResult{OK: false, Report: report}, nil
 		}
 		return acp.WorkflowRunResult{OK: true, Report: report}, nil

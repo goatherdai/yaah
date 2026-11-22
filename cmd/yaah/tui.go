@@ -8,7 +8,6 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/goatherdai/yaah/internal/control"
@@ -208,7 +207,6 @@ func runTUI(initialSpec string) error {
 	app.OnCompact = func() {
 		go sess.Compact()
 	}
-	var runMu sync.Mutex
 	app.OnWorkflowRun = func(specPath string) {
 		// A bare name resolves against the search dirs (default-location
 		// feature) before the read guard; a path passes through unchanged.
@@ -243,7 +241,7 @@ func runTUI(initialSpec string) error {
 		// Single-flight: the runner exchanges its run-specific retained
 		// runtime through a process-global pointer, so two overlapping runs
 		// would cross wires on proposal-lane work. Refuse rather than race.
-		if !runMu.TryLock() {
+		if !workflowRunGate.TryLock() {
 			sendCtrlMsg(controlCh, nil, &control.WorkflowRunReport{
 				Path:   specPath,
 				OK:     false,
@@ -252,7 +250,7 @@ func runTUI(initialSpec string) error {
 			return
 		}
 		go func() { // do not block the UI; a run can take minutes
-			defer runMu.Unlock()
+			defer workflowRunGate.Unlock()
 			var buf bytes.Buffer
 			c := &cobra.Command{Use: "workflow run"}
 			c.SetOut(&buf) // capture the CLI's own report text
