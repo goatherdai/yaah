@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.200.0](https://github.com/goatherdai/yaah/compare/v0.199.4...v0.200.0) (2026-11-22)
+
+
+### Features
+
+* **supervision:** per-role shell-command allowlist for the blocking sub-agent guard ([#340](https://github.com/goatherdai/yaah/issues/340)) ([4fc4552](https://github.com/goatherdai/yaah/commit/4fc455298e0353dc0df98590758581ba89c2632e))
+
 ## [0.199.4](https://github.com/goatherdai/yaah/compare/v0.199.3...v0.199.4) (2026-11-20)
 
 
