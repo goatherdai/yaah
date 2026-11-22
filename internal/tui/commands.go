@@ -146,10 +146,6 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 		t.searchMessages(arg)
 		return true
 	case command.CmdWorkflow:
-		if t.OnWorkflowRun == nil {
-			t.SetEphemeral("workflow not available in this session")
-			return false
-		}
 		arg = strings.TrimSpace(arg)
 		verb := arg
 		rest := ""
@@ -157,12 +153,43 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 			verb = arg[:i]
 			rest = strings.TrimSpace(arg[i:])
 		}
-		if verb != "run" || rest == "" {
-			t.SetEphemeral("usage: :workflow run <spec.yaml|spec.json>")
+		switch verb {
+		case "":
+			// Bare :workflow is useless without a verb (RequiresArg).
+			t.SetEphemeral("usage: " + command.Usage(command.CmdWorkflow))
+			return false
+		case "list":
+			if t.OnWorkflowList == nil {
+				t.SetEphemeral("workflow not available in this session")
+				return false
+			}
+			if rest != "" {
+				t.SetEphemeral("usage: :workflow list")
+				return false
+			}
+			t.OnWorkflowList()
+			return true
+		case "run":
+			if t.OnWorkflowRun == nil {
+				t.SetEphemeral("workflow not available in this session")
+				return false
+			}
+			if rest == "" {
+				// No spec: open the selector, falling back to usage when the
+				// picker is unavailable.
+				if t.OnWorkflowPicker == nil {
+					t.SetEphemeral("usage: :workflow run <spec.yaml|spec.json>")
+					return false
+				}
+				t.OnWorkflowPicker()
+				return true
+			}
+			t.OnWorkflowRun(rest)
+			return true
+		default:
+			t.SetEphemeral("usage: " + command.Usage(command.CmdWorkflow))
 			return false
 		}
-		t.OnWorkflowRun(rest)
-		return true
 	default:
 		// Reachable for commands that are declared and parseable but have no
 		// handler yet (roles, login, logout, session, mcp). Say so rather than

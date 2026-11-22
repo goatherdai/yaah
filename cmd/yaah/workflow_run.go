@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"sort"
+	"sync"
 	"text/tabwriter"
 	"time"
 
+	"github.com/goatherdai/yaah/internal/workflow/discover"
 	"github.com/goatherdai/yaah/internal/workflow/exec"
 	"github.com/goatherdai/yaah/internal/workflow/host"
 	"github.com/spf13/cobra"
@@ -45,6 +48,10 @@ const runJSONKind = "yaah.workflow.run.v1"
 // The second return is the teardown the command owes the runner's resources
 // (the standalone default opens the dispatch store); it may be nil when a
 // composition holds none.
+// workdir is the directory the run's dispatched steps execute in; empty
+// means the process working directory. It is threaded into the composition
+// rather than applied with os.Chdir, so a run started from a session with
+// its own working directory does not move the whole process.
 var workflowRunRunner = newStandaloneWorkflowRunner
 
 type workflowRunOptions struct {
@@ -53,6 +60,13 @@ type workflowRunOptions struct {
 	artifactRoot string
 	statePath    string
 	replayRunID  string
+	// workdir, when non-empty, is the working directory the run's dispatched
+	// steps execute in. Empty keeps the historical behavior: the standalone
+	// composition uses the process working directory. The process is never
+	// chdir'd — the directory travels through the runner's composition
+	// (SessionOptions.Cwd) instead, so a run driven by a session with its own
+	// workspace dispatches in that workspace.
+	workdir string
 	// progress, when non-nil, receives each committed external lifecycle
 	// event's projection as the run executes (workflow-in-session Scope B).
 	// It is a seam for the in-session tool, not a CLI flag: the command
@@ -118,7 +132,31 @@ Flags:
 	return cmd
 }
 
+// resolveWorkflowSpec resolves a run reference to a document path. A path
+// passes through (resolved against the process cwd); a bare name is searched
+// for in the workflow search directories (default-location feature).
+// workflowRunGate serializes workflow executions across every surface that
+// drives the same process-global retained-runtime state (TUI, ACP, and the
+// workflow_run tool). A run that cannot acquire it is refused rather than
+// racing another runner; the winner unlocks when the run finishes.
+var workflowRunGate sync.Mutex
+
+func resolveWorkflowSpec(ref string, dirs []string) (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve workflow spec: %w", err)
+	}
+	return discover.Resolve(cwd, ref, dirs...)
+}
+
 func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) error {
+	// A bare name resolves against the search dirs (default-location
+	// feature); a path passes through unchanged.
+	resolved, err := resolveWorkflowSpec(path, opts.workflowDirs)
+	if err != nil {
+		return err
+	}
+	path = resolved
 	if opts.replayRunID != "" {
 		return runWorkflowReplay(cmd, path, opts)
 	}
@@ -148,7 +186,7 @@ func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) er
 		return workflowExitError(a)
 	}
 
-	run, cleanup, rerr := workflowRunRunner(cmd.ErrOrStderr())
+	run, cleanup, rerr := workflowRunRunner(opts.workdir, cmd.ErrOrStderr())
 	if rerr != nil {
 		return rerr
 	}

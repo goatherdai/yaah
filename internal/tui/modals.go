@@ -8,6 +8,7 @@ import (
 	"github.com/goatherdai/yaah/internal/tui/components/help"
 	"github.com/goatherdai/yaah/internal/tui/components/modelpicker"
 	"github.com/goatherdai/yaah/internal/tui/components/question"
+	"github.com/goatherdai/yaah/internal/tui/components/workflowpicker"
 )
 
 // Modals — modal dialog wrappers.
@@ -86,6 +87,14 @@ func (t *App) SetAgentPicker(names []string, descriptions map[string]string) {
 func (t *App) ShowAgentPicker(names []string, descriptions map[string]string, onSelect func(string)) {
 	t.beginModal()
 	agentpicker.Show(t.App, t.Pages, names, descriptions, onSelect, t.endModal)
+}
+
+// ShowWorkflowPicker displays the workflow selector modal (default-location
+// feature): the discovered specs as a filterable list. Selecting one routes
+// the bare name to onSelect, which the driver forwards to :workflow run.
+func (t *App) ShowWorkflowPicker(entries []workflowpicker.Entry, onSelect func(string)) {
+	t.beginModal()
+	workflowpicker.Show(t.App, t.Pages, entries, onSelect, t.endModal, t.Input)
 }
 
 // ShowHelp displays the help overlay.

@@ -15,6 +15,7 @@ import (
 	"github.com/goatherdai/yaah/internal/retention"
 	"github.com/goatherdai/yaah/internal/sessions"
 	"github.com/goatherdai/yaah/internal/skills"
+	"github.com/goatherdai/yaah/internal/workflow/discover"
 	"github.com/spf13/cobra"
 )
 
@@ -248,6 +249,22 @@ func acpAvailableCommands(cwd string) []acp.AvailableCommand {
 	return out
 }
 
+// acpListWorkflows adapts the discover package to the workflow/list
+// callback: the discovered specs, in search order, for a client's picker.
+func acpListWorkflows() func(cwd string) ([]acp.WorkflowInfo, error) {
+	return func(cwd string) ([]acp.WorkflowInfo, error) {
+		specs, err := discover.List(cwd)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]acp.WorkflowInfo, 0, len(specs))
+		for _, sp := range specs {
+			out = append(out, acp.WorkflowInfo{Name: sp.Name, Path: sp.Path})
+		}
+		return out, nil
+	}
+}
+
 func runACPServe(cmd *cobra.Command, args []string) error {
 	logf := func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, Dim("yaah acp-serve:")+" "+format+"\n", args...)
@@ -282,6 +299,7 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 	srv.DeleteSession = acpDeleteSession(reg)
 	srv.AvailableCommands = acpAvailableCommands
 	srv.Logout = acpLogout
+	srv.ListWorkflows = acpListWorkflows()
 
 	// Saved approvals (yaah-x6vi.6): allow-always answers persist
 	// project-scoped so a later session in the workspace does not re-ask.

@@ -148,6 +148,24 @@ func (t *App) handleControlMsg(msg control.Msg) {
 		})
 		t.markDirty()
 
+	case *control.WorkflowList:
+		// Durable dim entries, one per discovered spec (default-location
+		// feature). Render-only, like WorkflowRunReport.
+		t.flushPendingTokens()
+		var b strings.Builder
+		if len(m.Specs) == 0 {
+			fmt.Fprintf(&b, "[%s]no workflow specs found[-]", t.Theme.Dim)
+		} else {
+			for i, s := range m.Specs {
+				if i > 0 {
+					b.WriteByte('\n')
+				}
+				fmt.Fprintf(&b, "[%s]%s  %s[-]", t.Theme.Dim, tview.Escape(s.Name), tview.Escape(s.Path))
+			}
+		}
+		t.conversationLog = append(t.conversationLog, convItem{text: b.String()})
+		t.markDirty()
+
 	case *control.Error:
 		errText := ""
 		if m.Err != nil {

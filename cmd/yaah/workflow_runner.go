@@ -24,7 +24,8 @@
 //     so the refusal names the missing fact instead of hiding it behind a
 //     dispatch error.
 //   - No sandbox. The dispatch runs in the session's local posture — the
-//     process working directory, the harness paths guarded, no container —
+//     run's working directory (the process cwd for the CLI, the session's own
+//     cwd for an in-session run), the harness paths guarded, no container —
 //     because a workflow run has no --workspace flag to honor and a container
 //     started here would be a world the user never asked for.
 //   - No supervision scope tree. Scopes fork from a session's root scope;
@@ -68,7 +69,12 @@ import (
 //
 // The retained runtime, when the run needs one, is composed here too — see
 // standaloneRetained() — and torn down in the same cleanup.
-func newStandaloneWorkflowRunner(diag io.Writer) (jobs.TaskRunner, func(), error) {
+//
+// workdir is the directory the run's dispatched steps execute in; empty
+// defers to the process working directory, so the CLI path is unchanged. It
+// reaches the dispatch through the workspace stage (SessionOptions.Cwd),
+// never through os.Chdir.
+func newStandaloneWorkflowRunner(workdir string, diag io.Writer) (jobs.TaskRunner, func(), error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, nil, fmt.Errorf("workflow: %w", err)
@@ -93,7 +99,7 @@ func newStandaloneWorkflowRunner(diag io.Writer) (jobs.TaskRunner, func(), error
 	// resolves roles against. buildWorkspace is the session's stage for this
 	// and starts nothing — the containment substrate is a separate stage,
 	// deliberately not run here (see the sandbox note above).
-	ws, werr := buildWorkspace(cfg, SessionOptions{})
+	ws, werr := buildWorkspace(cfg, SessionOptions{Cwd: workdir})
 	if werr != nil {
 		return nil, nil, fmt.Errorf("workflow: %w", werr)
 	}

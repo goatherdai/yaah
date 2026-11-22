@@ -160,6 +160,12 @@ type Server struct {
 	// internal errors and keep the session listed.
 	DeleteSession func(id string) error
 
+	// ListWorkflows, when non-nil, backs workflow/list
+	// (workflowCapabilities.list): discovery of the runnable workflow
+	// specs for a client's picker. It receives the canonical absolute cwd
+	// and returns the specs (an empty page is an empty array).
+	ListWorkflows func(cwd string) ([]WorkflowInfo, error)
+
 	// SaveApproval, when non-nil, backs `allow-always`: the decision is
 	// persisted project-scoped (cwd, tool, resource) so a later session in
 	// the same workspace does not re-ask. A returned error is logged, never
@@ -668,6 +674,9 @@ func (s *Server) dispatch(
 
 		case "session/set_config_option":
 			s.handleSetConfigOption(dispatchCtx, msg, sendUpdate, respOK, respErr)
+
+		case "workflow/list":
+			s.handleWorkflowList(msg, respOK, respErr)
 
 		default:
 			respErr(msg.ID, codeMethodNotFound, "method not found: "+msg.Method)

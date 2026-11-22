@@ -376,3 +376,56 @@ func TestHandleCommand_WorkflowAcceptsTabSeparator(t *testing.T) {
 		t.Fatalf("callback spec = %q, want %q", called, "specs/demo.yaml")
 	}
 }
+
+func TestHandleCommand_WorkflowListCallsCallback(t *testing.T) {
+	ui := newColonUI(t)
+	var listed bool
+	ui.OnWorkflowList = func() { listed = true }
+
+	if !ui.HandleCommand(command.CmdWorkflow, "list") {
+		t.Fatal(":workflow list should be consumed")
+	}
+	if !listed {
+		t.Fatal(":workflow list did not call OnWorkflowList")
+	}
+}
+
+func TestHandleCommand_WorkflowListRefusesArg(t *testing.T) {
+	ui := newColonUI(t)
+	var listed bool
+	ui.OnWorkflowList = func() { listed = true }
+
+	if ui.HandleCommand(command.CmdWorkflow, "list extra") {
+		t.Fatal(":workflow list <extra> should be refused, not consumed")
+	}
+	if listed {
+		t.Fatal(":workflow list <extra> reached the callback")
+	}
+}
+
+func TestHandleCommand_WorkflowRunNoSpecOpensPicker(t *testing.T) {
+	ui := newColonUI(t)
+	var picked bool
+	ui.OnWorkflowRun = func(string) {}
+	ui.OnWorkflowPicker = func() { picked = true }
+
+	if !ui.HandleCommand(command.CmdWorkflow, "run") {
+		t.Fatal(":workflow run with no spec should open the picker, not be refused")
+	}
+	if !picked {
+		t.Fatal(":workflow run with no spec did not call OnWorkflowPicker")
+	}
+}
+
+func TestHandleCommand_WorkflowBareReportsUsage(t *testing.T) {
+	ui := newColonUI(t)
+	var picked bool
+	ui.OnWorkflowPicker = func() { picked = true }
+
+	if ui.HandleCommand(command.CmdWorkflow, "") {
+		t.Fatal("bare :workflow should be refused (usage), not consumed")
+	}
+	if picked {
+		t.Fatal("bare :workflow must not open the picker")
+	}
+}

@@ -157,6 +157,7 @@ type AgentCaps struct {
 	MCPCapabilities    *MCPCaps       `json:"mcpCapabilities,omitempty"`
 	Auth               *AgentAuthCaps `json:"auth,omitempty"`
 	Session            *SessionCaps   `json:"sessionCapabilities,omitempty"`
+	Workflow           *WorkflowCaps  `json:"workflowCapabilities,omitempty"`
 }
 
 // PromptCaps advertise richer session/prompt content. text and resource_link
@@ -365,6 +366,33 @@ type WorldMeta struct {
 type ListSessionsResult struct {
 	Sessions   []SessionInfo `json:"sessions"`
 	NextCursor string        `json:"nextCursor,omitempty"`
+}
+
+// === workflow (list) ===
+
+// WorkflowCaps advertise the workflow selector surface. The list field
+// flips one method, mirroring sessionCapabilities.list. The surface is
+// read-only by design: executing a workflow goes through the permissioned
+// workflow_run tool, so ACP advertises no run method.
+type WorkflowCaps struct {
+	List *WorkflowListCaps `json:"list,omitempty"`
+}
+
+// WorkflowListCaps advertises workflow/list. No options exist yet; the
+// empty struct flips the capability.
+type WorkflowListCaps struct{}
+
+// WorkflowInfo is one discovered workflow spec: the bare name (the run
+// handle) and its absolute path.
+type WorkflowInfo struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+// WorkflowListResult is the result of workflow/list. An empty page is an
+// empty array, never null.
+type WorkflowListResult struct {
+	Workflows []WorkflowInfo `json:"workflows"`
 }
 
 // === session lifecycle (resume / close / delete) ===

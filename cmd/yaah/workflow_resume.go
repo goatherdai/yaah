@@ -59,6 +59,10 @@ type workflowResumeOptions struct {
 	statePath    string
 	specPath     string
 	artifactRoot string
+	// workdir threads through to the runner seam exactly as on
+	// workflowRunOptions; resume has no session-cwd source, so it stays empty
+	// (process working directory) unless a future caller supplies one.
+	workdir string
 }
 
 func newWorkflowResumeCmd() *cobra.Command {
@@ -123,7 +127,7 @@ func runWorkflowResume(cmd *cobra.Command, runID string, opts workflowResumeOpti
 		return err
 	}
 	defer st.Close()
-	run, cleanup, rerr := workflowRunRunner(cmd.ErrOrStderr())
+	run, cleanup, rerr := workflowRunRunner(opts.workdir, cmd.ErrOrStderr())
 	if rerr != nil {
 		return rerr
 	}
@@ -147,6 +151,13 @@ func runWorkflowResume(cmd *cobra.Command, runID string, opts workflowResumeOpti
 	}
 	if path == "" {
 		return fmt.Errorf("run %s records no spec path; pass --spec <path>", runID)
+	}
+	// A bare name resolves against the search dirs (default-location
+	// feature); a recorded or --spec path passes through unchanged.
+	if resolved, rerr := resolveWorkflowSpec(path, opts.workflowDirs); rerr != nil {
+		return rerr
+	} else {
+		path = resolved
 	}
 
 	calls, oerr := openWorkflowRegistry(opts.workflowRoot)
