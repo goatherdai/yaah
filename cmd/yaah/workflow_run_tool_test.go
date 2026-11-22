@@ -101,3 +101,23 @@ func TestWorkflowRunToolRejectsUnknownArgs(t *testing.T) {
 		t.Fatal("expected a refusal for an unknown argument key")
 	}
 }
+
+// TestWorkflowRunToolDoc_NamesEverySchemaProperty mirrors the internal/tools
+// doc-parity standard for a tool that lives in cmd/yaah (and so cannot join
+// allBuiltinTools): the model-facing doc must name every schema property so
+// argument semantics stay in one place.
+func TestWorkflowRunToolDoc_NamesEverySchemaProperty(t *testing.T) {
+	var tool WorkflowRunTool
+	doc := tool.Description()
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(tool.Schema(), &schema); err != nil {
+		t.Fatalf("Schema() is not valid JSON: %v", err)
+	}
+	for prop := range schema.Properties {
+		if !strings.Contains(doc, prop) {
+			t.Errorf("doc does not name schema property %q", prop)
+		}
+	}
+}
