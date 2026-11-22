@@ -447,16 +447,29 @@ func TestThreeWayApplyRecordsStrategyFact(t *testing.T) {
 	if !ok {
 		t.Fatal("root scope missing")
 	}
+	// The settlement must cite the declaration the worktree world enforced: the
+	// same plan digest the seal recorded, not a digest re-derived at settle.
+	wantDigest, err := resolveWorktreePlanDigest(rt, "worker")
+	if err != nil {
+		t.Fatalf("resolveWorktreePlanDigest: %v", err)
+	}
 	facts := findRetainedFacts(t, fx.store, parent.OwnerID(), SchemaProposalSettled)
 	found := false
 	for _, fact := range facts {
 		var payload struct {
 			Action   string `json:"action"`
 			Strategy string `json:"strategy"`
+			// The declaration the merge lane's settlement is the commit-time
+			// monitor for.
+			AuthorityPlanDigest string `json:"authority_plan_digest"`
 		}
 		data, _ := json.Marshal(fact.Body.Payload)
 		if json.Unmarshal(data, &payload) == nil && payload.Action == "apply" && payload.Strategy == proposalApplyThreeWay {
 			found = true
+			if payload.AuthorityPlanDigest != wantDigest {
+				t.Errorf("settle fact authority_plan_digest = %q, want the worktree seal's %q",
+					payload.AuthorityPlanDigest, wantDigest)
+			}
 		}
 	}
 	if !found {

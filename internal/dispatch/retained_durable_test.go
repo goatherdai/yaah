@@ -8,6 +8,7 @@ package dispatch
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,5 +145,106 @@ func TestRetained_WorktreeProposalSurvivesRestart(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotSeed, transcript) {
 		t.Errorf("continuation seed after restart = %+v, want %+v", gotSeed, transcript)
+	}
+}
+
+// TestRetained_WorktreeProposalCitesPlanDigest pins the worktree lane's
+// declaration citation. The dispatch compiles the same declaration the container
+// lane compiles (see worktreeAuthorityForDispatch) and the digest rides in the
+// only durable seal record this lane has — the sealed output's metadata — so the
+// live proposal carries it into settlement and a proposal rehydrated after a
+// restart still cites the declaration its world enforced instead of
+// re-deriving one from config that may have moved.
+func TestRetained_WorktreeProposalCitesPlanDigest(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	transcript := []types.Message{types.UserMsg("do the work")}
+	var calls int
+
+	runner := func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+		calls++
+		writeTestFile(t, params.Workdir, "work.txt", "work\n")
+		jobs.CaptureSubAgentTranscript(ctx, transcript)
+		return "done", nil
+	}
+	rt := RetainedRuntime{
+		Runner:       runner,
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		SessionID:    "sess-plan-digest",
+		Proposals:    NewProposalRegistry(),
+		Network:      "allow_all",
+	}
+
+	want, err := resolveWorktreePlanDigest(rt, "developer")
+	if err != nil {
+		t.Fatalf("resolveWorktreePlanDigest: %v", err)
+	}
+	if len(want) != 64 || strings.Trim(want, "0123456789abcdef") != "" {
+		t.Fatalf("worktree plan digest = %q, want 64 hex characters", want)
+	}
+
+	res, err := StartRetainedRun(context.Background(), rt, "go", SubAgentParams{Role: "developer"}, 10*time.Second, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+	if env.Status != "proposal" {
+		t.Fatalf("dispatch status = %q (%s)", env.Status, env.Error)
+	}
+	live, err := rt.Proposals.get(env.ProposalID)
+	if err != nil {
+		t.Fatalf("live proposal: %v", err)
+	}
+	if live.authorityPlanDigest != want {
+		t.Errorf("live proposal cites %q, want the compiled declaration %q", live.authorityPlanDigest, want)
+	}
+
+	// The seal's metadata is this lane's durable record, so the digest must ride
+	// in it — that is what a later process reads.
+	meta, _, merr := proposalMetaFromOutput(live.output)
+	if merr != nil {
+		t.Fatalf("sealed proposal metadata: %v", merr)
+	}
+	if meta.AuthorityPlanDigest != want {
+		t.Errorf("sealed metadata cites %q, want %q", meta.AuthorityPlanDigest, want)
+	}
+
+	// A continuation is a world of its own: it seals its own citation.
+	contRes, err := ContinueRetainedRun(context.Background(), rt, env.ProposalID, 2, "", false)
+	if err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	contEnv := decodeProposalEnvelope(t, contRes)
+	if contEnv.Status != "proposal" {
+		t.Fatalf("continuation status = %q (%s)", contEnv.Status, contEnv.Error)
+	}
+	cont, err := rt.Proposals.get(contEnv.ProposalID)
+	if err != nil {
+		t.Fatalf("continuation proposal: %v", err)
+	}
+	if cont.authorityPlanDigest != want {
+		t.Errorf("continuation cites %q, want %q", cont.authorityPlanDigest, want)
+	}
+	if calls < 2 {
+		t.Fatalf("continuation did not run the body (calls = %d)", calls)
+	}
+
+	// A restart re-reads the sealed metadata: the recovered proposal must cite
+	// the same declaration it was sealed with.
+	newMgr, _, rerr := recovery.Recover(context.Background(), fx.store, repo, true, nil)
+	if rerr != nil {
+		t.Fatalf("recover: %v", rerr)
+	}
+	reg, warnings := LoadProposalRegistry(repo, newMgr, rootID, "sess-plan-digest")
+	for _, id := range []string{env.ProposalID, contEnv.ProposalID} {
+		p, err := reg.get(id)
+		if err != nil {
+			t.Fatalf("recovered proposal %s missing: %v (warnings: %v)", id, err, warnings)
+		}
+		if p.authorityPlanDigest != want {
+			t.Errorf("rehydrated proposal %s cites %q, want the sealed %q", id, p.authorityPlanDigest, want)
+		}
 	}
 }

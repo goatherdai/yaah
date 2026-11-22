@@ -817,6 +817,17 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		recordDispatchWorld(ctx, worldRes)
 	}
 
+	// The worktree world's declaration: the same grants and egress posture the
+	// container lane compiles, restated with the containment posture this world
+	// actually enforces (see worktreeAuthorityForDispatch). Resolved before
+	// anything is provisioned, so a declaration no plan covers refuses the
+	// dispatch instead of running a world that cites no authority — the same
+	// fail-closed gate the container lane applies before it opens a container.
+	planDigest, digestErr := resolveWorktreePlanDigest(rt, subParams.Role)
+	if digestErr != nil {
+		return retainedRunResult{}, fmt.Errorf("delegate: %w", digestErr)
+	}
+
 	// The basis: the parent's workspace at dispatch, or — for retained-result
 	// threading — the source proposal's sealed workspace as the seed and its
 	// recorded basis as the delta base. The proposal's delta is everything
@@ -979,6 +990,12 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		StopReason:    env.StopReason,
 		Params:        subParams,
 		TimeoutMS:     timeout.Milliseconds(),
+		// The declaration this proposal's settlement will cite. It rides in
+		// the seal's metadata because that is this lane's durable seal record:
+		// a worktree proposal has no manifest and no seal fact (its review
+		// evidence is the runtime merge-proposal pair), so the sealed output's
+		// metadata is where a restarted process finds the digest.
+		AuthorityPlanDigest: planDigest,
 	}, transcript)
 	if forkSeed.source != nil {
 		sealOpts.DerivedFrom = forkSeed.source.ID()
@@ -1045,6 +1062,10 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		params:         subParams,
 		timeout:        timeout,
 		stopReason:     env.StopReason,
+		// The declaration the seal cited, carried into settlement so the
+		// worktree settle fact names the plan this world enforced rather than
+		// re-deriving it from config that may have moved since.
+		authorityPlanDigest: planDigest,
 	}
 	rt.Proposals.add(proposal)
 	rt.Proposals.recordSealConflictFacts(ctx, proposal)
@@ -1237,6 +1258,16 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	if serr != nil {
 		return "", serr
 	}
+
+	// The continuation is a worktree world of its own, so it cites the same
+	// declaration the original did — resolved before the new worktree exists,
+	// so an uncompilable declaration refuses the continuation rather than
+	// sealing a proposal that names no authority.
+	planDigest, derr := resolveWorktreePlanDigest(rt, p.params.Role)
+	if derr != nil {
+		return "", fmt.Errorf("continue: %w", derr)
+	}
+
 	newID := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
 	wt := retainedWorktreePath(rt, newID)
 	rt.BeginDispatchScope(newID)
@@ -1304,6 +1335,10 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		StopReason:    stopReason,
 		Params:        p.params,
 		TimeoutMS:     p.timeout.Milliseconds(),
+		// The continuation's own declaration citation: a fork is a new world,
+		// so the sealed metadata must carry the digest its settlement will
+		// record rather than inheriting the source proposal's.
+		AuthorityPlanDigest: planDigest,
 	}, transcript)
 	// Native lineage: a continuation derives from the source; consuming it
 	// also supersedes it, while a fork only derives.
@@ -1373,6 +1408,9 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		params:         p.params,
 		timeout:        p.timeout,
 		stopReason:     stopReason,
+		// Same citation as the seal: settlement records the declaration the
+		// continuation's world enforced.
+		authorityPlanDigest: planDigest,
 	}
 	rt.Proposals.add(cont)
 	rt.Proposals.recordSealConflictFacts(ctx, cont)

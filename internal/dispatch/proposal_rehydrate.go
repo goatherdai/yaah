@@ -156,7 +156,13 @@ func loadWorktreeProposals(reg *ProposalRegistry, mgr *goatherd.ScopeManager, re
 				repoPath:       repoPath,
 				reviewProposal: reviewProposal,
 				reviewFactID:   reviewFactID,
-				world:          "worktree",
+				// A rehydrated worktree proposal cites the same declaration the
+				// seal did, so its settlement fact names the plan the world
+				// enforced instead of a digest this process cannot know. An empty
+				// value is a seal from before the citation existed: settlement
+				// records no citation rather than inventing one.
+				authorityPlanDigest: meta.AuthorityPlanDigest,
+				world:               "worktree",
 			})
 		}
 	}
