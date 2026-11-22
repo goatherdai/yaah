@@ -37,6 +37,13 @@ import (
 //	                                                     result, output digest,
 //	                                                     error body, retryable
 //	                                                     assert (yaah-0u0v.25)
+//	                   attempt_timed_out                 attempt, dispatch id,
+//	                                                     lane, status=error,
+//	                                                     reason=timeout, and the
+//	                                                     retryable assert — the
+//	                                                     same shape a lane
+//	                                                     timeout records, so a
+//	                                                     replay re-derives it
 //	proposal           attempt_completed w/ proposal id  proposal id, attempt
 //	settle             settlement_asked                  proposal id, action,
 //	                                                     status=asked
@@ -112,6 +119,8 @@ func (r *Run) traceRecords(ev Event) []trace.Record {
 		return []trace.Record{rec}
 	case AttemptCompletedEvent:
 		return r.attemptRecords(e)
+	case AttemptTimedOutEvent:
+		return []trace.Record{r.timeoutRecord(e)}
 	case NodeSucceededEvent:
 		rec := r.nodeRecord(trace.KindNodeFinished, e.NodePath, trace.StatusSucceeded)
 		rec.OutputDigest = r.outputDigest(e.NodePath)
@@ -238,6 +247,26 @@ func (r *Run) attemptRecords(e AttemptCompletedEvent) []trace.Record {
 		out = append(out, p)
 	}
 	return out
+}
+
+// timeoutRecord projects a scheduler-concluded timeout as the dispatch record a
+// lane-reported timeout would have produced: status=error, reason=timeout, and
+// the retryable assert a retry decision reads. The two are deliberately
+// indistinguishable here, because they are the same fact about the attempt —
+// which side of the door enforced the deadline is the log's own word
+// (attempt_timed_out), not the record's.
+//
+// The shape is also what makes a replay re-derive the run: the replay door
+// answers a dispatch from exactly these fields (Status, Reason, Retryable), so a
+// timed-out attempt replays as the same retryable failure it was folded as.
+func (r *Run) timeoutRecord(e AttemptTimedOutEvent) trace.Record {
+	rec := r.nodeRecord(trace.KindDispatch, e.NodePath, StatusError)
+	rec.Attempt = e.Attempt
+	rec.DispatchID = e.DispatchID
+	rec.Reason = StopReasonTimeout
+	retryable := true
+	rec.Retryable = &retryable
+	return rec
 }
 
 // nodeRecord builds a record about one node, filling the identity facts the

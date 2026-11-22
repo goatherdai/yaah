@@ -356,6 +356,8 @@ func (r *Run) fold(ev Event) error {
 		return r.onDispatchStarted(e)
 	case AttemptCompletedEvent:
 		return r.onAttemptCompleted(e)
+	case AttemptTimedOutEvent:
+		return r.onAttemptTimedOut(e)
 	case RetryScheduledEvent:
 		return r.onRetryScheduled(e)
 	case NodeSucceededEvent:
@@ -660,6 +662,62 @@ func (r *Run) onAttemptCompleted(e AttemptCompletedEvent) error {
 	// Retry only on the envelope's own assertion, and only inside the ceiling
 	// the author declared. Error prose is never re-guessed: a lane that wants
 	// a retry has to say so in recovery.retryable.
+	if c.Retryable() && len(st.Attempts) < st.MaxAttempts {
+		if err := r.derive(RetryScheduledEvent{
+			NodePath: e.NodePath,
+			Attempt:  len(st.Attempts) + 1,
+			Backoff:  backoffFor(r.byPath[e.NodePath]),
+		}); err != nil {
+			return err
+		}
+		return r.derive(NodeReadyEvent{NodePath: e.NodePath})
+	}
+	return r.failTerminal(e.NodePath, failureReason(st.MaxAttempts, c))
+}
+
+// onAttemptTimedOut folds the node timeout the driver concluded about an
+// in-flight attempt. No envelope is waited for: the run already ruled the
+// attempt out, so the failure is built here from the same typed facts a
+// lane-reported timeout carries — status=error, stop_reason=timeout,
+// recovery.retryable=true — and then follows onAttemptCompleted's shape
+// exactly: the attempt closes, the ceiling decides retry, and a node out of
+// attempts ends with the reason that ceiling states.
+//
+// The retryability is the scheduler's conclusion and is deliberately not a
+// derivation from prose: a timeout means the work did not finish in the time it
+// was given, which is the one recovery re-dispatching can answer.
+func (r *Run) onAttemptTimedOut(e AttemptTimedOutEvent) error {
+	st := r.state[e.NodePath]
+	if st == nil {
+		return fmt.Errorf("workflow/exec: attempt_timed_out for unknown node %q", e.NodePath)
+	}
+	if st.State != StateRunning {
+		return fmt.Errorf("workflow/exec: attempt_timed_out for node %s in state %s", e.NodePath, st.State)
+	}
+	a := r.current[e.NodePath]
+	if a == nil || a.DispatchID != e.DispatchID || a.Number != e.Attempt {
+		return fmt.Errorf("workflow/exec: attempt_timed_out %s#%d does not match the running attempt of node %s",
+			e.NodePath, e.Attempt, e.DispatchID)
+	}
+	if e.CancelErr != "" {
+		st.CancelErr = e.CancelErr
+	}
+	a.Cancelled = true
+	c := Completion{
+		Status:     StatusError,
+		DispatchID: e.DispatchID,
+		StopReason: StopReasonTimeout,
+		DurationMs: e.Elapsed.Milliseconds(),
+		Recovery:   &Recovery{Retryable: true},
+	}
+	r.finishAttempt(a, AttemptCompletedEvent{
+		NodePath:   e.NodePath,
+		DispatchID: e.DispatchID,
+		Attempt:    e.Attempt,
+		Completion: c,
+	})
+	r.retire(e.NodePath)
+	st.Failures++
 	if c.Retryable() && len(st.Attempts) < st.MaxAttempts {
 		if err := r.derive(RetryScheduledEvent{
 			NodePath: e.NodePath,

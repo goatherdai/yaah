@@ -35,8 +35,11 @@ type Dispatch struct {
 	// would be a data race against the event loop.
 	Scope ir.Scope
 	// Timeout is the node's declared timeout_seconds, converted. Zero means
-	// the node declared none. The scheduler does not implement timeouts — it
-	// has no timers — so this is plumbing for the lane that does.
+	// the node declared none. It is the lane's fast path: an adapter that can
+	// stop work in flight arms a deadline from it. The scheduler enforces the
+	// same bound itself, as a deterministic backstop sampled at cycle
+	// boundaries (see Run.timedOut), because a scheduler has no timers and a
+	// door is not obliged to honor a request field.
 	Timeout time.Duration
 	// Deadline is the run's wall-clock budget expiry, when one is declared.
 	// Zero means undeclared.

@@ -32,6 +32,14 @@ const (
 	EventNodeCancelled    EventKind = "node_cancelled"
 	EventBudgetExceeded   EventKind = "budget_exceeded"
 	EventRunFinished      EventKind = "run_finished"
+	// EventAttemptTimedOut records a timeout the RUN concluded: an attempt was
+	// still in flight when its node's declared timeout_seconds elapsed, so the
+	// run cancelled it through the door and folded the failure itself. It is a
+	// report from the driver — which samples the run clock at cycle boundaries
+	// and arms no timers — and NOT a door envelope: an attempt_completed is the
+	// envelope's assertion, and a timeout with no envelope is the scheduler's own
+	// conclusion about the clock.
+	EventAttemptTimedOut EventKind = "attempt_timed_out"
 	// EventSettlementPlanned reports the handle set one settle node resolved
 	// from recorded run state; EventProposalSettled reports one disposition the
 	// door's settlement path returned. Both are inputs: the driver reads the
@@ -217,6 +225,41 @@ type AttemptCompletedEvent struct {
 
 func (AttemptCompletedEvent) Kind() EventKind  { return EventAttemptCompleted }
 func (e AttemptCompletedEvent) target() string { return e.NodePath }
+
+// AttemptTimedOutEvent records one node timeout the scheduler enforced. The
+// driver reports it from its cycle boundary (see Run.timedOut): the deadline is
+// a fact of the attempt's start plus the node's declared bound, and the boundary
+// is where the run reads it — never a timer.
+//
+// The reducer folds it as a retryable timeout failure, which is the same
+// envelope shape a lane-reported timeout carries (status=error,
+// stop_reason=timeout, recovery.retryable=true), so retry accounting, the
+// node's failure reason, and the trace cannot tell which side of the door
+// enforced the deadline. The log line is the one place the two are
+// distinguishable, and it says so with its own kind.
+type AttemptTimedOutEvent struct {
+	NodePath   string
+	DispatchID string
+	Attempt    int
+	// Timeout is the node's declared bound and Elapsed the span the attempt had
+	// been in flight when the boundary sampled the clock. Both are evidence, and
+	// both are rendered: they are durations, so the log line stays free of
+	// timestamps.
+	Timeout time.Duration
+	Elapsed time.Duration
+	// Deadline is the instant the attempt had to stop at — its start plus
+	// Timeout — carried so a consumer can state the deadline without
+	// recomputing it. It is evidence for the trace and the views, never a log
+	// field: an absolute instant would put a clock reading in the log.
+	Deadline time.Time
+	// CancelErr records a Runtime.Cancel door error. The run's state does not
+	// wait for the world to agree, but an attempt it could not stop is worth
+	// stating.
+	CancelErr string
+}
+
+func (AttemptTimedOutEvent) Kind() EventKind  { return EventAttemptTimedOut }
+func (e AttemptTimedOutEvent) target() string { return e.NodePath }
 
 // RetryScheduledEvent records that a retryable failure will be retried, and
 // how long the run must wait first. The delay is honored through the door
@@ -544,6 +587,13 @@ func detail(ev Event) string {
 		}
 		if e.RuntimeError != "" {
 			out += " runtime_error=" + e.RuntimeError
+		}
+		return out
+	case AttemptTimedOutEvent:
+		out := fmt.Sprintf("%s attempt=%d elapsed=%s timeout=%s",
+			e.DispatchID, e.Attempt, e.Elapsed, e.Timeout)
+		if e.CancelErr != "" {
+			out += " cancel_error=" + flatten(e.CancelErr)
 		}
 		return out
 	case RetryScheduledEvent:
