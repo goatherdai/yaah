@@ -14,6 +14,7 @@ import (
 	"github.com/goatherdai/yaah/internal/control"
 	"github.com/goatherdai/yaah/internal/tui"
 	"github.com/goatherdai/yaah/internal/tui/components/mcpinfo"
+	"github.com/goatherdai/yaah/internal/tui/components/workflowpicker"
 	"github.com/goatherdai/yaah/internal/workflow/discover"
 	"github.com/spf13/cobra"
 )
@@ -288,6 +289,33 @@ func runTUI(initialSpec string) error {
 			}
 			sendCtrlMsg(controlCh, nil, &control.WorkflowList{Specs: entries}, tuiSendTimeout)
 		}()
+	}
+	app.OnWorkflowPicker = func() {
+		// Runs on the UI goroutine from HandleCommand; discovery is a local
+		// read of two directories, so it is safe to do inline.
+		cwd, err := os.Getwd()
+		if err != nil {
+			app.SetEphemeral(err.Error())
+			return
+		}
+		specs, err := discover.List(cwd)
+		if err != nil {
+			app.SetEphemeral(err.Error())
+			return
+		}
+		if len(specs) == 0 {
+			app.SetEphemeral("no workflow specs found")
+			return
+		}
+		entries := make([]workflowpicker.Entry, 0, len(specs))
+		for _, s := range specs {
+			entries = append(entries, workflowpicker.Entry{Name: s.Name, Path: s.Path})
+		}
+		app.ShowWorkflowPicker(entries, func(name string) {
+			if app.OnWorkflowRun != nil {
+				app.OnWorkflowRun(name)
+			}
+		})
 	}
 	app.OnClear = func() {}
 	app.OnSteer = func(text string) {

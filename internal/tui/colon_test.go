@@ -402,3 +402,16 @@ func TestHandleCommand_WorkflowListRefusesArg(t *testing.T) {
 		t.Fatal(":workflow list <extra> reached the callback")
 	}
 }
+
+func TestHandleCommand_WorkflowBareOpensPicker(t *testing.T) {
+	ui := newColonUI(t)
+	var picked bool
+	ui.OnWorkflowPicker = func() { picked = true }
+
+	if !ui.HandleCommand(command.CmdWorkflow, "") {
+		t.Fatal("bare :workflow should open the picker, not be refused")
+	}
+	if !picked {
+		t.Fatal("bare :workflow did not call OnWorkflowPicker")
+	}
+}

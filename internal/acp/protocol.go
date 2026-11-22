@@ -157,6 +157,7 @@ type AgentCaps struct {
 	MCPCapabilities    *MCPCaps       `json:"mcpCapabilities,omitempty"`
 	Auth               *AgentAuthCaps `json:"auth,omitempty"`
 	Session            *SessionCaps   `json:"sessionCapabilities,omitempty"`
+	Workflow           *WorkflowCaps  `json:"workflowCapabilities,omitempty"`
 }
 
 // PromptCaps advertise richer session/prompt content. text and resource_link
@@ -365,6 +366,51 @@ type WorldMeta struct {
 type ListSessionsResult struct {
 	Sessions   []SessionInfo `json:"sessions"`
 	NextCursor string        `json:"nextCursor,omitempty"`
+}
+
+// === workflow (list / run) ===
+
+// WorkflowCaps advertise the workflow selector surface. Each field flips
+// one method, mirroring sessionCapabilities.list.
+type WorkflowCaps struct {
+	List *WorkflowListCaps `json:"list,omitempty"`
+	Run  *WorkflowRunCaps  `json:"run,omitempty"`
+}
+
+// WorkflowListCaps advertises workflow/list. No options exist yet; the
+// empty struct flips the capability.
+type WorkflowListCaps struct{}
+
+// WorkflowRunCaps advertises workflow/run. No options exist yet.
+type WorkflowRunCaps struct{}
+
+// WorkflowInfo is one discovered workflow spec: the bare name (the run
+// handle) and its absolute path.
+type WorkflowInfo struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+// WorkflowListResult is the result of workflow/list. An empty page is an
+// empty array, never null.
+type WorkflowListResult struct {
+	Workflows []WorkflowInfo `json:"workflows"`
+}
+
+// WorkflowRunParams are the params of workflow/run. Spec is a path or a
+// bare name resolved against the search directories; cwd (optional) is the
+// workspace base for the ./workflows search directory.
+type WorkflowRunParams struct {
+	Spec string `json:"spec"`
+	Cwd  string `json:"cwd,omitempty"`
+}
+
+// WorkflowRunResult is the result of workflow/run: the run report. OK is
+// false when validation refused the document or the run failed; Report is
+// the rendered body either way.
+type WorkflowRunResult struct {
+	OK     bool   `json:"ok"`
+	Report string `json:"report"`
 }
 
 // === session lifecycle (resume / close / delete) ===

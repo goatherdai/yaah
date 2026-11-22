@@ -474,10 +474,24 @@ func (s *Server) capabilities() AgentCaps {
 	if s.DeleteSession != nil {
 		sc.Delete = &SessionDeleteCaps{}
 	}
+	var wc *WorkflowCaps
+	if s.ListWorkflows != nil {
+		if wc == nil {
+			wc = &WorkflowCaps{}
+		}
+		wc.List = &WorkflowListCaps{}
+	}
+	if s.RunWorkflow != nil {
+		if wc == nil {
+			wc = &WorkflowCaps{}
+		}
+		wc.Run = &WorkflowRunCaps{}
+	}
 	caps := AgentCaps{
 		LoadSession:        true,
 		PromptCapabilities: &PromptCaps{EmbeddedContext: true},
 		Session:            sc,
+		Workflow:           wc,
 	}
 	if s.Logout != nil {
 		caps.Auth = &AgentAuthCaps{Logout: &LogoutCaps{}}

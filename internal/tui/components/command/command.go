@@ -155,7 +155,7 @@ func Usage(cmd Cmd) string {
 	case CmdMode:
 		return ":mode [read-only|full]"
 	case CmdWorkflow:
-		return ":workflow run <spec.yaml|spec.json>  |  :workflow list"
+		return ":workflow [run <spec.yaml|spec.json> | list]"
 	default:
 		return ""
 	}

@@ -1,6 +1,7 @@
 package yaah
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/goatherdai/yaah/internal/retention"
 	"github.com/goatherdai/yaah/internal/sessions"
 	"github.com/goatherdai/yaah/internal/skills"
+	"github.com/goatherdai/yaah/internal/workflow/discover"
 	"github.com/spf13/cobra"
 )
 
@@ -248,6 +250,48 @@ func acpAvailableCommands(cwd string) []acp.AvailableCommand {
 	return out
 }
 
+// acpListWorkflows adapts the discover package to the workflow/list
+// callback: the discovered specs, in search order, for a client's picker.
+func acpListWorkflows() func(cwd string) ([]acp.WorkflowInfo, error) {
+	return func(cwd string) ([]acp.WorkflowInfo, error) {
+		specs, err := discover.List(cwd)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]acp.WorkflowInfo, 0, len(specs))
+		for _, sp := range specs {
+			out = append(out, acp.WorkflowInfo{Name: sp.Name, Path: sp.Path})
+		}
+		return out, nil
+	}
+}
+
+// acpRunWorkflow adapts workflow_run's execution path to the workflow/run
+// callback. It resolves the spec against the search dirs, executes it, and
+// captures the rendered report. The run is synchronous here; the ACP server
+// invokes the callback off the dispatch loop (see handleWorkflowRun).
+func acpRunWorkflow() func(cwd, spec string) (acp.WorkflowRunResult, error) {
+	return func(cwd, spec string) (acp.WorkflowRunResult, error) {
+		resolved, err := discover.Resolve(cwd, spec)
+		if err != nil {
+			return acp.WorkflowRunResult{}, err
+		}
+		var out, errOut bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&out)
+		cmd.SetErr(&errOut)
+		err = runWorkflowRun(cmd, resolved, workflowRunOptions{})
+		report := out.String()
+		if errOut.Len() > 0 {
+			report += "\n" + errOut.String()
+		}
+		if err != nil {
+			return acp.WorkflowRunResult{OK: false, Report: report}, nil
+		}
+		return acp.WorkflowRunResult{OK: true, Report: report}, nil
+	}
+}
+
 func runACPServe(cmd *cobra.Command, args []string) error {
 	logf := func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, Dim("yaah acp-serve:")+" "+format+"\n", args...)
@@ -282,6 +326,8 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 	srv.DeleteSession = acpDeleteSession(reg)
 	srv.AvailableCommands = acpAvailableCommands
 	srv.Logout = acpLogout
+	srv.ListWorkflows = acpListWorkflows()
+	srv.RunWorkflow = acpRunWorkflow()
 
 	// Saved approvals (yaah-x6vi.6): allow-always answers persist
 	// project-scoped so a later session in the workspace does not re-ask.

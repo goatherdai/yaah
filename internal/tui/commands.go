@@ -154,6 +154,14 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 			rest = strings.TrimSpace(arg[i:])
 		}
 		switch verb {
+		case "":
+			// Bare :workflow opens the selector (default-location feature).
+			if t.OnWorkflowPicker == nil {
+				t.SetEphemeral("workflow not available in this session")
+				return false
+			}
+			t.OnWorkflowPicker()
+			return true
 		case "list":
 			if t.OnWorkflowList == nil {
 				t.SetEphemeral("workflow not available in this session")
