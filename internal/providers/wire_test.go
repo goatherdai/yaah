@@ -446,3 +446,55 @@ func TestOpenAIClient_SendGatesCacheControl(t *testing.T) {
 		t.Errorf("opted-in client dropped cache_control: %s", body)
 	}
 }
+
+// TestDedupeToolResults_DropsDuplicate pins that a duplicate tool result for
+// the same tool_call_id is dropped at the wire boundary, without disturbing
+// the in-memory transcript (which must keep len(messages) == the persister's
+// cursor).
+func TestDedupeToolResults_DropsDuplicate(t *testing.T) {
+	msgs := []types.Message{
+		types.AssistantMsg("", []types.ToolCall{{ID: "call_00_A", Type: "function", Function: types.ToolCallFn{Name: "bash", Arguments: "{}"}}}),
+		types.ToolResultMsg("call_00_A", "bash", "result"),
+		types.ToolResultMsg("call_00_A", "bash", "result"), // duplicate
+		types.AssistantMsg("", []types.ToolCall{
+			{ID: "call_00_B", Type: "function", Function: types.ToolCallFn{Name: "bash", Arguments: "{}"}},
+			{ID: "call_01_C", Type: "function", Function: types.ToolCallFn{Name: "read", Arguments: "{}"}},
+		}),
+		types.ToolResultMsg("call_00_B", "bash", "b"),
+		types.ToolResultMsg("call_01_C", "read", "c"),
+	}
+
+	got := dedupeToolResults(msgs)
+	var ids []string
+	for _, m := range got {
+		if m.Role == "tool" {
+			ids = append(ids, m.ToolCallID)
+		}
+	}
+	want := []string{"call_00_A", "call_00_B", "call_01_C"}
+	if len(ids) != len(want) {
+		t.Fatalf("tool results after dedupe = %v; want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Errorf("tool result[%d] = %q; want %q", i, ids[i], want[i])
+		}
+	}
+}
+
+// TestDedupeToolResults_AllowsSameIDAcrossTurns pins that the same tool_call_id
+// may reappear in a later assistant turn (DSML restarts its id sequence on
+// resume), and is not dropped then.
+func TestDedupeToolResults_AllowsSameIDAcrossTurns(t *testing.T) {
+	msgs := []types.Message{
+		types.AssistantMsg("", []types.ToolCall{{ID: "call_00_A", Type: "function", Function: types.ToolCallFn{Name: "bash", Arguments: "{}"}}}),
+		types.ToolResultMsg("call_00_A", "bash", "first"),
+		types.AssistantMsg("", []types.ToolCall{{ID: "call_00_A", Type: "function", Function: types.ToolCallFn{Name: "bash", Arguments: "{}"}}}),
+		types.ToolResultMsg("call_00_A", "bash", "second"),
+	}
+
+	got := dedupeToolResults(msgs)
+	if len(got) != len(msgs) {
+		t.Fatalf("dedupe dropped a legitimate cross-turn reuse: %d -> %d messages", len(msgs), len(got))
+	}
+}
