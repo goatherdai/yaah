@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.200.1](https://github.com/goatherdai/yaah/compare/v0.200.0...v0.200.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **beads:** restore v1.3.1 git hooks and correct the dev-issue export comment ([#345](https://github.com/goatherdai/yaah/issues/345)) ([7e27b59](https://github.com/goatherdai/yaah/commit/7e27b59452ad6e8468cd4d300d12c49a4ab85d5b))
+* **providers:** attribute fallback errors to the serving provider and trim foreign history on thinking-mode swap ([#341](https://github.com/goatherdai/yaah/issues/341)) ([1f3b9b6](https://github.com/goatherdai/yaah/commit/1f3b9b6b85767eaf06d34024fa0e8ee4173ddda6))
+
 ## [0.200.0](https://github.com/goatherdai/yaah/compare/v0.199.4...v0.200.0) (2026-11-22)
 
 
