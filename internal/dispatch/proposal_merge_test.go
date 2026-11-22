@@ -449,7 +449,7 @@ func TestThreeWayApplyRecordsStrategyFact(t *testing.T) {
 	}
 	// The settlement must cite the declaration the worktree world enforced: the
 	// same plan digest the seal recorded, not a digest re-derived at settle.
-	wantDigest, err := resolveWorktreePlanDigest(rt, "worker")
+	wantDigest, err := resolveWorktreePlanDigest(rt, "worker", nil)
 	if err != nil {
 		t.Fatalf("resolveWorktreePlanDigest: %v", err)
 	}

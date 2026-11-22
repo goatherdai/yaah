@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	goatherd "github.com/goatherdai/goatherd-runtime"
+	"github.com/goatherdai/yaah/internal/jobs"
 	"github.com/goatherdai/yaah/internal/permissionplan"
 )
 
@@ -61,10 +62,9 @@ const SchemaDispatchAuthority = "yaah.subagent.authority.v1"
 //     refuses it, and a plan must never be built by guessing at a posture it
 //     does not understand.
 //
-// The worktree world does not use this mapping. Its containment is never a
-// jail — see worktreeAuthorityForDispatch — so it cites its own declaration
-// through this function's grants/network/egress half instead of inheriting the
-// jail this one claims.
+// The worktree world uses this mapping for everything but containment, and the
+// container lane's containmentPosture for the axis when nothing witnessed the
+// run's jail — see worktreeAuthorityForDispatch.
 func authorityForDispatch(rt RetainedRuntime, role string) (permissionplan.Authority, error) {
 	var a permissionplan.Authority
 
@@ -165,58 +165,93 @@ func compileDispatchPlan(rt RetainedRuntime, role string) (permissionplan.Permis
 
 // worktreeAuthorityForDispatch is authorityForDispatch for the worktree world:
 // the same write clauses and the same egress posture, restated with the
-// containment posture a worktree dispatch actually enforces.
+// containment posture the run actually had.
 //
-// One declaration, two worlds, one difference. Everything an operator
+// One declaration, two worlds, one axis restated. Everything an operator
 // configures about *authority* — the grants, the network mode, the broker
 // allowlist, the settlement posture — is read by the mapping above, so the two
 // worlds cite one declaration and changing a grant changes both digests. Only
-// containment is restated, because the two worlds confine in different places:
+// containment is restated, because the two worlds confine in different places
+// and, on the worktree lane, because a different layer establishes the jail:
 //
 //   - The container world is a jail. It shapes mounts and a netns before the
 //     body runs, so the declaration's write and network clauses are established
 //     by the world itself, and the plan assigns them to the jail monitor.
-//   - The worktree world establishes no jail. It is a git worktree of the host
-//     repository — host paths — and the world's own bound is that copy of the
-//     tree. A declared writable-root set or egress posture, where the config
-//     declares one, is enforced later by the runner's tool-layer confinement
-//     (internal/agent/runner/confinement.go), which the dispatcher neither
-//     provisions as part of this world nor can witness when it seals. Claiming
-//     ContainmentJail here would cite a monitor this world never established, so
-//     the digest would promise a jail that did not exist for the run.
+//   - The worktree world is a git worktree of the host repository — host paths
+//     — and its kernel bound is the runner's tool-layer confinement
+//     (internal/agent/runner/confinement.go), resolved per dispatch: a confined
+//     worktree dispatch builds the sub-agent's shell under the syscall jail with
+//     the worktree as its writable root, an "auto" dispatch jails where the host
+//     has a usable backend and degrades to advisory where it does not, and
+//     "off"/"none"/"advisory" runs on host paths. That jail is real when it
+//     exists, so the declaration must describe the containment the run had:
+//     claiming advisory for a jailed run understates the world's bound, and
+//     claiming jail for an advisory run cites a monitor nothing established.
 //
-// So the worktree declaration is ContainmentAdvisory, and FallbackEnforce is what
-// keeps it compilable: with FallbackRefuse the compiler refuses a grant or a
-// restrictive egress posture on an advisory lane (permissionplan
-// ErrClauseUncovered), which would turn every working worktree dispatch that
-// declares authority into a failed one. With FallbackEnforce the clauses are
-// declared anyway and the degraded posture is carried onto each assignment, so
-// it is visible in the plan's String and covered by its digest rather than
-// invisible.
+// established is the confinement the runner reported for this run through its
+// context sink (jobs.SubAgentConfinement), and it decides the axis:
 //
-// The consequence, which the package's tests pin: for grants/network/containment
-// settings where both worlds enforce the same declaration — containment:
-// off/none/advisory, where the container lane also declares advisory/enforce —
-// the two digests are equal. For containment: auto, the empty default, or
-// paddock/jail, the container cites jail/refuse and the worktree cites
-// advisory/enforce, and the digests differ, because for that config the two
-// worlds genuinely enforce different declarations.
-func worktreeAuthorityForDispatch(rt RetainedRuntime, role string) (permissionplan.Authority, error) {
+//   - jailed, or refused — the run was confined; a jail the host could not
+//     establish refused to run rather than running unconfined, so there is no
+//     unconfined body to describe. Both cite ContainmentJail +
+//     FallbackRefuse.
+//   - advisory — the run had no jail. It cites ContainmentAdvisory +
+//     FallbackEnforce, and FallbackEnforce is what keeps it compilable: with
+//     FallbackRefuse the compiler refuses a declared grant or a restrictive
+//     egress posture on an advisory lane (permissionplan.ErrClauseUncovered),
+//     which would turn every working advisory dispatch that declares authority
+//     into a failed one. With FallbackEnforce the clauses are declared anyway
+//     and the degraded posture is carried onto each assignment, so it is
+//     visible in the plan's String and covered by its digest rather than
+//     invisible.
+//   - no report at all — nothing witnessed this run's jail, so the declaration
+//     is the one the config makes, read by the container lane's own
+//     containmentPosture mapping. That is the fail-closed reading: a jail the
+//     config demanded is cited as a jail, never silently downgraded to advisory.
+//
+// The consequence, which the package's tests pin: a jailed worktree run cites
+// exactly what the container lane cites when it jails (containment paddock/jail,
+// or auto on a host that can establish one), so the two digests agree; an
+// advisory worktree run under containment auto cites advisory/enforce where the
+// container cites jail/refuse, and the digests differ, because for that run the
+// two worlds genuinely enforced different declarations.
+func worktreeAuthorityForDispatch(rt RetainedRuntime, role string, established *jobs.SubAgentConfinement) (permissionplan.Authority, error) {
 	a, err := authorityForDispatch(rt, role)
 	if err != nil {
 		return permissionplan.Authority{}, err
 	}
-	a.Containment, a.Fallback = permissionplan.ContainmentAdvisory, permissionplan.FallbackEnforce
+	containment, fallback, err := worktreeContainment(rt, established)
+	if err != nil {
+		return permissionplan.Authority{}, err
+	}
+	a.Containment, a.Fallback = containment, fallback
 	return a, nil
+}
+
+// worktreeContainment is the containment and fallback axes of the worktree
+// declaration: the posture the run established when the runner reported one, and
+// otherwise the posture the config declares. See worktreeAuthorityForDispatch
+// for why each case maps as it does, and containmentPosture for the config
+// mapping itself — restating it here would let the container lane and the
+// worktree lane disagree about what one config value means.
+func worktreeContainment(rt RetainedRuntime, established *jobs.SubAgentConfinement) (permissionplan.Containment, permissionplan.Fallback, error) {
+	if established == nil || !established.Reported() {
+		return containmentPosture(rt.Containment)
+	}
+	if established.Jailed() || established.Refused() {
+		return permissionplan.ContainmentJail, permissionplan.FallbackRefuse, nil
+	}
+	return permissionplan.ContainmentAdvisory, permissionplan.FallbackEnforce, nil
 }
 
 // compileWorktreePlan compiles the worktree world's declaration. It is the
 // companion of compileDispatchPlan: same gate, same fail-closed contract, one
-// containment axis restated — so the digest that names the worktree lane's
-// authority is derived from the same declaration the container lane compiles
-// rather than from a second reading of the config.
-func compileWorktreePlan(rt RetainedRuntime, role string) (permissionplan.PermissionPlan, error) {
-	authority, err := worktreeAuthorityForDispatch(rt, role)
+// containment axis restated from the confinement the run established — so the
+// digest that names the worktree lane's authority is derived from the same
+// declaration the container lane compiles rather than from a second reading of
+// the config.
+func compileWorktreePlan(rt RetainedRuntime, role string, established *jobs.SubAgentConfinement) (permissionplan.PermissionPlan, error) {
+	authority, err := worktreeAuthorityForDispatch(rt, role, established)
 	if err != nil {
 		return permissionplan.PermissionPlan{}, err
 	}
@@ -224,16 +259,15 @@ func compileWorktreePlan(rt RetainedRuntime, role string) (permissionplan.Permis
 }
 
 // resolveWorktreePlanDigest returns the digest of the permission plan a
-// worktree world enforces: the worktree seal's citation, and the declaration its
+// worktree world enforced: the worktree seal's citation, and the declaration its
 // settlement then records it is the commit-time monitor for. It returns only the
 // digest because a worktree world has no container mount shape to lower — the
 // declaration, not the mount math, is all there is to cite.
 //
-// An uncompilable declaration is an error, not an empty digest: the same
-// fail-closed gate the container lane applies, so a worktree dispatch never runs
-// under a posture no plan covers.
-func resolveWorktreePlanDigest(rt RetainedRuntime, role string) (string, error) {
-	plan, err := compileWorktreePlan(rt, role)
+// established is the confinement the runner reported for this run (nil before a
+// run exists, when the declaration is being validated rather than cited).
+func resolveWorktreePlanDigest(rt RetainedRuntime, role string, established *jobs.SubAgentConfinement) (string, error) {
+	plan, err := compileWorktreePlan(rt, role, established)
 	if err != nil {
 		return "", err
 	}

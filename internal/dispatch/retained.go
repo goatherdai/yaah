@@ -817,14 +817,14 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		recordDispatchWorld(ctx, worldRes)
 	}
 
-	// The worktree world's declaration: the same grants and egress posture the
-	// container lane compiles, restated with the containment posture this world
-	// actually enforces (see worktreeAuthorityForDispatch). Resolved before
-	// anything is provisioned, so a declaration no plan covers refuses the
-	// dispatch instead of running a world that cites no authority — the same
-	// fail-closed gate the container lane applies before it opens a container.
-	planDigest, digestErr := resolveWorktreePlanDigest(rt, subParams.Role)
-	if digestErr != nil {
+	// The worktree world's declaration is gated before anything is provisioned:
+	// a declaration no plan covers refuses the dispatch instead of running a
+	// world that cites no authority — the same fail-closed gate the container
+	// lane applies before it opens a container. The citation itself is resolved
+	// after the run (see the seal below), because it names the confinement the
+	// run had rather than the one its config asked for; with no run yet there is
+	// nothing to establish, so the gate validates the declared posture.
+	if _, digestErr := compileWorktreePlan(rt, subParams.Role, nil); digestErr != nil {
 		return retainedRunResult{}, fmt.Errorf("delegate: %w", digestErr)
 	}
 
@@ -890,11 +890,14 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	budgetGoverns := timeout > 0 && (!parentHasDeadline || parentDeadline.After(budgetDeadline))
 
 	// Capture the sub-agent's final conversation so a continuation can resume
-	// from its context instead of restarting cold.
+	// from its context instead of restarting cold, and the confinement it ran
+	// under so the seal below cites the jail this body actually had.
 	var transcript []types.Message
 	var stop jobs.SubAgentStop
+	var confinement jobs.SubAgentConfinement
 	runCtx := jobs.WithSubAgentTranscript(ctx, &transcript)
 	runCtx = jobs.WithSubAgentStop(runCtx, &stop)
+	runCtx = jobs.WithSubAgentConfinement(runCtx, &confinement)
 	var cancel context.CancelFunc
 	if timeout > 0 {
 		runCtx, cancel = context.WithTimeout(runCtx, timeout)
@@ -977,6 +980,17 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// Seal even after a body error: the partial work is reviewable. A seal
 	// failure is surfaced, never dropped. The conversation and the proposal
 	// state ride in the sealed output, so no sidecar is written.
+	//
+	// The citation is resolved here, from the jail the runner reported for this
+	// body: a jailed run cites jail/refuse, an advisory run advisory/enforce, and
+	// a run that reported no confinement at all cites the declaration the config
+	// makes (see worktreeContainment). Compiling it can only fail on values the
+	// gate above already accepted, so a failure here is still surfaced rather
+	// than sealed away.
+	planDigest, digestErr := resolveWorktreePlanDigest(rt, subParams.Role, &confinement)
+	if digestErr != nil {
+		return retainedRunResult{}, fmt.Errorf("delegate: %w", digestErr)
+	}
 	seal := mgr.Seal
 	if rt.sealOutput != nil {
 		seal = rt.sealOutput
@@ -1259,12 +1273,14 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		return "", serr
 	}
 
-	// The continuation is a worktree world of its own, so it cites the same
-	// declaration the original did — resolved before the new worktree exists,
-	// so an uncompilable declaration refuses the continuation rather than
-	// sealing a proposal that names no authority.
-	planDigest, derr := resolveWorktreePlanDigest(rt, p.params.Role)
-	if derr != nil {
+	// The continuation is a worktree world of its own, so its declaration is the
+	// same one the original cited — gated before the new worktree exists, so an
+	// uncompilable declaration refuses the continuation rather than sealing a
+	// proposal that names no authority. The citation itself is resolved after the
+	// run, from the confinement this body established (see the seal below); with
+	// no run yet there is nothing to establish, so the gate validates the
+	// declared posture.
+	if _, derr := compileWorktreePlan(rt, p.params.Role, nil); derr != nil {
 		return "", fmt.Errorf("continue: %w", derr)
 	}
 
@@ -1299,8 +1315,12 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 
 	var transcript []types.Message
 	var stop jobs.SubAgentStop
+	// The confinement sink: the runner reports the jail this body actually ran
+	// under, and the seal below cites it.
+	var confinement jobs.SubAgentConfinement
 	runCtx := jobs.WithSubAgentTranscript(ctx, &transcript)
 	runCtx = jobs.WithSubAgentStop(runCtx, &stop)
+	runCtx = jobs.WithSubAgentConfinement(runCtx, &confinement)
 	var cancel context.CancelFunc
 	if p.timeout > 0 {
 		runCtx, cancel = context.WithTimeout(runCtx, p.timeout)
@@ -1326,18 +1346,24 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	if rt.sealOutput != nil {
 		seal = rt.sealOutput
 	}
+	// The continuation's own declaration citation: a fork is a new world, so the
+	// sealed metadata carries the digest its settlement will record rather than
+	// inheriting the source proposal's. It is read from the jail this body
+	// established — the same rule the original seal used (see
+	// worktreeContainment).
+	planDigest, derr := resolveWorktreePlanDigest(rt, p.params.Role, &confinement)
+	if derr != nil {
+		return "", fmt.Errorf("continue: %w", derr)
+	}
 	sealOpts, metaErr := proposalSealOptions(retainedProposalMeta{
-		ID:            newID,
-		SessionID:     rt.SessionID,
-		ParentScopeID: rt.RootScopeID,
-		Result:        trimResult(result),
-		RunErr:        bodyFailure,
-		StopReason:    stopReason,
-		Params:        p.params,
-		TimeoutMS:     p.timeout.Milliseconds(),
-		// The continuation's own declaration citation: a fork is a new world,
-		// so the sealed metadata must carry the digest its settlement will
-		// record rather than inheriting the source proposal's.
+		ID:                  newID,
+		SessionID:           rt.SessionID,
+		ParentScopeID:       rt.RootScopeID,
+		Result:              trimResult(result),
+		RunErr:              bodyFailure,
+		StopReason:          stopReason,
+		Params:              p.params,
+		TimeoutMS:           p.timeout.Milliseconds(),
 		AuthorityPlanDigest: planDigest,
 	}, transcript)
 	// Native lineage: a continuation derives from the source; consuming it
@@ -1748,6 +1774,33 @@ func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id
 	}
 	if reviewErr := p.recordReviewDecision(ctx, verb, settleErr); reviewErr != nil {
 		env.Notes = appendSettleNote(env.Notes, "review decision: "+reviewErr.Error())
+	}
+
+	// The settlement must be legible in the causal record even though the
+	// sealed output it consumes is gone: append to the parent scope, which
+	// outlives the child scope this proposal owned, exactly as the container
+	// lane and the three-way merge do. The citation is the digest the seal
+	// recorded — the declaration the world that produced this work enforced —
+	// rather than one re-derived now, because config can move between dispatch
+	// and settlement.
+	if p.mgr != nil && p.parentID != "" {
+		payload := map[string]any{
+			"proposal_id":           p.id,
+			"action":                action,
+			"world":                 string(subagent.WorldWorktree),
+			"authority_plan_digest": p.authorityPlanDigest,
+			"files":                 env.Files,
+		}
+		if verb == goatherd.SettleApply {
+			payload["strategy"] = proposalApplyPathDisjoint
+		}
+		if scope, ok := p.mgr.Get(p.parentID); ok {
+			if _, ferr := scope.AppendFact(ctx, SchemaProposalSettled, "proposal", payload); ferr != nil {
+				env.Notes = appendSettleNote(env.Notes, "trace: settle fact: "+ferr.Error())
+			}
+		} else {
+			env.Notes = appendSettleNote(env.Notes, "trace: settle fact skipped: parent scope is gone")
+		}
 	}
 
 	// Only after a successful release settle do we tear the child down;

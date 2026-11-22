@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/jobs"
 	"github.com/goatherdai/yaah/internal/permissionplan"
 )
 
@@ -666,10 +667,9 @@ func TestAuthorityForDispatch_BrokerHosts(t *testing.T) {
 
 // TestWorktreeAuthorityForDispatch pins the worktree world's declaration: the
 // same grants, egress posture, and settlement posture the container lane reads,
-// restated with the containment posture a worktree dispatch actually enforces —
-// advisory, because that world establishes no jail, plus FallbackEnforce so the
-// declaration's clauses still compile instead of being refused on a lane with
-// no jail monitor.
+// restated with the containment posture the run established — the jail the
+// runner reported when it jailed the dispatch, or advisory/enforce when it ran on
+// host paths (see worktreeAuthorityForDispatch).
 func TestWorktreeAuthorityForDispatch(t *testing.T) {
 	rt := RetainedRuntime{
 		Containment:  "paddock",
@@ -680,7 +680,7 @@ func TestWorktreeAuthorityForDispatch(t *testing.T) {
 			{Path: "docs/api", Access: "readonly"},
 		},
 	}
-	got, err := worktreeAuthorityForDispatch(rt, "developer")
+	got, err := worktreeAuthorityForDispatch(rt, "developer", jailedConfinement())
 	if err != nil {
 		t.Fatalf("worktreeAuthorityForDispatch: %v", err)
 	}
@@ -702,43 +702,51 @@ func TestWorktreeAuthorityForDispatch(t *testing.T) {
 		t.Errorf("delta = %q, want the container lane's %q: one settlement posture", got.Delta, container.Delta)
 	}
 
-	// Containment is the one axis restated. "paddock" would otherwise claim a
-	// jail this world never established.
-	if got.Containment != permissionplan.ContainmentAdvisory || got.Fallback != permissionplan.FallbackEnforce {
-		t.Errorf("containment/fallback = %q/%q, want advisory/enforce", got.Containment, got.Fallback)
+	// Containment is the one axis restated, and a jailed run restates it as a
+	// jail: the confinement the runner established is the jail the declaration's
+	// write and network clauses are assigned to.
+	if got.Containment != permissionplan.ContainmentJail || got.Fallback != permissionplan.FallbackRefuse {
+		t.Errorf("containment/fallback = %q/%q, want jail/refuse for a jailed run", got.Containment, got.Fallback)
 	}
 
-	// Whatever the configured containment, the worktree declaration is advisory
-	// and accepts its clauses: the posture is a property of the world, not of the
-	// config key the container lane maps.
-	for _, setting := range []string{"", "auto", "paddock", "jail", "off", "none", "advisory"} {
-		t.Run("containment "+setting, func(t *testing.T) {
-			withGrant := RetainedRuntime{
-				Containment: setting,
-				Grants:      []config.GrantConfig{{Path: "src", Access: "readwrite"}},
+	t.Run("an advisory run cites advisory and still compiles", func(t *testing.T) {
+		advisory, err := worktreeAuthorityForDispatch(rt, "developer", advisoryConfinement())
+		if err != nil {
+			t.Fatalf("worktreeAuthorityForDispatch: %v", err)
+		}
+		if advisory.Containment != permissionplan.ContainmentAdvisory || advisory.Fallback != permissionplan.FallbackEnforce {
+			t.Fatalf("containment/fallback = %q/%q, want advisory/enforce", advisory.Containment, advisory.Fallback)
+		}
+		// FallbackEnforce is what keeps a granted advisory run compilable.
+		if _, err := compileWorktreePlan(rt, "developer", advisoryConfinement()); err != nil {
+			t.Fatalf("compileWorktreePlan: %v", err)
+		}
+	})
+
+	// The gate runs for every pairing of configured containment and established
+	// posture: the citation changes, the fail-closed compile never does.
+	t.Run("every established posture compiles for every setting", func(t *testing.T) {
+		for _, setting := range []string{"", "auto", "paddock", "jail", "off", "none", "advisory"} {
+			for _, established := range allConfinements() {
+				withGrant := RetainedRuntime{
+					Containment: setting,
+					Grants:      []config.GrantConfig{{Path: "src", Access: "readwrite"}},
+				}
+				if _, err := compileWorktreePlan(withGrant, "developer", established); err != nil {
+					t.Fatalf("containment %q, established %+v: compileWorktreePlan: %v", setting, established, err)
+				}
 			}
-			got, err := worktreeAuthorityForDispatch(withGrant, "developer")
-			if err != nil {
-				t.Fatalf("worktreeAuthorityForDispatch: %v", err)
-			}
-			if got.Containment != permissionplan.ContainmentAdvisory || got.Fallback != permissionplan.FallbackEnforce {
-				t.Fatalf("containment/fallback = %q/%q, want advisory/enforce", got.Containment, got.Fallback)
-			}
-			// The gate still runs: the grant is declared, assigned, and covered.
-			if _, err := compileWorktreePlan(withGrant, "developer"); err != nil {
-				t.Fatalf("compileWorktreePlan: %v", err)
-			}
-		})
-	}
+		}
+	})
 
 	t.Run("an uncompilable declaration is refused, not cited", func(t *testing.T) {
-		if _, err := resolveWorktreePlanDigest(RetainedRuntime{Network: "borker"}, "developer"); err == nil {
+		if _, err := resolveWorktreePlanDigest(RetainedRuntime{Network: "borker"}, "developer", nil); err == nil {
 			t.Fatal("an unknown network mode must refuse the worktree declaration")
 		} else if !strings.Contains(err.Error(), "agents.subagent.network") {
 			t.Fatalf("error = %v, want it to name the config key", err)
 		}
 		badGrant := RetainedRuntime{Grants: []config.GrantConfig{{Path: "src", Access: "write"}}}
-		if _, err := resolveWorktreePlanDigest(badGrant, "developer"); err == nil {
+		if _, err := resolveWorktreePlanDigest(badGrant, "developer", nil); err == nil {
 			t.Fatal("an unknown grant access must refuse the worktree declaration")
 		}
 	})
@@ -774,25 +782,36 @@ func TestWorktreePlanDigest_AgreesWithContainerWhereTheWorldAgrees(t *testing.T)
 		{name: "broker", mode: "broker", hosts: []string{" API.Example.com. "}},
 	}
 	// agree reports whether the two worlds enforce the same declaration for the
-	// containment setting: the container lane declares advisory only when the
-	// config does.
+	// pairing of configured containment and confinement the run established. With
+	// no report the worktree cites the declared posture, which is the container
+	// lane's mapping — so they agree. An advisory report under a config that asks
+	// for a jail is the one genuine disagreement: the container world would have
+	// jailed it and the worktree world could not.
 	containments := []struct {
 		setting string
+		label   string
+		report  *jobs.SubAgentConfinement
 		agree   bool
 	}{
-		{setting: "", agree: false},
-		{setting: "auto", agree: false},
-		{setting: "paddock", agree: false},
-		{setting: "jail", agree: false},
-		{setting: "off", agree: true},
-		{setting: "none", agree: true},
-		{setting: "advisory", agree: true},
+		{setting: "", label: "declared", agree: true},
+		{setting: "auto", label: "declared", agree: true},
+		{setting: "paddock", label: "declared", agree: true},
+		{setting: "jail", label: "declared", agree: true},
+		{setting: "off", label: "declared", agree: true},
+		{setting: "none", label: "declared", agree: true},
+		{setting: "advisory", label: "declared", agree: true},
+		{setting: "", label: "jailed", report: jailedConfinement(), agree: true},
+		{setting: "auto", label: "jailed", report: jailedConfinement(), agree: true},
+		{setting: "paddock", label: "jailed", report: jailedConfinement(), agree: true},
+		{setting: "auto", label: "advisory", report: advisoryConfinement(), agree: false},
+		{setting: "", label: "advisory", report: advisoryConfinement(), agree: false},
+		{setting: "auto", label: "degraded", report: degradedConfinement(), agree: false},
 	}
 
 	for _, gs := range grantSets {
 		for _, ns := range networkSets {
 			for _, tc := range containments {
-				name := gs.name + "/" + ns.name + "/containment=" + tc.setting
+				name := gs.name + "/" + ns.name + "/containment=" + tc.setting + "/" + tc.label
 				t.Run(name, func(t *testing.T) {
 					rt := RetainedRuntime{
 						Network:      ns.mode,
@@ -804,7 +823,7 @@ func TestWorktreePlanDigest_AgreesWithContainerWhereTheWorldAgrees(t *testing.T)
 					if err != nil {
 						t.Fatalf("resolveDispatchAuthority: %v", err)
 					}
-					worktree, err := resolveWorktreePlanDigest(rt, "developer")
+					worktree, err := resolveWorktreePlanDigest(rt, "developer", tc.report)
 					if err != nil {
 						t.Fatalf("resolveWorktreePlanDigest: %v", err)
 					}
@@ -821,7 +840,7 @@ func TestWorktreePlanDigest_AgreesWithContainerWhereTheWorldAgrees(t *testing.T)
 					}
 
 					// Determinism: a restatement of one declaration is one digest.
-					again, err := resolveWorktreePlanDigest(rt, "developer")
+					again, err := resolveWorktreePlanDigest(rt, "developer", tc.report)
 					if err != nil {
 						t.Fatalf("resolveWorktreePlanDigest (second): %v", err)
 					}

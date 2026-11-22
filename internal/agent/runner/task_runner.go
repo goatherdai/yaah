@@ -568,6 +568,10 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// previous fact resolved: a backend can pass its availability check and
 		// still fail to establish containment at exec time.
 		recordConfinementDegradedFact(context.WithoutCancel(ctx), subScope, subConf)
+		// Hand that same post-run truth to the dispatch lane's sink: the
+		// proposal a worktree run seals cites the enforcement the run had, and
+		// the dispatch cannot see this record any other way.
+		tools.CaptureSubAgentConfinement(context.WithoutCancel(ctx), subConf.report())
 
 		// The run is over: cut the bridge now, not at closure return —
 		// trace enrichment and output budgeting below must not sit inside

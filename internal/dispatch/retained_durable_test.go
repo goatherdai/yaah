@@ -177,7 +177,7 @@ func TestRetained_WorktreeProposalCitesPlanDigest(t *testing.T) {
 		Network:      "allow_all",
 	}
 
-	want, err := resolveWorktreePlanDigest(rt, "developer")
+	want, err := resolveWorktreePlanDigest(rt, "developer", nil)
 	if err != nil {
 		t.Fatalf("resolveWorktreePlanDigest: %v", err)
 	}
