@@ -53,7 +53,7 @@ func SearchDirs(cwd string, extra ...string) []string {
 // cannot shadow a bare name. A cwd that is not inside a git repository has no
 // project boundary, so no ancestors are searched.
 func projectDirs(cwd string) []string {
-	cwd = canonicalDir(cwd)
+	cwd = absDir(cwd)
 	if cwd == "" {
 		return nil
 	}
@@ -71,20 +71,6 @@ func projectDirs(cwd string) []string {
 		}
 	}
 	return out
-}
-
-// canonicalDir resolves cwd to a stable absolute path, following symlinks, so
-// a cwd reached through a symlinked directory walks the real project's
-// parents rather than the symlink's lexical parents.
-func canonicalDir(dir string) string {
-	dir = absDir(dir)
-	if dir == "" {
-		return ""
-	}
-	if real, err := filepath.EvalSymlinks(dir); err == nil {
-		return real
-	}
-	return dir
 }
 
 // projectRoot returns the nearest ancestor of cwd (including cwd itself) that
