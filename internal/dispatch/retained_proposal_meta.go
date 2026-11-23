@@ -7,6 +7,7 @@ package dispatch
 // named-blob store are the source of truth.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -47,12 +48,37 @@ type retainedProposalMeta struct {
 	AuthorityPlanDigest string `json:"authority_plan_digest,omitempty"`
 }
 
+// persistProposalTranscript writes the captured conversation into a durable
+// attempt transcript before the seal. A failed seal can then keep the handle's
+// conversation — the old Snapshot path lost it whenever sealing failed.
+// Oversized or unencodable transcripts are omitted and marked, never
+// truncated: a partial message sequence can orphan tool calls.
+func persistProposalTranscript(ctx context.Context, mgr *goatherd.ScopeManager, attemptID, scopeID string, transcript []types.Message) (string, bool, error) {
+	var data []byte
+	omitted := false
+	if len(transcript) > 0 {
+		encoded, err := json.Marshal(transcript)
+		switch {
+		case err != nil:
+			omitted = true
+			slog.Warn("proposal seal: transcript is not JSON-encodable; recording an empty transcript", "err", err)
+		case len(encoded) <= maxDurableTranscriptBytes:
+			data = encoded
+		default:
+			omitted = true
+		}
+	}
+	id, err := mgr.PersistAttemptTranscript(ctx, attemptID, scopeID, data)
+	if err != nil {
+		return "", omitted, fmt.Errorf("persist attempt transcript: %w", err)
+	}
+	return id, omitted, nil
+}
+
 // proposalSealOptions builds the seal payload for a worktree proposal. The
-// conversation becomes the execution snapshot; everything else becomes opaque
-// metadata. A transcript over the bound — or one that cannot be marshaled — is
-// omitted and marked, but the metadata is still emitted so the proposal stays
-// settleable after a restart.
-func proposalSealOptions(meta retainedProposalMeta, transcript []types.Message) (goatherd.SealOptions, error) {
+// conversation rides in its own durable transcript fact, cited by TranscriptID;
+// everything else becomes opaque metadata.
+func proposalSealOptions(meta retainedProposalMeta, transcriptID string) (goatherd.SealOptions, error) {
 	// The seed is recomputed at continuation time; persisting it would double
 	// the transcript and the workdir is per-run. A source link describes how
 	// this proposal was originally threaded, not how to continue it.
@@ -63,21 +89,9 @@ func proposalSealOptions(meta retainedProposalMeta, transcript []types.Message) 
 	params.SeedMode = ""
 	meta.Params = params
 
-	var opts goatherd.SealOptions
-	if len(transcript) > 0 {
-		data, err := json.Marshal(transcript)
-		switch {
-		case err != nil:
-			// The conversation is best-effort; the proposal itself is still
-			// settleable, so this is a logged degradation rather than an
-			// error that could tempt a caller to discard the metadata.
-			meta.TranscriptOmitted = true
-			slog.Warn("proposal seal: transcript is not JSON-encodable; sealed without a conversation snapshot", "err", err)
-		case len(data) <= maxDurableTranscriptBytes:
-			opts.Snapshot = data
-		default:
-			meta.TranscriptOmitted = true
-		}
+	opts := goatherd.SealOptions{
+		AttemptID:    meta.ID,
+		TranscriptID: transcriptID,
 	}
 	data, err := json.Marshal(meta)
 	if err != nil {

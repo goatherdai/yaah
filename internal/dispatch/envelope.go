@@ -42,6 +42,10 @@ const (
 	// `stop_reason` names the kind where one is known, and `recovery` says
 	// whether re-dispatching is worth it.
 	EnvelopeStatusError = "error"
+	// EnvelopeStatusSealFailed: the body ran but finalization failed. The
+	// runtime retained a durable artifact with the worktree and conversation;
+	// the host must recover or discard the failed-seal proposal, not redispatch.
+	EnvelopeStatusSealFailed = "seal_failed"
 )
 
 // ResultContract is RESERVED for yaah-was9.2: the per-role completion contract a
@@ -246,6 +250,14 @@ func (e *proposalEnvelope) finalize() {
 	e.SetProposalArtifacts()
 	e.SetRecovery()
 	e.SetFailureClass()
+	if e.Status == EnvelopeStatusSealFailed {
+		// A failed seal is not a redispatch candidate: the durable artifact
+		// is the recovery path. Override the stop-reason-derived advice.
+		e.FailureClass = FailureClassSealFailed
+		e.Recovery = &ResultRecovery{
+			Recommended: "inspect the failed-seal proposal with proposal show, then recover it (or discard it explicitly); do not auto-redispatch",
+		}
+	}
 }
 
 // RecoveryFor derives retryable/recommended from a stop_reason. Budget and

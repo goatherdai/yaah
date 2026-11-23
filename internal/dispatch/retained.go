@@ -289,6 +289,9 @@ func continuableVerbs() []string {
 // proposal with a captured transcript can be continued or forked; a container
 // proposal's world ended at seal, so it settles only.
 func nextVerbsFor(p *retainedProposal) []string {
+	if p != nil && p.failedSeal != nil {
+		return sealFailedVerbs()
+	}
 	if p != nil && p.delta == nil && len(p.transcript) > 0 {
 		return continuableVerbs()
 	}
@@ -318,11 +321,17 @@ const retainedReviewMaxDiffLines = 1000
 // Exactly one of output (worktree lane) and delta (container lane) is set for a
 // sealed proposal.
 type retainedProposal struct {
-	id       string
-	scopeID  string
-	workdir  string
-	output   *goatherd.RetainedOutput
-	delta    *GitDelta
+	id      string
+	scopeID string
+	workdir string
+	output  *goatherd.RetainedOutput
+	delta   *GitDelta
+	// failedSeal is set for an open proposal whose seal did not complete. It
+	// carries the runtime's recovery handle; there is no sealed output to
+	// settle, but the worktree and transcript survived.
+	failedSeal *goatherd.FailedSeal
+	// status distinguishes a failed seal from a normal open proposal.
+	status   string
 	review   string
 	result   string
 	runErr   string
@@ -373,6 +382,12 @@ type retainedProposal struct {
 // changedFiles is the proposal's file list, whichever lane produced it.
 func (p *retainedProposal) changedFiles() []string {
 	switch {
+	case p.failedSeal != nil:
+		paths := make([]string, 0, len(p.failedSeal.Changes))
+		for _, c := range p.failedSeal.Changes {
+			paths = append(paths, c.Path)
+		}
+		return paths
 	case p.delta != nil:
 		return p.delta.Paths()
 	case p.output != nil:
@@ -385,6 +400,8 @@ func (p *retainedProposal) changedFiles() []string {
 // reviewDiff is the proposal's reviewable diff, whichever lane produced it.
 func (p *retainedProposal) reviewDiff() string {
 	switch {
+	case p.failedSeal != nil:
+		return p.failedSeal.Diff
 	case p.review != "":
 		return p.review
 	case p.delta != nil:
@@ -1129,26 +1146,33 @@ func startRetainedRun(
 		// failure however transient its cause looks (yaah-dgkh review).
 		return retainedRunResult{Stage: RetainedStageSeal}, fmt.Errorf("delegate: %w", digestErr)
 	}
+	// The conversation must be durable BEFORE sealing: a failed seal keeps
+	// the artifact and its transcript, so a host can reseed the work.
+	transcriptID, omitted, terr := persistProposalTranscript(base, mgr, id, scopeID, transcript)
+	if terr != nil {
+		return retainedRunResult{Stage: RetainedStageSeal}, fmt.Errorf("delegate: %w", terr)
+	}
 	seal := mgr.Seal
 	if rt.sealOutput != nil {
 		seal = rt.sealOutput
 	}
 	sealOpts, metaErr := proposalSealOptions(retainedProposalMeta{
-		ID:            id,
-		SessionID:     rt.SessionID,
-		ParentScopeID: rt.RootScopeID,
-		Result:        trimResult(result),
-		RunErr:        bodyFailure,
-		StopReason:    env.StopReason,
-		Params:        subParams,
-		TimeoutMS:     timeout.Milliseconds(),
+		ID:                id,
+		SessionID:         rt.SessionID,
+		ParentScopeID:     rt.RootScopeID,
+		Result:            trimResult(result),
+		RunErr:            bodyFailure,
+		StopReason:        env.StopReason,
+		Params:            subParams,
+		TimeoutMS:         timeout.Milliseconds(),
+		TranscriptOmitted: omitted,
 		// The declaration this proposal's settlement will cite. It rides in
 		// the seal's metadata because that is this lane's durable seal record:
 		// a worktree proposal has no manifest and no seal fact (its review
 		// evidence is the runtime merge-proposal pair), so the sealed output's
 		// metadata is where a restarted process finds the digest.
 		AuthorityPlanDigest: planDigest,
-	}, transcript)
+	}, transcriptID)
 	if forkSeed.source != nil {
 		sealOpts.DerivedFrom = forkSeed.source.ID()
 	}
@@ -1176,21 +1200,31 @@ func startRetainedRun(
 	}
 
 	if output == nil {
-		// Sealing failed: the isolated scope still owns its worktree, so
-		// discard it rather than strand it. There is nothing to settle, but
-		// close the review pair with a failed decision so the proposal fact is
-		// not left as an unexplained orphan.
+		// Close the review pair so the proposal fact is not an orphan.
 		if derr := recordFailedReviewDecision(ctx, mgr, reviewProposal, reviewFactID, sealErr); derr != nil {
 			notes = append(notes, "review decision: "+derr.Error())
 		}
-		if scope, gok := mgr.Get(scopeID); gok {
-			if derr := parent.Discard(scope); derr != nil {
-				notes = append(notes, "scope discard: "+derr.Error())
+		var sealErrTyped *goatherd.SealError
+		recoverable := errors.As(sealErr, &sealErrTyped) && sealErrTyped.ArtifactID != "" && sealErrTyped.Handle != nil
+		if recoverable {
+			// The runtime kept the worktree and the transcript behind a
+			// durable artifact. Expose it as a failed-seal proposal instead
+			// of destroying the world.
+			markSealFailedEnvelope(&env, sealErrTyped.ArtifactID)
+			if derr := registerFailedSealProposal(sealErrTyped.Handle, mgr, rt); derr != nil {
+				notes = append(notes, "failed-seal proposal: "+derr.Error())
 			}
 		} else {
-			rt.EndDispatchScope(scopeID)
+			// No durable handle: discard the isolated scope as before.
+			if scope, gok := mgr.Get(scopeID); gok {
+				if derr := parent.Discard(scope); derr != nil {
+					notes = append(notes, "scope discard: "+derr.Error())
+				}
+			} else {
+				rt.EndDispatchScope(scopeID)
+			}
+			env.Status = "error"
 		}
-		env.Status = "error"
 		env.Result = trimResult(result)
 		if len(notes) > 0 {
 			env.Error = trimResult(strings.Join(notes, "; "))
@@ -1238,10 +1272,11 @@ func startRetainedRun(
 // between the original dispatch and the continuation from leaking phantom
 // deletions/reversions into the envelope.
 type threadSeed struct {
-	source   *goatherd.RetainedOutput
-	seed     kerneltrace.WorkspaceState
-	baseline kerneltrace.WorkspaceState
-	messages []types.Message
+	source     *goatherd.RetainedOutput
+	failedSeal *goatherd.FailedSeal
+	seed       kerneltrace.WorkspaceState
+	baseline   kerneltrace.WorkspaceState
+	messages   []types.Message
 }
 
 // resolveThreadSeed resolves a source proposal for retained-result threading:
@@ -1382,8 +1417,8 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	if p.delta != nil {
 		return "", fmt.Errorf("proposal %s: continue/fork is worktree-lane only; a container proposal's world ended at seal", id)
 	}
-	if p.output == nil {
-		return "", fmt.Errorf("proposal %s has no sealed output to continue", id)
+	if p.output == nil && p.failedSeal == nil {
+		return "", fmt.Errorf("proposal %s has no sealed output or failed-seal artifact to continue", id)
 	}
 	if extraTurns <= 0 {
 		return "", fmt.Errorf("proposal %s: extra_turns must be positive", id)
@@ -1406,9 +1441,22 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	// Seed the continuation's world from the original's sealed state and
 	// conversation, not the parent's current state, so it resumes exactly
 	// where the original stopped and its delta shares the source's basis.
-	seed, serr := resolveThreadSeed(rt, id, jobs.SeedModeConversation, p.params.Role)
-	if serr != nil {
-		return "", serr
+	var seed threadSeed
+	if p.failedSeal != nil {
+		// A failed seal has no output; its runtime artifact carries the same
+		// workspace, baseline and verified transcript a sealed output would.
+		seed = threadSeed{
+			failedSeal: p.failedSeal,
+			seed:       p.failedSeal.Workspace,
+			baseline:   p.failedSeal.Baseline,
+			messages:   p.transcript,
+		}
+	} else {
+		var serr error
+		seed, serr = resolveThreadSeed(rt, id, jobs.SeedModeConversation, p.params.Role)
+		if serr != nil {
+			return "", serr
+		}
 	}
 
 	// The continuation is a worktree world of its own, so its declaration is the
@@ -1484,6 +1532,10 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		source := classifyRetainedBodyFailure(bodyErr, p.timeout, runErr, parentErr, budgetGoverns)
 		bodyFailure = retainedBodyFailure(bodyErr, sp.Role, p.timeout, source)
 	}
+	transcriptID, omitted, terr := persistProposalTranscript(ctx, mgr, newID, scopeID, transcript)
+	if terr != nil {
+		return "", fmt.Errorf("continue: %w", terr)
+	}
 	seal := mgr.Seal
 	if rt.sealOutput != nil {
 		seal = rt.sealOutput
@@ -1506,13 +1558,20 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		StopReason:          stopReason,
 		Params:              p.params,
 		TimeoutMS:           p.timeout.Milliseconds(),
+		TranscriptOmitted:   omitted,
 		AuthorityPlanDigest: planDigest,
-	}, transcript)
-	// Native lineage: a continuation derives from the source; consuming it
-	// also supersedes it, while a fork only derives.
-	sealOpts.DerivedFrom = seed.source.ID()
-	if consumeOriginal {
-		sealOpts.Supersedes = seed.source.ID()
+	}, transcriptID)
+	// Native lineage: a continuation derives from its source; consuming a
+	// sealed source also supersedes it. A failed-seal recovery derives from
+	// the artifact (the runtime fork already records that edge) and has no
+	// sealed fact to supersede.
+	if seed.failedSeal != nil {
+		sealOpts.DerivedFrom = seed.failedSeal.ArtifactID
+	} else {
+		sealOpts.DerivedFrom = seed.source.ID()
+		if consumeOriginal {
+			sealOpts.Supersedes = seed.source.ID()
+		}
 	}
 	output, sealErr := seal(ctx, scopeID, sealOpts)
 
@@ -1545,19 +1604,26 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		env.AddWarning(w)
 	}
 	if output == nil {
-		// Sealing failed: discard the isolated scope rather than strand it,
-		// and close the review pair so the proposal fact is not an orphan.
 		if derr := recordFailedReviewDecision(ctx, mgr, reviewProposal, reviewFactID, sealErr); derr != nil {
 			notes = append(notes, "review decision: "+derr.Error())
 		}
-		if scope, gok := mgr.Get(scopeID); gok {
-			if derr := parent.Discard(scope); derr != nil {
-				notes = append(notes, "scope discard: "+derr.Error())
+		var sealErrTyped *goatherd.SealError
+		recoverable := errors.As(sealErr, &sealErrTyped) && sealErrTyped.ArtifactID != "" && sealErrTyped.Handle != nil
+		if recoverable {
+			markSealFailedEnvelope(&env, sealErrTyped.ArtifactID)
+			if derr := registerFailedSealProposal(sealErrTyped.Handle, mgr, rt); derr != nil {
+				notes = append(notes, "failed-seal proposal: "+derr.Error())
 			}
 		} else {
-			rt.EndDispatchScope(scopeID)
+			if scope, gok := mgr.Get(scopeID); gok {
+				if derr := parent.Discard(scope); derr != nil {
+					notes = append(notes, "scope discard: "+derr.Error())
+				}
+			} else {
+				rt.EndDispatchScope(scopeID)
+			}
+			env.Status = "error"
 		}
-		env.Status = "error"
 		env.Result = trimResult(result)
 		if len(notes) > 0 {
 			env.Error = trimResult(strings.Join(notes, "; "))
@@ -1598,7 +1664,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	// turn, which is legitimate but worth stating in the envelope. Only a
 	// successful run gets the note — a failed one may be identical for the
 	// wrong reason.
-	if bodyErr == nil {
+	if bodyErr == nil && p.output != nil {
 		if srcDigest, derr := p.output.Workspace().Digest(); derr == nil {
 			if outDigest, oerr := output.Workspace().Digest(); oerr == nil && outDigest == srcDigest {
 				env.Notes += " (no delta vs parent)"
@@ -1606,7 +1672,17 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		}
 	}
 	if consumeOriginal {
-		if _, derr := rt.Proposals.settleRetainedProposalWithStrategy(ctx, id, "discard", ""); derr != nil {
+		if p.failedSeal != nil {
+			// A failed-seal handle has no output to settle; consuming it
+			// removes the proposal and tells the runtime the artifact is done.
+			rt.Proposals.remove(id)
+			if derr := mgr.DiscardFailedSeal(ctx, p.failedSeal.ID); derr != nil {
+				notes = append(notes, "failed-seal artifact "+id+" could not be discarded: "+derr.Error())
+				env.Notes += " (artifact could not be discarded)"
+			} else {
+				env.Notes += " (failed-seal artifact discarded)"
+			}
+		} else if _, derr := rt.Proposals.settleRetainedProposalWithStrategy(ctx, id, "discard", ""); derr != nil {
 			notes = append(notes, "original proposal "+id+" could not be discarded: "+derr.Error())
 			env.Notes += " (original could not be discarded)"
 		} else {
@@ -1858,6 +1934,23 @@ func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id
 	p, err := r.get(id)
 	if err != nil {
 		return Settlement{}, err
+	}
+	if p.failedSeal != nil {
+		if action != "discard" {
+			return Settlement{}, fmt.Errorf("proposal %s: a failed-seal artifact can only be discarded or recovered; it has no output to settle", id)
+		}
+		if p.mgr != nil {
+			if derr := p.mgr.DiscardFailedSeal(ctx, p.failedSeal.ID); derr != nil {
+				return Settlement{}, fmt.Errorf("discard failed-seal artifact %s: %w", id, derr)
+			}
+		}
+		r.remove(id)
+		return newSettlement(proposalEnvelope{
+			Status:     "settled",
+			ProposalID: id,
+			Action:     "discard",
+			Result:     "failed-seal artifact discarded",
+		}, Outcome{}), nil
 	}
 	if _, ok := settlementVerb(action); !ok {
 		return Settlement{}, fmt.Errorf("proposal: unknown action %q (select, apply, release, discard)", action)
@@ -2128,9 +2221,12 @@ func provisionRetainedBranch(
 	var scope *goatherd.Scope
 	var err error
 	opts := goatherd.ForkOptions{Baseline: seed.baseline, Seed: seed.seed}
-	if seed.source != nil {
+	switch {
+	case seed.failedSeal != nil:
+		scope, err = mgr.ForkFromFailedSeal(ctx, rt.RootScopeID, ownerID, seed.failedSeal, sb)
+	case seed.source != nil:
 		scope, err = mgr.ForkFromOutput(ctx, rt.RootScopeID, ownerID, seed.source, sb, opts)
-	} else {
+	default:
 		scope, err = mgr.ForkIsolated(rt.RootScopeID, ownerID, nil, sb, opts)
 	}
 	if err != nil {

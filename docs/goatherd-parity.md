@@ -705,7 +705,7 @@ Pinned inputs (drift guard: `internal/parity`):
 | reference | Shepherd (Python) `v0.3.1` |
 | trace ABI | `shepherd2` abi.v0, golden vectors |
 | kernel | `goatherd-kernel v0.22.0` (the storage-backend seam, tagged; trace ABI unchanged — record and context ids are backend-independent) |
-| runtime | `goatherd-runtime v0.25.0` (SealContext live finalization + failed-seal blob-leak fix, tagged) |
+| runtime | `goatherd-runtime v0.26.0` (bounded detached finalization, durable failed-seal artifacts and recovery handles, tagged) |
 | container world | `goatherd-runtime/sandbox/croft v0.2.1-0.20261118192512-b4d03a8d225a` / `goatherd-croft v0.9.3-0.20261118191751-716dbb80a6dd` |
 | containment | landlock v0.1.3-0.20261118192512-b4d03a8d225a, winacl v0.1.2-0.20261118192512-b4d03a8d225a, seatbelt v0.1.1-0.20261118192512-b4d03a8d225a |
 | grants | world-relative RW/RO roots, disjoint (config, not tools) |

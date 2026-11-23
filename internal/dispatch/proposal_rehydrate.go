@@ -71,6 +71,14 @@ func LoadProposalRegistry(repoPath string, mgr *goatherd.ScopeManager, rootScope
 	// from the trace; the sealed output carries the proposal state itself.
 	warnings = append(warnings, loadWorktreeProposals(reg, mgr, repoPath, rootScopeID, sessionID)...)
 
+	// Failed-seal artifacts are open proposals too: the runtime kept their
+	// worktree and transcript, so a host can recover or discard them.
+	warnings = append(warnings, loadFailedSealProposals(reg, mgr, RetainedRuntime{
+		RepoPath:    repoPath,
+		RootScopeID: rootScopeID,
+		SessionID:   sessionID,
+	})...)
+
 	return reg, warnings
 }
 
