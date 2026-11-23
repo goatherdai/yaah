@@ -88,8 +88,11 @@ omission:
 
 ## Open parity
 
-`docs/goatherd-parity.md` is the ledger of record. Open items: `yaah-hxk3.1`
-(supervision, Partial — the biggest gap), `hxk3.2` (citation checking, declined), `hxk3.4` (contexts/effect fold, declined — `docs/context-effect-fold-decision.md`), `hxk3.5`
-(task/step/combinators — the workflow DSL exists under `internal/workflow/`
-with `gate`/`assert` adopted; `budget`/`timeout` remain unported),
-`hxk3.3` (scorecard, ongoing); umbrella `yaah-1tkp`.
+`docs/goatherd-parity.md` is the ledger of record. The `yaah-hxk3` scorecard is
+complete: every layer carries a shipped / partial / declined / not-ported
+verdict, each backed by a decision doc or a bead. The once-open items are now
+closed — `hxk3.1` (supervision → Partial; the mapping, `effectpolicy` algebra,
+and `permissionplan` unification all landed), `hxk3.2` (citation checking →
+declined), `hxk3.3` (scorecard → published), `hxk3.4` (contexts/effect fold →
+declined), `hxk3.5` (task/step/combinators → decided, `budget`/`timeout` not
+ported). No open parity items remain under this epic.
