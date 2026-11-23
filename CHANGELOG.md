@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.207.0](https://github.com/goatherdai/yaah/compare/v0.206.6...v0.207.0) (2026-11-23)
+
+
+### Features
+
+* **supervision:** read-only per-agent effect snapshot (yaah-1050.1.1) ([#389](https://github.com/goatherdai/yaah/issues/389)) ([d880f68](https://github.com/goatherdai/yaah/commit/d880f684e4afc43df1de993359d27e79af2d7e08))
+
 ## [0.206.6](https://github.com/goatherdai/yaah/compare/v0.206.5...v0.206.6) (2026-11-23)
 
 
