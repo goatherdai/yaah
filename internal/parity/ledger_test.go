@@ -124,3 +124,41 @@ func TestLedgerStatesDeliberateBypasses(t *testing.T) {
 		}
 	}
 }
+
+// TestLedgerScorecardVocabulary pins the scorecard's layer names and verdict
+// words, so the scorecard cannot silently drop a layer or drift to a new status
+// word without this guard moving too. It is the "every row in the epic's scope"
+// half of yaah-1018's acceptance.
+func TestLedgerScorecardVocabulary(t *testing.T) {
+	ledger := read(t, ledgerPath)
+
+	layers := []string{
+		"Kernel / record",
+		"Retained runs / settlement",
+		"Context continuation",
+		"Retained-result threading",
+		"Dispatch worlds",
+		"Authority",
+		"Per-binding grants",
+		"Egress postures",
+		"Supervision",
+		"Task / step / combinators",
+		"Contexts / effect fold",
+		"Citation checking",
+		"Export / transform",
+		"Devices / remote carriers",
+		"Provider SDK shape",
+	}
+	for _, layer := range layers {
+		if !strings.Contains(ledger, layer) {
+			t.Errorf("scorecard does not name the %q layer", layer)
+		}
+	}
+
+	verdicts := []string{"Shipped", "Partial", "Declined", "Not ported", "Different surface"}
+	for _, verdict := range verdicts {
+		if !strings.Contains(ledger, verdict) {
+			t.Errorf("scorecard does not use the %q verdict", verdict)
+		}
+	}
+}
