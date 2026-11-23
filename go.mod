@@ -4,7 +4,7 @@ go 1.26.3
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.81.0
-	github.com/buchenberg/tviewmd v0.3.1
+	github.com/buchenberg/tviewmd v0.4.0
 	github.com/ebitengine/purego v0.10.0
 	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/goatherdai/goatherd-kernel v0.22.0
