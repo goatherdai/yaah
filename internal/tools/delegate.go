@@ -25,6 +25,11 @@ import (
 // returns a structured JSON result rather than a hard error so the
 // parent agent can decide whether to retry or move on.
 //
+// Verification scope is a role-prompt policy, not a tool-enforced rule:
+// developer dispatches run targeted package checks and the parent runs the
+// full gate suite on the merged result. See the "Verification scope" section
+// of the developer role prompt for the current policy text.
+//
 // Background mode (background: true) dispatches the sub-agent in a
 // goroutine and returns immediately. Results are delivered via
 // BackgroundNotifier.
