@@ -104,6 +104,14 @@ type DispatchResult struct {
 	// failed, for a lane that knows more than the envelope's stop_reason says
 	// (yaah-i5k8). Envelope() derives one when this is empty.
 	FailureClass string
+
+	// Attempt is the 1-based attempt number this result is, and AttemptIDs is
+	// every attempt id the dispatch has produced so far, in order (yaah-dgkh).
+	// Both are stamped by the retry loop; a dispatch that never entered it
+	// leaves them zero, and Envelope() then derives the single attempt as
+	// before.
+	Attempt    int
+	AttemptIDs []string
 }
 
 // Run executes one sub-agent dispatch through the runtime's only scheduler and
@@ -217,50 +225,87 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 	ctx = jobs.WithSubAgentWorldTap(ctx, func(w SubAgentWorld) { meta.World = w.Resolved })
 	started := time.Now()
 
-	if req.Retained != nil {
-		switch lane {
-		case LaneReport:
-			res, err := startRetainedRun(ctx, *req.Retained, req.Prompt, params, req.Timeout, true)
-			return finishDispatch(ctx, req, ClassifyRunnerResult(res.Report, err, role, req.Timeout, ctx).
-				withMeta(meta.after(time.Since(started)))), nil
-		case LaneShared:
-			// A shared-lane role cannot mutate the tree; isolation buys
-			// nothing, so fall through to the direct runner.
-		default:
-			res, err := startRetainedRun(ctx, *req.Retained, req.Prompt, params, req.Timeout, false)
-			if err != nil {
-				// A retained start that fails (no root scope, refused input,
-				// provisioning) must still return the one envelope: route it
-				// through the classifier so the caller renders status=error
-				// with dispatch_id/role/lane/recovery instead of a bare Go
-				// error (yaah-was9.1).
-				out := ClassifyRunnerResult("", err, role, req.Timeout, ctx).
-					withMeta(meta.after(time.Since(started)))
-				// The world is created inside startRetainedRun, so an error
-				// here means nothing ran: a preflight failure, whose retry
-				// starts from an untouched tree (yaah-i5k8).
-				out.FailureClass = FailureClassPreflightTransient
-				return finishDispatch(ctx, req, out), nil
+	// One attempt's lane work, extracted so the retry loop can run it again
+	// without a second copy of any lane's body (yaah-dgkh). timeout is this
+	// attempt's slice of the dispatch budget: the whole of it for attempt 1,
+	// what is left of it for a retry.
+	attempt := func(ctx context.Context, timeout time.Duration, _ int) DispatchResult {
+		attemptStarted := time.Now()
+		if req.Retained != nil {
+			switch lane {
+			case LaneReport:
+				res, err := startRetainedRun(ctx, *req.Retained, req.Prompt, params, timeout, true)
+				out := ClassifyRunnerResult(res.Report, err, role, timeout, ctx).
+					withMeta(meta.after(time.Since(attemptStarted)))
+				if strings.TrimSpace(res.Report) == "" && preflightFailure(err) {
+					// The world was never provisioned (runner, scope, registry,
+					// world refusal, worktree creation): nothing ran and nothing
+					// was left behind, so a fresh attempt starts from the same
+					// place (yaah-i5k8).
+					out.FailureClass = FailureClassPreflightTransient
+				}
+				return out
+			case LaneShared:
+				// A shared-lane role cannot mutate the tree; isolation buys
+				// nothing, so fall through to the direct runner.
+			default:
+				res, err := startRetainedRun(ctx, *req.Retained, req.Prompt, params, timeout, false)
+				if err != nil {
+					// A retained start that fails (no root scope, refused input,
+					// provisioning) must still return the one envelope: route it
+					// through the classifier so the caller renders status=error
+					// with dispatch_id/role/lane/recovery instead of a bare Go
+					// error (yaah-was9.1).
+					out := ClassifyRunnerResult("", err, role, timeout, ctx).
+						withMeta(meta.after(time.Since(attemptStarted)))
+					// The world is created inside startRetainedRun, so an error
+					// here means nothing ran: a preflight failure, whose retry
+					// starts from an untouched tree (yaah-i5k8).
+					out.FailureClass = FailureClassPreflightTransient
+					return out
+				}
+				return DispatchResult{
+					Status:   DispatchProposal,
+					Role:     role,
+					Timeout:  timeout,
+					Proposal: res.Proposal,
+				}.withMeta(meta.after(time.Since(attemptStarted)))
 			}
-			return finishDispatch(ctx, req, DispatchResult{
-				Status:   DispatchProposal,
-				Role:     role,
-				Timeout:  req.Timeout,
-				Proposal: res.Proposal,
-			}.withMeta(meta.after(time.Since(started)))), nil
 		}
+
+		runCtx := ctx
+		if timeout > 0 {
+			var cancel context.CancelFunc
+			runCtx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
+		NotifySubAgentReady(runCtx)
+		result, err := runner(runCtx, req.Prompt, params)
+		return ClassifyRunnerResult(result, err, role, timeout, runCtx).
+			withMeta(meta.after(time.Since(attemptStarted)))
 	}
 
-	runCtx := ctx
+	// The total timeout is the budget for the whole retry sequence, not per
+	// attempt: attempt 1 gets it whole and every retry gets the remainder
+	// (yaah-dgkh). With no retry configured this is one attempt under exactly
+	// the deadline it had before the loop existed.
+	var deadline time.Time
 	if req.Timeout > 0 {
-		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(ctx, req.Timeout)
-		defer cancel()
+		deadline = started.Add(req.Timeout)
 	}
-	NotifySubAgentReady(runCtx)
-	result, err := runner(runCtx, req.Prompt, params)
-	return finishDispatch(ctx, req, ClassifyRunnerResult(result, err, role, req.Timeout, runCtx).
-		withMeta(meta.after(time.Since(started)))), nil
+	return runAttempts(ctx, req, lane, deadline, retryPolicyFor(req.Retained, role), attempt), nil
+}
+
+// preflightFailure reports whether a retained start failed before its body ran.
+// A RetainedRunError carries a body failure — the world existed and the child
+// ran in it — so it is not a preflight failure; a plain error from the start is
+// a failure to provision the world at all.
+func preflightFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var runErr *RetainedRunError
+	return !errors.As(err, &runErr)
 }
 
 // ClassifyRunnerResult maps a runner outcome to the typed dispatch result. A

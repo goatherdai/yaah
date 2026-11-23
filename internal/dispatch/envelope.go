@@ -213,6 +213,21 @@ func (e *proposalEnvelope) SetAttempts() {
 	e.Retried = e.Attempts > 1
 }
 
+// applyAttempts stamps the retry loop's bookkeeping onto an envelope before it
+// is finalized (yaah-dgkh). A result that never entered the loop carries no
+// attempt number and leaves the derives-from-ids behavior of SetAttempts alone,
+// so a single-attempt dispatch renders exactly as it did before the loop
+// existed.
+func (e *proposalEnvelope) applyAttempts(attempt int, ids []string) {
+	if attempt < 1 {
+		return
+	}
+	if len(ids) > 0 {
+		e.AttemptIDs = ids
+	}
+	e.Attempts = attempt
+}
+
 // attemptID is the id that names this envelope's attempt: the dispatch id the
 // conflict tracker minted, or failing that the proposal the attempt produced.
 func (e *proposalEnvelope) attemptID() string {
@@ -320,6 +335,27 @@ func (r DispatchResult) withMeta(m EnvelopeMeta) DispatchResult {
 	return r
 }
 
+// withAttempts stamps the retry loop's bookkeeping onto a result (yaah-dgkh):
+// which attempt this is and every attempt id the dispatch has produced so far,
+// in order. The count and the ids are what both the attempt fact
+// (attempt_evidence.go) and the final envelope read, so they can never disagree.
+func (r DispatchResult) withAttempts(attempt int, ids []string) DispatchResult {
+	r.Attempt = attempt
+	r.AttemptIDs = append([]string(nil), ids...)
+	return r
+}
+
+// aggregate turns the last attempt's result into the whole sequence's: the
+// attempt counters and ids already cover every attempt, and the duration becomes
+// the dispatch's total wall clock instead of the final attempt's span.
+func (r DispatchResult) aggregate(elapsed time.Duration) DispatchResult {
+	r.Meta = r.Meta.after(elapsed)
+	if r.Proposal != nil {
+		r.Proposal.DurationMs = elapsed.Milliseconds()
+	}
+	return r
+}
+
 // Envelope renders the typed result in the one model-facing completion shape.
 // Every lane goes through it: report and shared lanes for their status, failure
 // lanes for status=error plus recovery, and the proposal lane for the metadata
@@ -334,10 +370,12 @@ func (r DispatchResult) Envelope() ProposalEnvelope {
 		if r.Proposal != nil {
 			env := *r.Proposal
 			env.FillMeta(meta)
+			env.applyAttempts(r.Attempt, r.AttemptIDs)
 			env.finalize()
 			return env
 		}
 		env := meta.newEnvelope(EnvelopeStatusProposal, r.Result)
+		env.applyAttempts(r.Attempt, r.AttemptIDs)
 		env.finalize()
 		return env
 	case DispatchRunning:
@@ -345,6 +383,7 @@ func (r DispatchResult) Envelope() ProposalEnvelope {
 	case DispatchCompleted:
 		env := meta.newEnvelope(LaneStatus(meta.Lane), r.Result)
 		env.StopReason = stopReasonForStatus(DispatchCompleted)
+		env.applyAttempts(r.Attempt, r.AttemptIDs)
 		env.finalize()
 		return env
 	}
@@ -362,6 +401,7 @@ func (r DispatchResult) Envelope() ProposalEnvelope {
 	// failed before its world ran — names the failure class itself.
 	env.FailureClass = r.FailureClass
 	env.Recovery = failureRecovery(env.StopReason)
+	env.applyAttempts(r.Attempt, r.AttemptIDs)
 	env.finalize()
 	return env
 }

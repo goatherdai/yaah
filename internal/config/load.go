@@ -450,6 +450,13 @@ type SubAgentConfig struct {
 	// Roots must be disjoint; a read-only root is declared but not writable.
 	Grants []GrantConfig `yaml:"grants"`
 
+	// Retry configures the dispatch-boundary retry policy (yaah-dgkh): how
+	// many attempts one dispatch may take, the backoff between them, and the
+	// failure classes eligible for a re-run. The zero value is one attempt —
+	// no retry — so an absent stanza changes nothing. A role may override it
+	// with roles.<role>.retry.
+	Retry RetryConfig `yaml:"retry"`
+
 	// Roles holds per-role overrides keyed by role name
 	// ("analyst", "developer", "tester", "reviewer").
 	Roles map[string]RoleConfig `yaml:"roles"`
@@ -486,6 +493,12 @@ type RoleConfig struct {
 	// World overrides the dispatch world for this role (auto | worktree |
 	// container); empty inherits agents.subagent.world.
 	World string `yaml:"world"`
+
+	// Retry overrides the dispatch-boundary retry policy for this role
+	// (yaah-dgkh). nil inherits agents.subagent.retry; a present stanza is the
+	// whole policy for the role (it does not merge field by field), so a role
+	// can tighten a global `max_attempts: 3` back to 1.
+	Retry *RetryConfig `yaml:"retry"`
 
 	// Grants overrides the sub-agent grant set for this role; empty inherits
 	// agents.subagent.grants.

@@ -116,6 +116,13 @@ type RetainedRuntime struct {
 	Grants        []config.GrantConfig
 	GrantsForRole func(role string) []config.GrantConfig
 
+	// Retry is the configured dispatch-boundary retry policy (yaah-dgkh); the
+	// zero value is one attempt, i.e. no retry. RetryForRole supplies a per-role
+	// override — ok reports that the role declares one, because an override is
+	// the whole policy for that role rather than a field-by-field merge.
+	Retry        config.RetryConfig
+	RetryForRole func(role string) (config.RetryConfig, bool)
+
 	// ContainerWorlds reports whether this session can attempt a per-dispatch
 	// container world (yaah-ihfh.3). It is true only in a host session whose
 	// config names a container image; a session that offers no container world
