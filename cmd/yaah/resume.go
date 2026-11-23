@@ -190,8 +190,10 @@ func restoreMessage(m memory.Message) types.Message {
 	// on those rows — so feeding it back as assistant prose on resume
 	// primes the model to emit tool calls as text instead of structured
 	// tool_calls. ACP then has no ToolStartEvent to render as a tool card
-	// and the turn ends with the raw carrier as the answer.
-	if len(msg.ToolCalls) > 0 && agentctx.IsSyntheticToolCarrier(msg.Content) {
+	// and the turn ends with the raw carrier as the answer. Match the exact
+	// rendered carrier, not just its prefix: real assistant text alongside
+	// a tool call may also begin with "[tool:".
+	if len(msg.ToolCalls) > 0 && msg.Content == agentctx.SyntheticToolCarrier(msg.ToolCalls) {
 		msg.Content = ""
 	}
 	return msg

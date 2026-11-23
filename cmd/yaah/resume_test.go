@@ -75,6 +75,25 @@ func TestRestoreMessage_keepsRealToolPrefixedText(t *testing.T) {
 	}
 }
 
+// A genuine reply can begin with "[tool:" and still carry a tool call. The
+// prefix alone cannot identify the persistence placeholder, so restore must
+// compare against the exact rendered carrier and keep this text.
+func TestRestoreMessage_keepsRealTextAlongsideToolCalls(t *testing.T) {
+	const text = `[tool:bash] I will check the state, then decide.`
+	got := restoreMessage(memory.Message{
+		Role:      "assistant",
+		Content:   text,
+		ToolCalls: `[{"id":"call-1","type":"function","function":{"name":"bash","arguments":"{\"command\":\"git status\"}"}}]`,
+	})
+
+	if got.Content != text {
+		t.Errorf("genuine text dropped: content = %q, want %q", got.Content, text)
+	}
+	if len(got.ToolCalls) != 1 {
+		t.Fatalf("tool calls lost: %+v", got.ToolCalls)
+	}
+}
+
 // newResumeFixture persists a session with one message, so restore's
 // "no messages" guard does not fire.
 func newResumeFixture(t *testing.T, id string) *memory.DB {

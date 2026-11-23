@@ -8,9 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
+	agentcontext "github.com/goatherdai/yaah/internal/agent/context"
 	"github.com/goatherdai/yaah/internal/memory"
 	"github.com/goatherdai/yaah/internal/types"
 )
@@ -134,11 +134,7 @@ func (p *SessionPersister) Persist(msg types.Message) {
 func (p *SessionPersister) newMessage(msg types.Message, idx int) memory.Message {
 	content := msg.Content
 	if content == "" {
-		var parts []string
-		for _, tc := range msg.ToolCalls {
-			parts = append(parts, fmt.Sprintf("[tool:%s] %s", tc.Function.Name, tc.Function.Arguments))
-		}
-		content = strings.Join(parts, "\n")
+		content = agentcontext.SyntheticToolCarrier(msg.ToolCalls)
 	}
 	toolCallsJSON := ""
 	if len(msg.ToolCalls) > 0 {

@@ -5,6 +5,7 @@
 package context
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
@@ -136,6 +137,18 @@ const syntheticToolCarrierPrefix = "[tool:"
 // that merely starts with "[tool:" is a real reply, not an internal row.
 func IsSyntheticToolCarrier(content string) bool {
 	return strings.HasPrefix(content, syntheticToolCarrierPrefix)
+}
+
+// SyntheticToolCarrier renders the exact placeholder content the persister
+// writes for an assistant message that carried only tool calls. Writers and
+// readers must share this renderer: the prefix predicate alone cannot tell a
+// generated placeholder from genuine assistant text beginning with "[tool:".
+func SyntheticToolCarrier(calls []types.ToolCall) string {
+	parts := make([]string, 0, len(calls))
+	for _, tc := range calls {
+		parts = append(parts, fmt.Sprintf("[tool:%s] %s", tc.Function.Name, tc.Function.Arguments))
+	}
+	return strings.Join(parts, "\n")
 }
 
 // ActiveTaskPrompt returns the most recent user message that is genuinely
