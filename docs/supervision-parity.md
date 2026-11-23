@@ -73,7 +73,7 @@ worlds enforce different declarations.
 
 `docs/goatherd-parity.md` is the ledger of record. Open items: `yaah-hxk3.1`
 (supervision, Partial — the biggest gap), `hxk3.2` (citation checking, not
-ported), `hxk3.4` (contexts/effect fold, Partial), `hxk3.5`
+ported), `hxk3.4` (contexts/effect fold, declined — `docs/context-effect-fold-decision.md`), `hxk3.5`
 (task/step/combinators — the workflow DSL exists under `internal/workflow/`
 with `gate`/`assert` adopted; `budget`/`timeout` remain unported),
 `hxk3.3` (scorecard, ongoing); umbrella `yaah-1tkp`.

@@ -45,7 +45,7 @@ not claim it wholesale.
 | Egress postures | not modeled in the Python reference | `allow_all` / `deny_all` / `broker` | **Shipped, beyond reference** |
 | Supervision | `JudgePredicate`, gates, permission plans | rule-based supervisor + blocking guard | **Partial**; `yaah-hxk3.1` |
 | Task / step / combinators | `task`, `step`, gate/retry/parallel/race | own streaming loop + delegate | **Not ported**; decision `yaah-hxk3.5` |
-| Contexts / effect fold | workspace, session, KV, DB, MCP, appstore | own state/memory/MCP + kernel effect bus | **Partial**; decision `yaah-hxk3.4` |
+| Contexts / effect fold | workspace, session, KV, DB, MCP, appstore | own state/memory/MCP + kernel effect bus | **Declined**; decision `yaah-hxk3.4` (`docs/context-effect-fold-decision.md`) |
 | Citation checking | Shepherd 0.3.1 citation checker | none | **Not ported**; `yaah-hxk3.2` |
 | Export / transform | dedicated packages | none | **Declined** for the coding-agent scope |
 | Devices / remote carriers | device and remote backends | git worktree + croft container only | **Declined** beyond current carriers |
