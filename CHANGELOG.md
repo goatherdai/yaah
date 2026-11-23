@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.207.2](https://github.com/goatherdai/yaah/compare/v0.207.1...v0.207.2) (2026-11-23)
+
+
+### Documentation
+
+* **dispatch:** steer sub-agents to targeted tests, parent runs full gates ([#394](https://github.com/goatherdai/yaah/issues/394)) ([bb65b66](https://github.com/goatherdai/yaah/commit/bb65b663d63696cc56a7121ab81fcdddb67096a6))
+
 ## [0.207.1](https://github.com/goatherdai/yaah/compare/v0.207.0...v0.207.1) (2026-11-23)
 
 
