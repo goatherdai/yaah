@@ -30,6 +30,16 @@ type SessionPersister struct {
 	traceID string
 	turnID  string
 
+	// toolResultIdx records the index each tool result was persisted at
+	// this run, keyed by tool_call_id. It closes the debounce window the
+	// DB-backed HasToolResult guard leaves open: writeMsg is debounced, so
+	// two results for the same call persisted inside the flush window both
+	// see an empty DB and both pass — bricking the transcript (providers
+	// reject a second result for one tool_use). The in-memory map is the
+	// authoritative current-run check; the DB query stays as the cross-run
+	// fallback.
+	toolResultIdx map[string]int
+
 	// KnownTitle mirrors the persisted session title (empty = untitled).
 	// Seeded from the store at build time; the first user message that
 	// derives a title transitions it — the store's TouchSession adopts
@@ -65,6 +75,9 @@ func (p *SessionPersister) Persist(msg types.Message) {
 		return
 	}
 	if msg.Role == "tool" && msg.ToolCallID != "" {
+		if _, dup := p.toolResultIdx[msg.ToolCallID]; dup {
+			return
+		}
 		if exists, err := p.db.HasToolResult(p.sessionID, msg.ToolCallID); err == nil && exists {
 			// A tool result for a call this session already answered. The
 			// duplicate is a re-execution artifact; persisting it would make
@@ -74,6 +87,10 @@ func (p *SessionPersister) Persist(msg types.Message) {
 			// contiguous.
 			return
 		}
+		if p.toolResultIdx == nil {
+			p.toolResultIdx = make(map[string]int)
+		}
+		p.toolResultIdx[msg.ToolCallID] = p.msgIdx
 	}
 	m := p.newMessage(msg, p.msgIdx)
 	// Title transition, mirroring the store's one-shot rule (user-role
@@ -190,6 +207,7 @@ func (p *SessionPersister) SetMsgIdx(idx int) {
 func (p *SessionPersister) TruncateFrom(n int) {
 	if p.db == nil {
 		p.msgIdx = n
+		p.dropToolResultsFrom(n)
 		return
 	}
 	if err := p.db.DeleteMessagesFrom(p.sessionID, n); err != nil {
@@ -197,6 +215,18 @@ func (p *SessionPersister) TruncateFrom(n int) {
 		return
 	}
 	p.msgIdx = n
+	p.dropToolResultsFrom(n)
+}
+
+// dropToolResultsFrom forgets tool results persisted at idx >= n so a
+// truncated turn that is re-executed can re-persist its results instead of
+// being falsely skipped as duplicates by the in-memory guard.
+func (p *SessionPersister) dropToolResultsFrom(n int) {
+	for id, idx := range p.toolResultIdx {
+		if idx >= n {
+			delete(p.toolResultIdx, id)
+		}
+	}
 }
 
 // Rebase resynchronizes persistence after the conversation was replaced
@@ -221,6 +251,7 @@ func (p *SessionPersister) Rebase(msgs []types.Message) {
 		return
 	}
 	p.msgIdx = 0
+	p.toolResultIdx = nil
 	for _, m := range msgs {
 		p.Persist(m)
 	}
