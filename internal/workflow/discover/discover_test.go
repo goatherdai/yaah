@@ -208,3 +208,72 @@ func TestListAbsolutesRelativeExtraDir(t *testing.T) {
 		t.Errorf("listed path not absolute: %q", got[0].Path)
 	}
 }
+
+// TestListWalksUpToProjectWorkflows pins the walk-up search: a bare name
+// resolves against a project's workflows/ dir even when the cwd is a nested
+// subdirectory of that project, not its root. The git root is the boundary.
+func TestListWalksUpToProjectWorkflows(t *testing.T) {
+	t.Setenv("YAAH_HOME", t.TempDir())
+	project := t.TempDir()
+	if err := os.Mkdir(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const name = "walkup-unique"
+	write(t, filepath.Join(project, "workflows", name+".yaml"), "kind: Workflow\n")
+	nested := filepath.Join(project, "pkg", "sub", "deep")
+
+	specs, err := List(nested)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	wantPath := filepath.Join(project, "workflows", name+".yaml")
+	found := false
+	for _, s := range specs {
+		if s.Name == name && s.Path == wantPath {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("List(%q) = %+v; want a spec %q at %q", nested, specs, name, wantPath)
+	}
+	if got, err := Resolve(nested, name); err != nil || got != wantPath {
+		t.Errorf("Resolve(nested, %q) = %q, %v; want %q", name, got, err, wantPath)
+	}
+}
+
+// TestListStopsAtProjectRoot pins the boundary: an ancestor above the git
+// root (an attacker-writable /tmp/workflows, say) must not be searched, and a
+// cwd outside any git repository must not walk up at all.
+func TestListStopsAtProjectRoot(t *testing.T) {
+	t.Setenv("YAAH_HOME", t.TempDir())
+	base := t.TempDir()
+	// An ancestor spec outside the project, which the walk-up must not reach.
+	write(t, filepath.Join(base, "workflows", "hijack.yaml"), "kind: Workflow\n")
+	project := filepath.Join(base, "project")
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(project, "workflows", "own.yaml"), "kind: Workflow\n")
+
+	specs, err := List(filepath.Join(project, "src"))
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, s := range specs {
+		if s.Name == "hijack" {
+			t.Fatalf("List searched above the git root: %+v", specs)
+		}
+	}
+	if got, err := Resolve(filepath.Join(project, "src"), "hijack"); err == nil {
+		t.Fatalf("Resolve(hijack) = %q, want not-found (outside the project boundary)", got)
+	}
+
+	// A cwd outside any git repository must not walk up into the base.
+	nonGit := filepath.Join(base, "no-git-here")
+	if err := os.MkdirAll(nonGit, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Resolve(nonGit, "hijack"); err == nil {
+		t.Fatalf("Resolve(hijack) from a non-git cwd = %q, want not-found", got)
+	}
+}

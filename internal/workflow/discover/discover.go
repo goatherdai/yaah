@@ -32,18 +32,82 @@ var specExts = []string{".yaml", ".yml", ".json"}
 
 // SearchDirs returns the ordered directories scanned for workflow documents:
 // extra dirs first (caller-supplied, e.g. --workflow-dir), then the workspace
-// dir (<cwd>/workflows), then the global dir (<yaah home>/workflows). Earlier
-// directories win name collisions.
+// dirs bounded by the current git project (see projectDirs), then the global
+// dir (<yaah home>/workflows). Earlier directories win name collisions.
 func SearchDirs(cwd string, extra ...string) []string {
-	dirs := make([]string, 0, len(extra)+2)
+	dirs := make([]string, 0, len(extra)+4)
 	for _, d := range extra {
 		dirs = append(dirs, absDir(d))
 	}
-	if cwd != "" {
-		dirs = append(dirs, absDir(filepath.Join(cwd, "workflows")))
-	}
+	dirs = append(dirs, projectDirs(cwd)...)
 	dirs = append(dirs, filepath.Join(config.HomeDir(), "workflows"))
 	return dirs
+}
+
+// projectDirs returns the workspace search dirs for cwd: <cwd>/workflows is
+// always present (so the workspace tier exists even before a workflows dir is
+// created), followed by each existing <ancestor>/workflows walking up to, and
+// including, the nearest git repository root (nearest first). The git root is
+// the project boundary: ancestors above it are never searched, so an
+// attacker-writable directory outside the project (e.g. /tmp/workflows)
+// cannot shadow a bare name. A cwd that is not inside a git repository has no
+// project boundary, so no ancestors are searched.
+func projectDirs(cwd string) []string {
+	cwd = absDir(cwd)
+	if cwd == "" {
+		return nil
+	}
+	out := []string{filepath.Join(cwd, "workflows")}
+	root := projectRoot(cwd)
+	if root == "" {
+		return out
+	}
+	for cur := filepath.Dir(cwd); ; cur = filepath.Dir(cur) {
+		if d, ok := workflowsDir(cur); ok {
+			out = append(out, d)
+		}
+		if cur == root {
+			break
+		}
+	}
+	return out
+}
+
+// projectRoot returns the nearest ancestor of cwd (including cwd itself) that
+// is a git repository root (it has a .git directory or worktree file), or ""
+// when cwd is not inside a git repository.
+func projectRoot(cwd string) string {
+	for cur := cwd; ; {
+		if isGitRoot(cur) {
+			return cur
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return ""
+		}
+		cur = parent
+	}
+}
+
+func isGitRoot(dir string) bool {
+	fi, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil && (fi.IsDir() || fi.Mode().IsRegular())
+}
+
+// workflowsDir reports the <dir>/workflows search directory when it exists,
+// and false when it is confirmed absent. An entry that exists but cannot be
+// stat'd (e.g. a symlink into an untraversable location) is kept so List
+// surfaces the real error rather than silently skipping it.
+func workflowsDir(dir string) (string, bool) {
+	d := filepath.Join(dir, "workflows")
+	fi, err := os.Stat(d)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false
+		}
+		return d, true
+	}
+	return d, fi.IsDir()
 }
 
 // absDir makes a caller-supplied directory absolute (resolved against the
