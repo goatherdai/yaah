@@ -46,7 +46,7 @@ not claim it wholesale.
 | Supervision | `JudgePredicate`, gates, permission plans | rule-based supervisor + blocking guard | **Partial**; `yaah-hxk3.1` |
 | Task / step / combinators | `task`, `step`, gate/retry/parallel/race | own streaming loop + delegate | **Not ported**; decision `yaah-hxk3.5` |
 | Contexts / effect fold | workspace, session, KV, DB, MCP, appstore | own state/memory/MCP + kernel effect bus | **Declined**; decision `yaah-hxk3.4` (`docs/context-effect-fold-decision.md`) |
-| Citation checking | Shepherd 0.3.1 citation checker | none | **Not ported**; `yaah-hxk3.2` |
+| Citation checking | Shepherd 0.3.1 citation checker | none | **Declined**; `yaah-hxk3.2` (`docs/citation-checker-decision.md`) |
 | Export / transform | dedicated packages | none | **Declined** for the coding-agent scope |
 | Devices / remote carriers | device and remote backends | git worktree + croft container only | **Declined** beyond current carriers |
 | Provider SDK shape | Python provider protocol/adapters | yaah provider layer | **Different surface, not a parity target** |
