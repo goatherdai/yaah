@@ -74,7 +74,8 @@ func (p *SessionPersister) Persist(msg types.Message) {
 	if p.db == nil {
 		return
 	}
-	if msg.Role == "tool" && msg.ToolCallID != "" {
+	isToolResult := msg.Role == "tool" && msg.ToolCallID != ""
+	if isToolResult {
 		if _, dup := p.toolResultIdx[msg.ToolCallID]; dup {
 			return
 		}
@@ -87,10 +88,6 @@ func (p *SessionPersister) Persist(msg types.Message) {
 			// contiguous.
 			return
 		}
-		if p.toolResultIdx == nil {
-			p.toolResultIdx = make(map[string]int)
-		}
-		p.toolResultIdx[msg.ToolCallID] = p.msgIdx
 	}
 	m := p.newMessage(msg, p.msgIdx)
 	// Title transition, mirroring the store's one-shot rule (user-role
@@ -121,6 +118,12 @@ func (p *SessionPersister) Persist(msg types.Message) {
 			fmt.Fprintf(os.Stderr, "warning: db persist after resync: %v\n", err)
 			return
 		}
+	}
+	if isToolResult {
+		if p.toolResultIdx == nil {
+			p.toolResultIdx = make(map[string]int)
+		}
+		p.toolResultIdx[msg.ToolCallID] = p.msgIdx
 	}
 	p.msgIdx++
 }
@@ -210,6 +213,10 @@ func (p *SessionPersister) TruncateFrom(n int) {
 		p.dropToolResultsFrom(n)
 		return
 	}
+	// Flush pending debounced writes before the delete: tool results are
+	// buffered, so rows for the truncated turn could otherwise land after the
+	// delete at idx >= n and resurrect messages the truncation just removed.
+	p.Flush()
 	if err := p.db.DeleteMessagesFrom(p.sessionID, n); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: truncate persisted messages failed (cursor left at %d): %v\n", p.msgIdx, err)
 		return

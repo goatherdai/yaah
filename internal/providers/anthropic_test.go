@@ -236,15 +236,26 @@ func TestChatRequestToAnthropic_DropsDuplicateToolResult(t *testing.T) {
 	result := lowerAnthropicRequest(req, "auto")
 
 	count := 0
+	survivor := ""
 	for _, m := range result.Messages {
 		for _, block := range m.Content {
-			if blockType(block) == "tool_result" && blockToolResult(block).ToolUseID == "call_1" {
+			tr := blockToolResult(block)
+			if blockType(block) == "tool_result" && tr != nil && tr.ToolUseID == "call_1" {
 				count++
+				if len(tr.Content) > 0 && tr.Content[0].OfText != nil {
+					survivor = tr.Content[0].OfText.Text
+				}
 			}
 		}
 	}
 	if count != 1 {
 		t.Fatalf("tool_result blocks for call_1 = %d; want 1 (duplicate must be dropped)", count)
+	}
+	if survivor != "first" {
+		t.Errorf("surviving tool_result content = %q; want %q (first result wins)", survivor, "first")
+	}
+	if len(req.Messages) != 4 {
+		t.Errorf("req.Messages mutated by lowering: len = %d; want 4", len(req.Messages))
 	}
 }
 

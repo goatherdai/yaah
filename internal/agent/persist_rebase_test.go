@@ -356,6 +356,12 @@ func TestSessionPersister_DropsDuplicateToolResult_Debounced(t *testing.T) {
 	if p.MsgIdx() != 2 {
 		t.Fatalf("MsgIdx after duplicate tool result = %d; want 2 (duplicate must not advance the cursor)", p.MsgIdx())
 	}
+	// Prove the debounce window is still open: if the first result has
+	// already flushed, the DB fallback (not the in-memory map) would be
+	// doing the dropping and this test would not exercise the fix.
+	if ok, err := db.HasToolResult("sess-dup-debounced", "call_1"); err != nil || ok {
+		t.Fatalf("debounce window closed before the duplicate persist (HasToolResult=%v, err=%v); test cannot observe the fix", ok, err)
+	}
 	if err := deb.Flush(); err != nil {
 		t.Fatalf("Flush() error: %v", err)
 	}
