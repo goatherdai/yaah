@@ -1,0 +1,87 @@
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: fix-bug
+  version: 1.0.0
+spec:
+  params:
+    issue:
+      type: string
+      required: true
+  defaults:
+    lane: proposal
+    network: deny_all
+    grants:
+      - path: cmd
+        access: readwrite
+      - path: internal
+        access: readwrite
+  budgets:
+    max_dispatches: 12
+    max_wall_clock_seconds: 1800
+    max_concurrent_dispatches: 1
+  steps:
+    - id: triage
+      kind: delegate
+      role: analyst
+      lane: report
+      output: Diagnosis
+      prompt: |
+        Diagnose this bug and identify the minimal fix, without changing any
+        code: {{ params.issue }}
+        Survey the relevant code under cmd/ and internal/ first.
+        Return JSON only:
+        {"summary": "...", "paths": ["..."], "root_cause": "...", "fix_strategy": "..."}
+    - id: implement
+      kind: delegate
+      role: developer
+      needs: [triage]
+      output: proposal
+      prompt: |
+        Fix this bug and return a retained proposal: {{ params.issue }}
+        Diagnosis: {{ steps.triage.output }}
+        Only touch paths under cmd/ and internal/.
+    - id: repair
+      kind: loop
+      needs: [implement]
+      max_iterations: 3
+      continue_from: "{{ steps.implement.output.proposal_id }}"
+      until: { from: steps.repair.collect, field: verdict, equals: pass }
+      collect: outcomes
+      on_failure: continue
+      body:
+        - id: fix
+          kind: delegate
+          role: developer
+          output: fix_proposal
+          prompt: |
+            The tests failed. Repair the proposal
+            {{ steps.implement.output.proposal_id }} so the tests pass.
+            Keep the fix minimal and under cmd/ and internal/.
+        - id: check
+          kind: delegate
+          role: golang-tester
+          lane: report
+          timeout_seconds: 600
+          output: Verdict
+          prompt: |
+            Run the test suite against the repaired proposal.
+            Diff: {{ steps.fix.output.diff }}
+            Return JSON only: {"verdict":"pass"|"fail","reasons":[]}.
+    - id: land
+      kind: settle
+      needs: [repair]
+      proposals: { from: steps.repair.collect }
+      where: { from: steps.repair.collect, field: verdict, equals: pass }
+      action: apply
+      policy: three_way
+      on_conflict: escalate
+      on_empty: fail
+    - id: report
+      kind: emit
+      needs: [land]
+      value: |
+        Bug fixed: landed {{ steps.land.output.settled }} proposal(s).
+        Triage: {{ steps.triage.output }}
+        Repair rounds: {{ steps.repair.collect }}
+      path: artifacts/fix-bug-report.md

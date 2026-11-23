@@ -1,0 +1,34 @@
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: security-audit
+  version: 1.0.0
+spec:
+  params:
+    target:
+      type: string
+      required: true
+  defaults:
+    lane: report
+    network: deny_all
+  budgets:
+    max_dispatches: 1
+    max_wall_clock_seconds: 900
+    max_concurrent_dispatches: 1
+  steps:
+    - id: audit
+      kind: delegate
+      role: security-auditor
+      output: Audit
+      prompt: |
+        Scan this target for vulnerabilities, secrets, and unsafe patterns.
+        Do not modify any files; this is read-only.
+        Target: {{ params.target }}
+        Report every finding with the file path and line where possible.
+    - id: report
+      kind: emit
+      needs: [audit]
+      value: |
+        Security audit of {{ params.target }}:
+        {{ steps.audit.output }}
+      path: artifacts/security-audit.md
