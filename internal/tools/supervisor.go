@@ -92,6 +92,12 @@ type SupervisorTool struct {
 	// scopes, how often. Nil when the supervisor stanza is not live;
 	// status then reports no firings rather than guessing.
 	Svc firingSource
+
+	// Snapshot is the session's effect-stream snapshot source
+	// (yaah-1050.1.1): a read-only join of the run registry with the
+	// per-agent tool facts the trace already holds. Nil when tracing is
+	// off — `snapshot` then says so instead of inventing agents.
+	Snapshot supervisionapi.SnapshotSource
 }
 
 func (*SupervisorTool) Name() string { return "supervisor" }
@@ -105,8 +111,8 @@ func (*SupervisorTool) Schema() json.RawMessage {
 		"properties": {
 			"action": {
 				"type": "string",
-				"enum": ["list_scopes", "inject", "halt", "status"],
-				"description": "list_scopes: show all scopes and their state; inject: push guidance into a scope (trace-only if no active run); halt: cancel a scope and bounded-quiesce it (root halt needs supervisor_halt_root); status: show supervision system status"
+				"enum": ["list_scopes", "inject", "halt", "status", "snapshot"],
+				"description": "list_scopes: show all scopes and their state; inject: push guidance into a scope (trace-only if no active run); halt: cancel a scope and bounded-quiesce it (root halt needs supervisor_halt_root); status: show supervision system status; snapshot: read a compact per-agent snapshot of what each sub-agent is doing (trailing tool calls, modified files, error counts, age)"
 			},
 			"scope_id": {
 				"type": "string",
@@ -148,7 +154,6 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 	if portIsNil(svc) {
 		svc = nil
 	}
-
 	switch raw.Action {
 	case "list_scopes":
 		return executeListScopes(mgr)
@@ -167,8 +172,10 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 		return executeHalt(mgr, runs, raw.ScopeID)
 	case "status":
 		return executeStatus(mgr, runs, svc)
+	case "snapshot":
+		return executeSnapshot(t.Snapshot)
 	default:
-		return "", fmt.Errorf("supervisor: unknown action %q (valid: list_scopes, inject, halt, status)", raw.Action)
+		return "", fmt.Errorf("supervisor: unknown action %q (valid: list_scopes, inject, halt, status, snapshot)", raw.Action)
 	}
 }
 
@@ -342,4 +349,125 @@ func executeStatus(mgr *goatherd.ScopeManager, runs runBridge, svc firingSource)
 		}
 	}
 	return out, nil
+}
+
+// snapshotRenderBudget bounds the rendered snapshot, well under
+// substrate.ToolResultMaxBytes. The source already caps agents and trail
+// lengths; this is the second cap, because a poll must never crowd out the
+// rest of the turn whatever the source hands back.
+const snapshotRenderBudget = 6000
+
+// executeSnapshot renders the batched per-agent snapshot (yaah-1050.1.1):
+// who is running, what each agent has called lately, what it has written,
+// and how it has fared. It reads; it never reaches the worker, so a poll
+// cannot perturb the context it summarizes.
+func executeSnapshot(src supervisionapi.SnapshotSource) (string, error) {
+	if portIsNil(src) {
+		return "Agent snapshot unavailable: the effect-stream source is not wired in this session (tracing is off), so there are no per-agent facts to read.", nil
+	}
+	snap := src.Snapshot()
+	head := "Agent snapshot at " + snap.At.UTC().Format(time.RFC3339) + fmt.Sprintf(": %d agent(s)", len(snap.Agents))
+	if len(snap.Agents) == 0 {
+		head += " — none registered; no dispatch is running or recently finished."
+	} else {
+		head += "\n"
+	}
+	out := head
+	rendered, skipped := 0, 0
+	for _, a := range snap.Agents {
+		block := snapshotBlock(a, snap.At)
+		if len(out)+len(block) > snapshotRenderBudget {
+			skipped++
+			continue
+		}
+		out += block
+		rendered++
+	}
+	if skipped > 0 {
+		out += fmt.Sprintf("  … and %d more agent(s) beyond this poll's summary budget; poll again after this batch finishes.\n", skipped)
+	}
+	if snap.Dropped > 0 {
+		out += fmt.Sprintf("  %d agent(s) were beyond the snapshot's own cap and are not represented here.\n", snap.Dropped)
+	}
+	return out, nil
+}
+
+// snapshotBlock renders one agent: a head line with the identity, state, age,
+// and call counts, then the last call, the trailing trail, the file set, and
+// any note. One line per item keeps the batch scannable.
+func snapshotBlock(a supervisionapi.AgentSnapshot, now time.Time) string {
+	role := a.Role
+	if role == "" {
+		role = "(no role)"
+	}
+	if a.Label != "" {
+		role += " [" + a.Label + "]"
+	}
+	state := "running"
+	age := ""
+	switch {
+	case a.StillRunning && !a.StartedAt.IsZero():
+		age = fmt.Sprintf("  age=%s", now.Sub(a.StartedAt).Round(time.Second))
+	case !a.StillRunning && !a.StartedAt.IsZero() && !a.FinishedAt.IsZero():
+		state = "finished"
+		age = fmt.Sprintf("  ran=%s", a.FinishedAt.Sub(a.StartedAt).Round(time.Second))
+	case !a.StillRunning:
+		state = "finished"
+	}
+	block := fmt.Sprintf("  %s  scope=%s  %s%s  calls=%d errors=%d", role, a.ScopeID, state, age, a.Calls, a.Errors)
+	if a.Through >= 0 {
+		block += fmt.Sprintf("  through=%d", a.Through)
+	}
+	block += "\n"
+	if a.Workdir != "" {
+		block += "    workdir: " + a.Workdir + "\n"
+	}
+	if a.LastAction != "" {
+		block += "    last: " + a.LastAction
+		if a.LastArgs != "" {
+			block += " " + a.LastArgs
+		}
+		block += "\n"
+	}
+	if len(a.Trail) > 0 {
+		block += "    trail: " + snapshotTrail(a.Trail) + "\n"
+	}
+	if len(a.ModifiedFiles) > 0 {
+		files := ""
+		for i, f := range a.ModifiedFiles {
+			if i > 0 {
+				files += ", "
+			}
+			files += f
+		}
+		block += "    files: " + files + "\n"
+	}
+	if a.Note != "" {
+		block += "    note: " + a.Note + "\n"
+	}
+	return block
+}
+
+// snapshotTrail renders the trailing calls oldest-first, marking the ones
+// whose capture was not seen and the ones that failed. Args stay off this
+// line — the last call's args are already above — so a long trail stays one
+// readable line.
+func snapshotTrail(trail []supervisionapi.ToolCallDigest) string {
+	line := ""
+	for i, c := range trail {
+		if i > 0 {
+			line += ", "
+		}
+		line += c.Name
+		switch {
+		case !c.Paired:
+			line += " (capture pending)"
+		case !c.Success:
+			line += " ERR"
+			if c.Error != "" {
+				line += "(" + c.Error + ")"
+			}
+		}
+	}
+	return line
 }

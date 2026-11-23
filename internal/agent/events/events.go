@@ -32,6 +32,15 @@ import (
 // TryPublishMustDeliver's bool fallback (per-subscriber stats are
 // yaah-8jou.5), and no consumer currently needs drop detection or
 // mid-fan-out cancellation. Revisit when a concrete need appears.
+//
+// Reversed in part for yaah-1050.1.1, deliberately: the effect-stream
+// snapshot (`supervisor snapshot`) needs a cursor so a poll can resume
+// instead of re-reading an agent's whole prefix, and it takes the KERNEL's
+// per-owner ordinal — the durable sequence the trace store already assigns
+// every fact on an owner path. The broker still has no per-event sequence
+// numbers, and must not grow them: the ordinal is a property of the retained
+// trace, not of an in-process fan-out, so a replayed or resumed session keeps
+// the same cursor while event delivery keeps its fire-and-forget shape.
 
 // Event is the interface all agent events satisfy.
 // The interface is sealed via the unexported eventMarker method.
