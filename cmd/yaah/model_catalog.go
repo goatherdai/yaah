@@ -274,12 +274,17 @@ func newACPModelCatalog(logf func(format string, args ...any)) acp.ModelCatalog 
 // reads "claude-sonnet-4 (Anthropic)" instead of a bare slug.
 type acpModelCatalog struct{ catalog *modelCatalog }
 
-// Options implements acp.ModelCatalog.
+// Options implements acp.ModelCatalog. It uses Load, not Current, so the first
+// call waits for discovery to settle (bounded by the discovery budget) instead
+// of returning an empty picker after the short request-path wait. The eager
+// background warm in newACPModelCatalog means a session created after the
+// discovery window still answers immediately; only a session created during
+// that window pays the wait.
 func (c *acpModelCatalog) Options(ctx context.Context) []acp.ModelOption {
 	if c == nil || c.catalog == nil {
 		return nil
 	}
-	snap := c.catalog.Current(ctx)
+	snap := c.catalog.Load(ctx)
 	if len(snap.IDs) == 0 {
 		return nil
 	}

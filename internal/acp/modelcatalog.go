@@ -17,7 +17,8 @@ import "context"
 type ModelCatalog interface {
 	// Options returns the models to offer. It returns nil when discovery
 	// is disabled or nothing is known (no configured provider, feature
-	// off). Implementations cache their result for the process lifetime;
-	// callers own nothing and must not mutate the returned slice.
+	// off). It may block on the first call while discovery runs (bounded by
+	// the implementation's discovery budget); later calls answer from cache.
+	// Callers own nothing and must not mutate the returned slice.
 	Options(ctx context.Context) []ModelOption
 }
