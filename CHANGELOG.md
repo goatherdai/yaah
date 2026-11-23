@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.206.3](https://github.com/goatherdai/yaah/compare/v0.206.2...v0.206.3) (2026-11-23)
+
+
+### Documentation
+
+* brag the workflow DSL, add parity audits and a bead-to-PR workflow spec ([#380](https://github.com/goatherdai/yaah/issues/380)) ([7086d73](https://github.com/goatherdai/yaah/commit/7086d734fe2704f8eb94d3d605d476f2cba9bd10))
+
 ## [0.206.2](https://github.com/goatherdai/yaah/compare/v0.206.1...v0.206.2) (2026-11-23)
 
 
