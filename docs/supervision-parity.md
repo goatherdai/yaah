@@ -69,6 +69,23 @@ two lanes produce the same digest; for `auto`, the empty default, and
 `paddock`/`jail` they differ, and they must, because for that config the two
 worlds enforce different declarations.
 
+## Explicit declines
+
+Beyond the mapping table, three Shepherd surfaces are deliberately not
+adopted, recorded here so each gap reads as a decision rather than an
+omission:
+
+- **Kind hierarchies** — Shepherd subsumes effect kinds under parent kinds.
+  yaah's `Match` reasons over a flat `kind` field; a hierarchy would widen the
+  surface without a conformance question it answers.
+- **YAML loaders** — Shepherd lowers `Match`/`Plan` from a Python policy DSL.
+  yaah declares authority as typed Go (`effectpolicy` + `permissionplan`);
+  configuration loading, when it arrives, is a separate wiring increment.
+- **Handle/observe grant enforcement** — Shepherd enforces grants through a
+  per-effect handler. yaah enforces at the tool/dispatch boundary (the jail and
+  settlement monitors) and observes through the advisory `EffectBus`; a
+  per-effect handler is redundant with that.
+
 ## Open parity
 
 `docs/goatherd-parity.md` is the ledger of record. Open items: `yaah-hxk3.1`
