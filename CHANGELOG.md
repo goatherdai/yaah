@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.206.1](https://github.com/goatherdai/yaah/compare/v0.206.0...v0.206.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **resume:** dedupe tool results, harden the persist guard, and bump tviewmd/goatherd-runtime ([#376](https://github.com/goatherdai/yaah/issues/376)) ([3a12738](https://github.com/goatherdai/yaah/commit/3a12738ea76e1f3343018859d9410e90a03a7a86))
+
 ## [0.206.0](https://github.com/goatherdai/yaah/compare/v0.205.0...v0.206.0) (2026-11-23)
 
 
