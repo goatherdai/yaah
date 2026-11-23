@@ -141,6 +141,26 @@ func laneMayRetry(lane Lane, class string) bool {
 	}
 }
 
+// mayRetryClass is the split gate: it reports whether a finished attempt of the
+// given class could actually be re-run on this lane under this policy, ignoring
+// the attempt-count, budget-remaining and world-mutability constraints that only
+// an actual finished attempt reveals. The loop uses it to decide whether to
+// divide the dispatch budget to reserve room for a timeout retry, so an `only`
+// list that excludes `timeout` (or a policy with a single attempt) no longer
+// shortens the first attempt for a retry that can never happen.
+func (p retryPolicy) mayRetryClass(lane Lane, class string) bool {
+	if !p.enabled() {
+		return false
+	}
+	if !RetryCandidate(class) {
+		return false
+	}
+	if p.only != nil && !p.only[class] {
+		return false
+	}
+	return laneMayRetry(lane, class)
+}
+
 // shouldRetry is the whole retry decision for one finished attempt. attempts is
 // how many attempts have run so far (1 for the first) and terms carries what
 // that attempt's own outcome leaves the policy: the time left in the dispatch's
@@ -273,7 +293,7 @@ loop:
 		if n > 1 && ctx.Err() != nil {
 			break
 		}
-		timeout := attemptAllowance(req.Timeout, remainingBudget(deadline, timed), timed, n, policy.maxAttempts, laneMayRetry(lane, FailureClassTimeout))
+		timeout := attemptAllowance(req.Timeout, remainingBudget(deadline, timed), timed, n, policy.maxAttempts, policy.mayRetryClass(lane, FailureClassTimeout))
 
 		res := attempt(ctx, timeout, n)
 		if id := attemptIDFor(res, n); id != "" {

@@ -104,6 +104,32 @@ func TestAttemptAllowance(t *testing.T) {
 	}
 }
 
+// TestMayRetryClass pins the split gate: the budget is divided only when a
+// timed-out attempt could actually be re-run. An `only` list that excludes
+// timeout must not shorten the first attempt for a retry that cannot happen.
+func TestMayRetryClass(t *testing.T) {
+	all := newRetryPolicy(config.RetryConfig{MaxAttempts: 3})
+	if !all.mayRetryClass(LaneReport, FailureClassTimeout) {
+		t.Error("timeout on report lane = false, want true (no `only` filter admits every candidate)")
+	}
+	if all.mayRetryClass(LaneReport, FailureClassContent) {
+		t.Error("content on report lane = true, want false (content is never retryable)")
+	}
+
+	noTimeout := newRetryPolicy(config.RetryConfig{MaxAttempts: 3, Only: []string{FailureClassProviderTransient}})
+	if noTimeout.mayRetryClass(LaneReport, FailureClassTimeout) {
+		t.Error("timeout on report lane = true, want false (`only` excludes timeout)")
+	}
+	if !noTimeout.mayRetryClass(LaneReport, FailureClassProviderTransient) {
+		t.Error("provider_transient on report lane = false, want true (`only` admits it)")
+	}
+
+	single := newRetryPolicy(config.RetryConfig{MaxAttempts: 1})
+	if single.mayRetryClass(LaneReport, FailureClassTimeout) {
+		t.Error("timeout on report lane = true, want false (single attempt cannot retry)")
+	}
+}
+
 // TestSetRetryPolicy pins the workflow-side wiring: the global stanza is
 // installed, and a role override replaces it rather than merging.
 func TestSetRetryPolicy(t *testing.T) {

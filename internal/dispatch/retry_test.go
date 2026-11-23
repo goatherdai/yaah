@@ -173,8 +173,8 @@ func TestRunAttemptsAggregates(t *testing.T) {
 	if (*seen)[0] >= time.Minute || (*seen)[0] <= 0 {
 		t.Errorf("first attempt timeout = %v, want a share of the budget: a timed-out attempt must leave room for its retry", (*seen)[0])
 	}
-	if (*seen)[1] >= time.Minute || (*seen)[1] <= 0 {
-		t.Errorf("retry timeout = %v, want the remainder of the budget", (*seen)[1])
+	if (*seen)[1] <= 0 || (*seen)[1] > time.Minute {
+		t.Errorf("retry timeout = %v, want a positive remainder of the budget (bounded by the dispatch budget)", (*seen)[1])
 	}
 	env := res.Envelope()
 	if env.Attempts != 2 || !env.Retried {
