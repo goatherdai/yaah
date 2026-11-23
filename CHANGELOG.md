@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.207.1](https://github.com/goatherdai/yaah/compare/v0.207.0...v0.207.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **acp:** keep synthetic tool carriers out of resumed model context ([#391](https://github.com/goatherdai/yaah/issues/391)) ([b3873d6](https://github.com/goatherdai/yaah/commit/b3873d6efb4b4b299f87707151689dfa33ce49a9))
+
 ## [0.207.0](https://github.com/goatherdai/yaah/compare/v0.206.6...v0.207.0) (2026-11-23)
 
 
