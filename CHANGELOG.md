@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.206.4](https://github.com/goatherdai/yaah/compare/v0.206.3...v0.206.4) (2026-11-23)
+
+
+### Bug Fixes
+
+* **dispatch:** report supervisor guard denials in sub-agent envelopes ([#382](https://github.com/goatherdai/yaah/issues/382)) ([9b0f113](https://github.com/goatherdai/yaah/commit/9b0f11371c7cee295a3a67d25ff159b07b8f65b2))
+
 ## [0.206.3](https://github.com/goatherdai/yaah/compare/v0.206.2...v0.206.3) (2026-11-23)
 
 
