@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.204.1](https://github.com/goatherdai/yaah/compare/v0.204.0...v0.204.1) (2026-11-23)
+
+
+### Documentation
+
+* **parity:** complete the Shepherd↔yaah supervision parity epic ([#365](https://github.com/goatherdai/yaah/issues/365)) ([b8eb472](https://github.com/goatherdai/yaah/commit/b8eb47256be25a18f2f1f683382e8a60b765c6c4))
+
 ## [0.204.0](https://github.com/goatherdai/yaah/compare/v0.203.1...v0.204.0) (2026-11-22)
 
 
