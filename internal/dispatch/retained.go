@@ -621,7 +621,7 @@ func sessionContainerFallback(
 	rt RetainedRuntime,
 	prompt string,
 	subParams jobs.SubAgentParams,
-	timeout time.Duration,
+	budget time.Duration,
 	requested subagent.WorldKind,
 	reason string,
 ) (retainedRunResult, error) {
@@ -651,9 +651,9 @@ func sessionContainerFallback(
 		Reason:    reason,
 	})
 	runCtx := ctx
-	if timeout = remainingAllowance(ctx, timeout); timeout > 0 {
+	if budget = remainingAllowance(ctx, budget); budget > 0 {
 		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(ctx, timeout)
+		runCtx, cancel = context.WithTimeout(ctx, budget)
 		defer cancel()
 	}
 	// The world this dispatch runs in is the session container itself, and
@@ -711,7 +711,16 @@ func (r retainedRunResult) String() string {
 // skipped: the result is the sub-agent's report text, the world is torn down
 // before returning, and no proposal is registered — a report-role dispatch
 // carries no delta to settle.
-func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, subParams jobs.SubAgentParams, timeout time.Duration, report bool) (out retainedRunResult, err error) {
+func startRetainedRun(
+	ctx context.Context,
+	base context.Context,
+	rt RetainedRuntime,
+	prompt string,
+	subParams jobs.SubAgentParams,
+	timeout time.Duration,
+	remaining time.Duration,
+	report bool,
+) (out retainedRunResult, err error) {
 	// stage records how far the start got before it failed, so a failed attempt
 	// is classified by what it actually did rather than by the shape of its
 	// error (yaah-dgkh review). It starts at the refusal it is until a world is
@@ -782,7 +791,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			}
 			// The session container is the predecessor world in the ladder;
 			// a report seals nothing, so it can run there unretained.
-			return sessionContainerFallback(ctx, rt, prompt, subParams, timeout, requestedKind, werr.Error())
+			return sessionContainerFallback(base, rt, prompt, subParams, remaining, requestedKind, werr.Error())
 		}
 		return retainedRunResult{}, fmt.Errorf("delegate: %w", werr)
 	}
@@ -876,7 +885,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			if !sessionContainerFallbackAllowed(rt, subParams.Role) {
 				return retainedRunResult{}, fmt.Errorf("delegate: sibling container unavailable, and the session container cannot preserve the dispatch authority: %w", perr)
 			}
-			return sessionContainerFallback(ctx, rt, prompt, subParams, timeout, worldRes.Requested, worldRes.Reason)
+			return sessionContainerFallback(base, rt, prompt, subParams, remaining, worldRes.Requested, worldRes.Reason)
 		}
 		if worldRes.Resolved == subagent.WorldWorktree && !worktreeFallbackAllowed(rt, subParams.Role, report) {
 			return retainedRunResult{}, fmt.Errorf("delegate: container world unavailable, and the worktree cannot preserve the dispatch authority: %w", perr)

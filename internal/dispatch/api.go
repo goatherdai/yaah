@@ -217,7 +217,7 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 			rt := *req.Retained
 			report := lane == LaneReport
 			runner = func(ctx context.Context, prompt string, sp jobs.SubAgentParams) (string, error) {
-				res, err := startRetainedRun(ctx, rt, prompt, sp, req.Timeout, report)
+				res, err := startRetainedRun(ctx, ctx, rt, prompt, sp, req.Timeout, req.Timeout, report)
 				return res.String(), err
 			}
 		}
@@ -249,7 +249,7 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 	// without a second copy of any lane's body (yaah-dgkh). timeout is this
 	// attempt's slice of the dispatch budget: the whole of it when the policy
 	// permits only one attempt, its share of the remainder otherwise.
-	attempt := func(parent context.Context, timeout time.Duration, _ int) DispatchResult {
+	attempt := func(parent context.Context, timeout, remaining time.Duration, _ int) DispatchResult {
 		attemptStarted := time.Now()
 		// The budget is an absolute deadline across provisioning and the body,
 		// not a per-phase allowance: the retained lane provisions a world before
@@ -265,7 +265,7 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 		if req.Retained != nil {
 			switch lane {
 			case LaneReport:
-				res, err := startRetainedRun(ctx, *req.Retained, req.Prompt, params, timeout, true)
+				res, err := startRetainedRun(ctx, parent, *req.Retained, req.Prompt, params, timeout, remaining, true)
 				out := ClassifyRunnerResult(res.Report, err, role, timeout, ctx).
 					withMeta(meta.after(time.Since(attemptStarted)))
 				out.FailureClass = failedAttemptClass(parent, res.Stage, out, err)
@@ -276,7 +276,7 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 				// A shared-lane role cannot mutate the tree; isolation buys
 				// nothing, so fall through to the direct runner.
 			default:
-				res, err := startRetainedRun(ctx, *req.Retained, req.Prompt, params, timeout, false)
+				res, err := startRetainedRun(ctx, parent, *req.Retained, req.Prompt, params, timeout, remaining, false)
 				if err != nil {
 					// A retained start that fails (no root scope, refused input,
 					// provisioning) must still return the one envelope: route it

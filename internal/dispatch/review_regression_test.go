@@ -130,6 +130,46 @@ func TestMayRetryClass(t *testing.T) {
 	}
 }
 
+// TestRunAttemptsPassesRemainingBudget pins the fallback-budget plumbing: the
+// loop hands each attempt its divided share *and* the overall budget remaining
+// on the dispatch, so a report that falls back to the non-retryable session
+// container can run against the whole budget instead of its divided slice.
+func TestRunAttemptsPassesRemainingBudget(t *testing.T) {
+	failed := DispatchResult{
+		Status: DispatchStuck,
+		Err:    ErrStuckChild,
+		Meta:   EnvelopeMeta{DispatchID: "d#1", Lane: string(LaneReport)},
+	}
+	ok := DispatchResult{
+		Status: DispatchCompleted,
+		Result: "done",
+		Meta:   EnvelopeMeta{DispatchID: "d#1", Lane: string(LaneReport)},
+	}
+	var got []struct{ timeout, remaining time.Duration }
+	attempt := func(_ context.Context, timeout, remaining time.Duration, n int) DispatchResult {
+		got = append(got, struct{ timeout, remaining time.Duration }{timeout, remaining})
+		if n == 1 {
+			return failed
+		}
+		return ok
+	}
+	runAttempts(context.Background(), retryTestRequest(time.Minute), LaneReport,
+		time.Now().Add(time.Minute), newRetryPolicy(config.RetryConfig{MaxAttempts: 2}), attempt)
+
+	if len(got) != 2 {
+		t.Fatalf("attempts = %d, want 2", len(got))
+	}
+	if got[0].timeout >= time.Minute || got[0].timeout <= 0 {
+		t.Errorf("first attempt share = %v, want a strict slice of the budget", got[0].timeout)
+	}
+	if got[0].remaining <= 0 || got[0].remaining > time.Minute {
+		t.Errorf("remaining budget handed to the attempt = %v, want the full (bounded) dispatch budget", got[0].remaining)
+	}
+	if got[0].remaining <= got[0].timeout {
+		t.Errorf("remaining = %v must exceed the divided share = %v so a fallback can widen to it", got[0].remaining, got[0].timeout)
+	}
+}
+
 // TestSetRetryPolicy pins the workflow-side wiring: the global stanza is
 // installed, and a role override replaces it rather than merging.
 func TestSetRetryPolicy(t *testing.T) {
@@ -217,7 +257,7 @@ func TestRunAttemptsCancellationAggregates(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var n int
-	attempt := func(context.Context, time.Duration, int) DispatchResult {
+	attempt := func(context.Context, time.Duration, time.Duration, int) DispatchResult {
 		n++
 		if n == 2 {
 			time.AfterFunc(20*time.Millisecond, cancel)

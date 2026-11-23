@@ -127,9 +127,9 @@ func TestRetryPolicyForRole(t *testing.T) {
 }
 
 // fakeAttempt builds an attempt function that replays the given results.
-func fakeAttempt(results ...DispatchResult) (func(context.Context, time.Duration, int) DispatchResult, *[]time.Duration) {
+func fakeAttempt(results ...DispatchResult) (func(context.Context, time.Duration, time.Duration, int) DispatchResult, *[]time.Duration) {
 	var seen []time.Duration
-	return func(_ context.Context, timeout time.Duration, n int) DispatchResult {
+	return func(_ context.Context, timeout, _ time.Duration, n int) DispatchResult {
 		seen = append(seen, timeout)
 		if n-1 < len(results) {
 			return results[n-1]

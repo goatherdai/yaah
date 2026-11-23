@@ -272,7 +272,7 @@ func runAttempts(
 	lane Lane,
 	deadline time.Time,
 	policy retryPolicy,
-	attempt func(ctx context.Context, timeout time.Duration, n int) DispatchResult,
+	attempt func(ctx context.Context, timeout, remaining time.Duration, n int) DispatchResult,
 ) DispatchResult {
 	timed := !deadline.IsZero()
 	startedAt := time.Now()
@@ -293,9 +293,10 @@ loop:
 		if n > 1 && ctx.Err() != nil {
 			break
 		}
-		timeout := attemptAllowance(req.Timeout, remainingBudget(deadline, timed), timed, n, policy.maxAttempts, policy.mayRetryClass(lane, FailureClassTimeout))
+		remaining := remainingBudget(deadline, timed)
+		timeout := attemptAllowance(req.Timeout, remaining, timed, n, policy.maxAttempts, policy.mayRetryClass(lane, FailureClassTimeout))
 
-		res := attempt(ctx, timeout, n)
+		res := attempt(ctx, timeout, remaining, n)
 		if id := attemptIDFor(res, n); id != "" {
 			ids = append(ids, id)
 		}
@@ -306,18 +307,18 @@ loop:
 		res = res.withAttempts(n, ids).withWarnings(warnings)
 
 		class := res.Envelope().FailureClass
-		remaining := remainingBudget(deadline, timed)
+		left := remainingBudget(deadline, timed)
 		// The retry decision, resolved once and recorded: a cancelled parent
 		// must not be read — or recorded — as a retryable attempt.
 		next := ctx.Err() == nil && policy.shouldRetry(lane, class, n, attemptTerms{
-			remaining:    remaining,
+			remaining:    left,
 			timed:        timed,
 			mutableWorld: res.MutableWorld,
 		})
 		var wait time.Duration
 		if next {
 			var ok bool
-			if wait, ok = policy.backoffFor(waited, remaining, timed); !ok {
+			if wait, ok = policy.backoffFor(waited, left, timed); !ok {
 				next = false
 			}
 		}
