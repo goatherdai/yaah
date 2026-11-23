@@ -184,6 +184,16 @@ func restoreMessage(m memory.Message) types.Message {
 	if m.ToolCalls != "" {
 		json.Unmarshal([]byte(m.ToolCalls), &msg.ToolCalls)
 	}
+	// The persister writes a synthetic "[tool:name] {args}" content for an
+	// assistant row that carried only tool calls (persist.go:newMessage).
+	// The model never produced that text — a live run keeps Content empty
+	// on those rows — so feeding it back as assistant prose on resume
+	// primes the model to emit tool calls as text instead of structured
+	// tool_calls. ACP then has no ToolStartEvent to render as a tool card
+	// and the turn ends with the raw carrier as the answer.
+	if len(msg.ToolCalls) > 0 && agentctx.IsSyntheticToolCarrier(msg.Content) {
+		msg.Content = ""
+	}
 	return msg
 }
 

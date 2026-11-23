@@ -43,6 +43,38 @@ func TestRestoreMessage_carriesReasoningSignature(t *testing.T) {
 	}
 }
 
+// A tool-call-only assistant row is stored with a synthetic "[tool:name]
+// {args}" content. Restore must hand the model the original shape — empty
+// content plus structured tool calls — or a resumed session teaches the model
+// to emit tool calls as text, which leaves ACP with no tool call to render.
+func TestRestoreMessage_dropsSyntheticToolCarrier(t *testing.T) {
+	got := restoreMessage(memory.Message{
+		Role:      "assistant",
+		Content:   `[tool:bash] {"command":"git status"}`,
+		ToolCalls: `[{"id":"call-1","type":"function","function":{"name":"bash","arguments":"{\"command\":\"git status\"}"}}]`,
+	})
+
+	if got.Content != "" {
+		t.Errorf("synthetic carrier leaked into restored content: %q", got.Content)
+	}
+	if len(got.ToolCalls) != 1 || got.ToolCalls[0].ID != "call-1" {
+		t.Fatalf("tool calls lost while dropping the carrier: %+v", got.ToolCalls)
+	}
+	if name := got.ToolCalls[0].Function.Name; name != "bash" {
+		t.Errorf("tool name = %q, want bash", name)
+	}
+}
+
+// Assistant text that merely starts with "[tool:" is a real reply. It has no
+// tool calls, so restore must keep it verbatim.
+func TestRestoreMessage_keepsRealToolPrefixedText(t *testing.T) {
+	const text = "[tool:question] asked"
+	got := restoreMessage(memory.Message{Role: "assistant", Content: text})
+	if got.Content != text {
+		t.Errorf("content = %q, want %q", got.Content, text)
+	}
+}
+
 // newResumeFixture persists a session with one message, so restore's
 // "no messages" guard does not fire.
 func newResumeFixture(t *testing.T, id string) *memory.DB {
