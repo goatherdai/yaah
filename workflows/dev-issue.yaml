@@ -1,6 +1,6 @@
 # dev-issue — the standard development workflow for one backlog issue.
 #
-# This file IS the dispatcher: `yaah workflow run .agents/workflows/dev-issue.yaml
+# This file IS the dispatcher: `yaah workflow run dev-issue
 # --param issue=<bead id or task statement>` carries one issue from triage to a
 # landed, gate-clean change. It composes only verified v1 primitives (the same
 # shapes as internal/workflow/spec/testdata/valid/bounded_repair.yaml and
@@ -9,7 +9,7 @@
 # Worked example — the append-tool bead (P1, file-tools). The orchestrator
 # resolves the bead once host-side, then runs:
 #   bd show yaah-1794425741925-143-80217852 | Out-File -Encoding utf8 .scratch\issue-143.md
-#   .\yaah.exe workflow run .agents\workflows\dev-issue.yaml `
+#   .\yaah.exe workflow run dev-issue `
 #     --param issue=yaah-1794425741925-143-80217852 `
 #     --param issue_file=.scratch\issue-143.md
 # ("write truncates; add an append tool with atomic O_APPEND semantics for
