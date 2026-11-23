@@ -103,6 +103,12 @@ durable conversation-log line; `DoneEvent.Error` is dialog-only.
 
 ## Event flow
 
+A resumed session seeds `conversationLog` before `App.Run` from the
+session's persisted history (`SetHistory` / `bootstrapHistory`). It applies
+ACP's `session/load` row-exclusion rules, plus reasoning blocks and folded
+tool results, so the pane opens on the prior conversation and live events
+append after it.
+
 Agent events arrive on one goroutine via the broker forwarder
 (`proxy.go` implements `agent.View`). Streaming token deltas bypass the queue
 (direct write to a mutex-guarded pending buffer) and are flushed on

@@ -2,8 +2,8 @@
 // by the ACP view, the REPL terminal view, and the web view. These were
 // previously duplicated between those surfaces.
 //
-// The tview TUI does NOT use this package: its summaries are rendered
-// by internal/tui/components/toolblock.
+// The tview TUI's driver uses Summary for collapsed tool-block labels;
+// the block component itself only renders what it is given.
 package toolfmt
 
 import (

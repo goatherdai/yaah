@@ -76,7 +76,10 @@ type Block struct {
 	id        string
 	startTime time.Time
 	endTime   time.Time
-	theme     *colors.Theme
+	// durationLabel overrides the computed duration for restored rows,
+	// whose timing data was not persisted.
+	durationLabel string
+	theme         *colors.Theme
 }
 
 func New(id, name, args string, th *colors.Theme) *Block {
@@ -97,6 +100,11 @@ func (b *Block) Name() string     { return b.name }
 func (b *Block) S() State         { return b.state }
 func (b *Block) IsExpanded() bool { return b.expanded }
 func (b *Block) Toggle()          { b.expanded = !b.expanded }
+
+// SetDurationLabel replaces the computed duration with a fixed label.
+// Restored transcript rows use it because their timing was not persisted;
+// showing "0ms" would imply a real measurement.
+func (b *Block) SetDurationLabel(label string) { b.durationLabel = label }
 
 func (b *Block) Complete(summary, result string) {
 	b.endTime = time.Now()
@@ -122,6 +130,9 @@ func (b *Block) RenderCtx(ctx colors.RenderCtx) string {
 }
 
 func (b *Block) durationStr() string {
+	if b.durationLabel != "" {
+		return b.durationLabel
+	}
 	d := b.endTime.Sub(b.startTime)
 	if d < time.Second {
 		return fmt.Sprintf("%dms", d.Milliseconds())

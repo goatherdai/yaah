@@ -107,11 +107,35 @@ func EstimatePayloadBytes(messages []types.Message, tools []types.ToolDef) int {
 // internalUserPrefixes lists the content prefixes of user-role messages
 // that carry agent-internal guidance (steering, loop detection,
 // supervision, conflict reports, background dispatch) rather than text
-// the operator typed. The canonical registries — with the full rationale
-// for each prefix — live in internal/acp's internalUserMarkers and
-// internal/memory's titleSkipPrefixes; keep the three in sync when a new
+// the operator typed. IsInternalUserContent is the canonical predicate for
+// views that replay a transcript; internal/memory's titleSkipPrefixes is
+// the separate (title-oriented) registry — keep the two in sync when a new
 // synthetic prefix is introduced.
 var internalUserPrefixes = []string{"[STEER] ", "SUPERVISOR: ", "CONFLICT: ", "[BACKGROUND"}
+
+// IsInternalUserContent reports whether content is an agent-internal
+// user-role row rather than text the operator typed. Transcript consumers
+// (ACP session/load replay, TUI resume) use it to skip rows that never
+// reached the client during a live run.
+func IsInternalUserContent(content string) bool {
+	for _, prefix := range internalUserPrefixes {
+		if strings.HasPrefix(content, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// syntheticToolCarrierPrefix is the content the persister writes for an
+// assistant row that carried only tool calls (internal/agent/persist.go).
+const syntheticToolCarrierPrefix = "[tool:"
+
+// IsSyntheticToolCarrier reports whether content is that placeholder rather
+// than agent text. Transcript consumers use it alongside a tool-call check
+// to skip rows that were never streamed as text to a client.
+func IsSyntheticToolCarrier(content string) bool {
+	return strings.HasPrefix(content, syntheticToolCarrierPrefix)
+}
 
 // ActiveTaskPrompt returns the most recent user message that is genuinely
 // the operator's task, with the synthetic traffic removed.
@@ -124,14 +148,7 @@ func ActiveTaskPrompt(msgs []types.Message) string {
 		if msgs[i].Role != "user" || msgs[i].Content == "" {
 			continue
 		}
-		internal := false
-		for _, prefix := range internalUserPrefixes {
-			if strings.HasPrefix(msgs[i].Content, prefix) {
-				internal = true
-				break
-			}
-		}
-		if internal {
+		if IsInternalUserContent(msgs[i].Content) {
 			continue
 		}
 		return msgs[i].Content
