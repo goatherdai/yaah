@@ -32,18 +32,40 @@ var specExts = []string{".yaml", ".yml", ".json"}
 
 // SearchDirs returns the ordered directories scanned for workflow documents:
 // extra dirs first (caller-supplied, e.g. --workflow-dir), then the workspace
-// dir (<cwd>/workflows), then the global dir (<yaah home>/workflows). Earlier
-// directories win name collisions.
+// dirs walking up from cwd to the filesystem root (<cwd>/workflows, then each
+// existing <ancestor>/workflows, nearest first), then the global dir
+// (<yaah home>/workflows). Earlier directories win name collisions.
 func SearchDirs(cwd string, extra ...string) []string {
-	dirs := make([]string, 0, len(extra)+2)
+	dirs := make([]string, 0, len(extra)+4)
 	for _, d := range extra {
 		dirs = append(dirs, absDir(d))
 	}
-	if cwd != "" {
-		dirs = append(dirs, absDir(filepath.Join(cwd, "workflows")))
-	}
+	dirs = append(dirs, projectDirs(cwd)...)
 	dirs = append(dirs, filepath.Join(config.HomeDir(), "workflows"))
 	return dirs
+}
+
+// projectDirs returns the workspace search dirs for cwd: <cwd>/workflows is
+// always present (so the workspace tier exists even before a workflows dir is
+// created), followed by each existing <ancestor>/workflows walking up to the
+// filesystem root, nearest first. Walking up lets `yaah workflow run name`
+// resolve a project's workflows/ from any subdirectory of that project.
+func projectDirs(cwd string) []string {
+	cwd = absDir(cwd)
+	if cwd == "" {
+		return nil
+	}
+	out := []string{filepath.Join(cwd, "workflows")}
+	cur := filepath.Dir(cwd)
+	for cur != cwd {
+		d := filepath.Join(cur, "workflows")
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+			out = append(out, d)
+		}
+		cwd = cur
+		cur = filepath.Dir(cwd)
+	}
+	return out
 }
 
 // absDir makes a caller-supplied directory absolute (resolved against the

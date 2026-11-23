@@ -208,3 +208,28 @@ func TestListAbsolutesRelativeExtraDir(t *testing.T) {
 		t.Errorf("listed path not absolute: %q", got[0].Path)
 	}
 }
+
+// TestListWalksUpToProjectWorkflows pins the walk-up search: a bare name
+// resolves against a project's workflows/ dir even when the cwd is a nested
+// subdirectory of that project, not its root.
+func TestListWalksUpToProjectWorkflows(t *testing.T) {
+	t.Setenv("YAAH_HOME", t.TempDir())
+	project := t.TempDir()
+	write(t, filepath.Join(project, "workflows", "up.yaml"), "kind: Workflow\n")
+	nested := filepath.Join(project, "pkg", "sub", "deep")
+
+	specs, err := List(nested)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(specs) != 1 || specs[0].Name != "up" {
+		t.Fatalf("List = %+v, want one up from the project root", specs)
+	}
+	wantPath := filepath.Join(project, "workflows", "up.yaml")
+	if specs[0].Path != wantPath {
+		t.Errorf("spec path = %q, want %q", specs[0].Path, wantPath)
+	}
+	if got, err := Resolve(nested, "up"); err != nil || got != wantPath {
+		t.Errorf("Resolve(nested, up) = %q, %v; want %q", got, err, wantPath)
+	}
+}
