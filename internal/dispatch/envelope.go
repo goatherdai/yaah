@@ -345,6 +345,23 @@ func (r DispatchResult) withAttempts(attempt int, ids []string) DispatchResult {
 	return r
 }
 
+// withWarnings stamps the caveats every attempt so far reported onto a result,
+// so a retry cannot erase what a failed attempt left behind (yaah-dgkh review).
+func (r DispatchResult) withWarnings(warnings []string) DispatchResult {
+	r.Warnings = append([]string(nil), warnings...)
+	return r
+}
+
+// carryWarnings folds the dispatch's carried caveats onto an envelope on its way
+// out. AddWarning keeps the first as the single-line Warning, so a reader of
+// either field sees them.
+func carryWarnings(env proposalEnvelope, warnings []string) proposalEnvelope {
+	for _, w := range warnings {
+		env.AddWarning(w)
+	}
+	return env
+}
+
 // aggregate turns the last attempt's result into the whole sequence's: the
 // attempt counters and ids already cover every attempt, and the duration becomes
 // the dispatch's total wall clock instead of the final attempt's span.
@@ -372,12 +389,12 @@ func (r DispatchResult) Envelope() ProposalEnvelope {
 			env.FillMeta(meta)
 			env.applyAttempts(r.Attempt, r.AttemptIDs)
 			env.finalize()
-			return env
+			return carryWarnings(env, r.Warnings)
 		}
 		env := meta.newEnvelope(EnvelopeStatusProposal, r.Result)
 		env.applyAttempts(r.Attempt, r.AttemptIDs)
 		env.finalize()
-		return env
+		return carryWarnings(env, r.Warnings)
 	case DispatchRunning:
 		return meta.newEnvelope(EnvelopeStatusRunning, "")
 	case DispatchCompleted:
@@ -385,7 +402,7 @@ func (r DispatchResult) Envelope() ProposalEnvelope {
 		env.StopReason = stopReasonForStatus(DispatchCompleted)
 		env.applyAttempts(r.Attempt, r.AttemptIDs)
 		env.finalize()
-		return env
+		return carryWarnings(env, r.Warnings)
 	}
 
 	// Failure lanes: status=error. The partial body is the lane's own text and
@@ -403,7 +420,7 @@ func (r DispatchResult) Envelope() ProposalEnvelope {
 	env.Recovery = failureRecovery(env.StopReason)
 	env.applyAttempts(r.Attempt, r.AttemptIDs)
 	env.finalize()
-	return env
+	return carryWarnings(env, r.Warnings)
 }
 
 // ParseEnvelopeResult reparses a lane's already-rendered result as an envelope.

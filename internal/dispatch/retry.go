@@ -102,6 +102,22 @@ func retryPolicyFor(rt *RetainedRuntime, role string) retryPolicy {
 	return newRetryPolicy(cfg)
 }
 
+// SetRetryPolicy installs the configured dispatch-boundary retry policy on a
+// retained runtime: the global stanza, plus the per-role override callback. An
+// override replaces the whole policy rather than merging into it, so a role can
+// switch retry off under a global `max_attempts: 3`. Every composition root
+// that builds a retained runtime for dispatched sub-agents calls this, so a
+// workflow run retries under the same policy a session turn does.
+func (rt *RetainedRuntime) SetRetryPolicy(sub config.SubAgentConfig) {
+	rt.Retry = sub.Retry
+	rt.RetryForRole = func(role string) (config.RetryConfig, bool) {
+		if rc, ok := sub.Roles[role]; ok && rc.Retry != nil {
+			return *rc.Retry, true
+		}
+		return config.RetryConfig{}, false
+	}
+}
+
 // laneMayRetry is the decision's lane matrix: whether a lane admits a re-run at
 // all, given the class the attempt failed with.
 //
@@ -126,10 +142,10 @@ func laneMayRetry(lane Lane, class string) bool {
 }
 
 // shouldRetry is the whole retry decision for one finished attempt. attempts is
-// how many attempts have run so far (1 for the first), remaining is the time
-// left in the dispatch's total budget, and timed reports whether that budget
-// exists at all (a dispatch with no timeout always "has time").
-func (p retryPolicy) shouldRetry(lane Lane, class string, attempts int, remaining time.Duration, timed bool) bool {
+// how many attempts have run so far (1 for the first) and terms carries what
+// that attempt's own outcome leaves the policy: the time left in the dispatch's
+// total budget, and whether the world it ran in can be discarded with it.
+func (p retryPolicy) shouldRetry(lane Lane, class string, attempts int, terms attemptTerms) bool {
 	if !p.enabled() || attempts >= p.maxAttempts {
 		return false
 	}
@@ -145,10 +161,31 @@ func (p retryPolicy) shouldRetry(lane Lane, class string, attempts int, remainin
 	if !laneMayRetry(lane, class) {
 		return false
 	}
-	if timed && remaining <= 0 {
+	// A world the attempt already ran in cannot be reset, so a re-run would
+	// repeat its writes rather than start from the same place (yaah-dgkh
+	// review).
+	if terms.mutableWorld {
+		return false
+	}
+	if terms.timed && terms.remaining <= 0 {
 		return false
 	}
 	return true
+}
+
+// attemptTerms is what one finished attempt's own outcome leaves the retry
+// policy: how much of the dispatch budget is left, and whether the world the
+// attempt ran in survives it.
+type attemptTerms struct {
+	// remaining is the time left in the dispatch's total budget, and timed says
+	// whether that budget exists at all (a dispatch with no timeout always
+	// "has time").
+	remaining time.Duration
+	timed     bool
+	// mutableWorld reports that the attempt ran in a world a retry cannot
+	// reset: the session container a degraded report dispatch falls back to.
+	// That world outlives the attempt and keeps whatever the attempt wrote.
+	mutableWorld bool
 }
 
 // backoffFor is how long to wait before the next attempt, and whether waiting
@@ -196,16 +233,19 @@ func attemptIDFor(res DispatchResult, attempt int) string {
 //
 // Each attempt goes through finishDispatch, so every attempt records its own
 // `yaah.subagent.dispatch_attempt.v1` fact: a retried dispatch's history is
-// legible instead of only its last attempt. The aggregation on the returned
-// result names every attempt in order (AttemptIDs), how many ran (Attempts), and
+// legible instead of only its last attempt. The fact is written after the
+// decision, so it records what the policy actually allowed — not what the
+// failure class alone would have allowed. The aggregation on the returned result
+// names every attempt in order (AttemptIDs), how many ran (Attempts), and
 // therefore Retried — and the whole sequence's wall clock, not just the last
 // attempt's.
 //
-// The total timeout is the dispatch budget for the entire sequence: attempt 1
-// gets it whole, and each retry gets what is left of it. max_iterations and
-// max_turns are per attempt (they travel in the params, unmodified), and usage
-// aggregates across attempts because each attempt runs the same runner against
-// the same parent accounting.
+// The total timeout is the dispatch budget for the entire sequence, split across
+// the attempts the policy permits: a timed-out attempt must leave budget for the
+// retries the policy promises, or the `timeout` class could never be retried at
+// all. max_iterations and max_turns are per attempt (they travel in the params,
+// unmodified), and usage aggregates across attempts because each attempt runs the
+// same runner against the same parent accounting.
 func runAttempts(
 	ctx context.Context,
 	req DispatchRequest,
@@ -218,32 +258,52 @@ func runAttempts(
 	startedAt := time.Now()
 
 	var (
-		ids    []string
-		waited time.Duration
-		final  DispatchResult
+		ids      []string
+		warnings []string
+		waited   time.Duration
+		final    DispatchResult
 	)
+loop:
 	for n := 1; ; n++ {
-		timeout := req.Timeout
-		if n > 1 {
-			// Each retry gets what is left of the total budget rather than a
-			// fresh copy of it; attempt 1 keeps the exact configured value so a
-			// single-attempt dispatch is unchanged to the byte.
-			timeout = remainingBudget(deadline, timed)
+		// Before launching any further attempt: a parent that has gone away
+		// takes its dispatch with it, whatever the policy decided. With a zero
+		// backoff there is no wait to observe ctx.Done() in, so this is the
+		// only check standing between a cancelled parent and another attempt
+		// (yaah-dgkh review).
+		if n > 1 && ctx.Err() != nil {
+			break
 		}
+		timeout := attemptAllowance(req.Timeout, remainingBudget(deadline, timed), timed, n, policy.maxAttempts)
 
 		res := attempt(ctx, timeout, n)
 		if id := attemptIDFor(res, n); id != "" {
 			ids = append(ids, id)
 		}
-		final = finishDispatch(ctx, req, res.withAttempts(n, ids))
+		// A failed attempt's caveats ride forward: a worktree a failed attempt
+		// stranded is still stranded after the retry succeeds (yaah-dgkh
+		// review).
+		warnings = append(warnings, res.Warnings...)
+		res = res.withAttempts(n, ids).withWarnings(warnings)
 
-		class := final.Envelope().FailureClass
+		class := res.Envelope().FailureClass
 		remaining := remainingBudget(deadline, timed)
-		if !policy.shouldRetry(lane, class, n, remaining, timed) {
-			break
+		// The retry decision, resolved once and recorded: a cancelled parent
+		// must not be read — or recorded — as a retryable attempt.
+		next := ctx.Err() == nil && policy.shouldRetry(lane, class, n, attemptTerms{
+			remaining:    remaining,
+			timed:        timed,
+			mutableWorld: res.MutableWorld,
+		})
+		var wait time.Duration
+		if next {
+			var ok bool
+			if wait, ok = policy.backoffFor(waited, remaining, timed); !ok {
+				next = false
+			}
 		}
-		wait, ok := policy.backoffFor(waited, remaining, timed)
-		if !ok {
+		res.RetryAllowed = next
+		final = finishDispatch(ctx, req, res)
+		if !next {
 			break
 		}
 		if wait > 0 {
@@ -251,16 +311,44 @@ func runAttempts(
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				return final
+				break loop
 			case <-timer.C:
 			}
-			waited += wait
 		}
+		waited += wait
 	}
 	if final.Attempt > 1 {
+		// Every exit — the policy stopping, the budget running out, the parent
+		// cancelling mid-backoff — reports the whole sequence's wall clock, not
+		// the last attempt's span (yaah-dgkh review).
 		final = final.aggregate(time.Since(startedAt))
 	}
 	return final
+}
+
+// attemptAllowance is one attempt's slice of the dispatch budget. With no retry
+// configured the first and only attempt gets the whole budget, so a
+// single-attempt dispatch behaves exactly as it did before the loop existed.
+//
+// With retry enabled the attempt gets its share of what is left, divided over the
+// attempts still to run: attempt 1 of 3 gets a third, attempt 2 a half of the
+// remainder, and the last attempt gets everything that is left. Splitting the
+// budget is what makes `timeout` a retryable class at all — handing attempt 1 the
+// whole budget leaves nothing for the retry the policy promised (yaah-dgkh
+// review).
+func attemptAllowance(total, remaining time.Duration, timed bool, attempt, maxAttempts int) time.Duration {
+	if !timed || maxAttempts < 2 {
+		return total
+	}
+	left := maxAttempts - attempt + 1
+	if left < 1 {
+		left = 1
+	}
+	share := remaining / time.Duration(left)
+	if share < 0 {
+		return 0
+	}
+	return share
 }
 
 // remainingBudget is the time left in the dispatch's total budget, or 0 when

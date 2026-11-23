@@ -383,31 +383,6 @@ func validateWorkspace(w *WorkspaceConfig, goos string) []string {
 // disjoint roots with a known access mode. Disjointness is enforced here
 // because the jail's writable-root rules are additive — a read-only root
 // nested inside a read-write root would be silently writable.
-// validateRetry checks one dispatch-retry stanza (yaah-dgkh). A retry policy
-// that cannot be honored is refused at load rather than discovered as a
-// dispatch that quietly never retried: a negative attempt count is a typo, and
-// a negative wait is meaningless. 0 attempts is legal and means off — the same
-// as 1 — because the decision doc's config shape spells it that way.
-//
-// The failure classes in `only` are NOT validated here: the taxonomy belongs to
-// the dispatch core (internal/dispatch), which filters an unknown class out —
-// a typo makes the policy narrower, never wider, so it cannot turn into an
-// unintended retry.
-func validateRetry(key string, r RetryConfig) []string {
-	var errs []string
-	if r.MaxAttempts < 0 {
-		errs = append(errs, fmt.Sprintf(
-			"%s.max_attempts %d must not be negative (0 and 1 both disable retry)", key, r.MaxAttempts))
-	}
-	if r.BackoffSecs < 0 {
-		errs = append(errs, fmt.Sprintf("%s.backoff_secs must not be negative", key))
-	}
-	if r.MaxElapsedSeconds < 0 {
-		errs = append(errs, fmt.Sprintf("%s.max_elapsed_seconds must not be negative", key))
-	}
-	return errs
-}
-
 func validateGrantSet(key string, grants []GrantConfig) []string {
 	var errs []string
 	type norm struct {
@@ -440,6 +415,31 @@ func validateGrantSet(key string, grants []GrantConfig) []string {
 			}
 		}
 		seen = append(seen, norm{path: clean, idx: i})
+	}
+	return errs
+}
+
+// validateRetry checks one dispatch-retry stanza (yaah-dgkh). A retry policy
+// that cannot be honored is refused at load rather than discovered as a
+// dispatch that quietly never retried: a negative attempt count is a typo, and
+// a negative wait is meaningless. 0 attempts is legal and means off — the same
+// as 1 — because the decision doc's config shape spells it that way.
+//
+// The failure classes in `only` are NOT validated here: the taxonomy belongs to
+// the dispatch core (internal/dispatch), which filters an unknown class out —
+// a typo makes the policy narrower, never wider, so it cannot turn into an
+// unintended retry.
+func validateRetry(key string, r RetryConfig) []string {
+	var errs []string
+	if r.MaxAttempts < 0 {
+		errs = append(errs, fmt.Sprintf(
+			"%s.max_attempts %d must not be negative (0 and 1 both disable retry)", key, r.MaxAttempts))
+	}
+	if r.BackoffSecs < 0 {
+		errs = append(errs, fmt.Sprintf("%s.backoff_secs must not be negative", key))
+	}
+	if r.MaxElapsedSeconds < 0 {
+		errs = append(errs, fmt.Sprintf("%s.max_elapsed_seconds must not be negative", key))
 	}
 	return errs
 }

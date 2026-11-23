@@ -139,8 +139,10 @@ func TestRecordDispatchAttemptFact(t *testing.T) {
 		if payload["status"] != EnvelopeStatusError {
 			t.Errorf("status = %v, want %s", payload["status"], EnvelopeStatusError)
 		}
-		if payload["retryable"] != true {
-			t.Errorf("retryable = %v, want true for a timeout", payload["retryable"])
+		// The fact records the retry loop's verdict, not the class candidacy: a
+		// dispatch the loop never ran gets no next attempt (yaah-dgkh review).
+		if payload["retryable"] != false {
+			t.Errorf("retryable = %v, want false: the loop granted no next attempt", payload["retryable"])
 		}
 		if payload["failure_class"] != FailureClassTimeout {
 			t.Errorf("failure_class = %v, want %s", payload["failure_class"], FailureClassTimeout)

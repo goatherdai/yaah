@@ -38,7 +38,7 @@ func TestRetryLaneMatrix(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := p.shouldRetry(tc.lane, tc.class, 1, time.Minute, true); got != tc.want {
+			if got := p.shouldRetry(tc.lane, tc.class, 1, attemptTerms{remaining: time.Minute, timed: true}); got != tc.want {
 				t.Errorf("shouldRetry(%s, %s) = %v, want %v", tc.lane, tc.class, got, tc.want)
 			}
 		})
@@ -50,35 +50,35 @@ func TestRetryLaneMatrix(t *testing.T) {
 func TestRetryBounds(t *testing.T) {
 	t.Run("attempt cap", func(t *testing.T) {
 		p := newRetryPolicy(config.RetryConfig{MaxAttempts: 2})
-		if !p.shouldRetry(LaneReport, FailureClassTimeout, 1, time.Minute, true) {
+		if !p.shouldRetry(LaneReport, FailureClassTimeout, 1, attemptTerms{remaining: time.Minute, timed: true}) {
 			t.Fatal("first attempt must be retryable")
 		}
-		if p.shouldRetry(LaneReport, FailureClassTimeout, 2, time.Minute, true) {
+		if p.shouldRetry(LaneReport, FailureClassTimeout, 2, attemptTerms{remaining: time.Minute, timed: true}) {
 			t.Fatal("attempt 2 of 2 must not be retried")
 		}
 	})
 
 	t.Run("only narrows the eligible classes", func(t *testing.T) {
 		p := newRetryPolicy(config.RetryConfig{MaxAttempts: 3, Only: []string{FailureClassTimeout}})
-		if !p.shouldRetry(LaneReport, FailureClassTimeout, 1, time.Minute, true) {
+		if !p.shouldRetry(LaneReport, FailureClassTimeout, 1, attemptTerms{remaining: time.Minute, timed: true}) {
 			t.Fatal("timeout is in `only` and must be retryable")
 		}
-		if p.shouldRetry(LaneReport, FailureClassProviderTransient, 1, time.Minute, true) {
+		if p.shouldRetry(LaneReport, FailureClassProviderTransient, 1, attemptTerms{remaining: time.Minute, timed: true}) {
 			t.Fatal("provider_transient is not in `only` and must not be retryable")
 		}
 		// A typo can only narrow the policy, never widen it.
 		typo := newRetryPolicy(config.RetryConfig{MaxAttempts: 3, Only: []string{"timout"}})
-		if typo.shouldRetry(LaneReport, FailureClassTimeout, 1, time.Minute, true) {
+		if typo.shouldRetry(LaneReport, FailureClassTimeout, 1, attemptTerms{remaining: time.Minute, timed: true}) {
 			t.Fatal("an unknown class name must make the policy narrower, not wider")
 		}
 	})
 
 	t.Run("spent budget stops the retry", func(t *testing.T) {
 		p := newRetryPolicy(config.RetryConfig{MaxAttempts: 3})
-		if p.shouldRetry(LaneReport, FailureClassTimeout, 1, 0, true) {
+		if p.shouldRetry(LaneReport, FailureClassTimeout, 1, attemptTerms{remaining: 0, timed: true}) {
 			t.Fatal("no time left must not be retried")
 		}
-		if !p.shouldRetry(LaneReport, FailureClassTimeout, 1, 0, false) {
+		if !p.shouldRetry(LaneReport, FailureClassTimeout, 1, attemptTerms{remaining: 0, timed: false}) {
 			t.Fatal("an untimed dispatch has no budget to exhaust")
 		}
 	})
@@ -170,8 +170,8 @@ func TestRunAttemptsAggregates(t *testing.T) {
 	if len(*seen) != 2 {
 		t.Fatalf("attempts = %d, want 2", len(*seen))
 	}
-	if (*seen)[0] != time.Minute {
-		t.Errorf("first attempt timeout = %v, want the whole budget", (*seen)[0])
+	if (*seen)[0] >= time.Minute || (*seen)[0] <= 0 {
+		t.Errorf("first attempt timeout = %v, want a share of the budget: a timed-out attempt must leave room for its retry", (*seen)[0])
 	}
 	if (*seen)[1] >= time.Minute || (*seen)[1] <= 0 {
 		t.Errorf("retry timeout = %v, want the remainder of the budget", (*seen)[1])

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	goatherd "github.com/goatherdai/goatherd-runtime"
+	"github.com/goatherdai/yaah/internal/jobs"
 )
 
 // attempt_evidence.go records one trace fact per dispatch attempt
@@ -35,12 +36,24 @@ const dispatchAttemptKind = "dispatch_attempt"
 type DispatchAttempt struct {
 	// Attempt is the 1-based attempt number within one dispatch.
 	Attempt int
+	// DispatchID is the dispatch identity the attempt belongs to: the conflict
+	// tracker's per-dispatch id (label#n), or the background job id for a
+	// background dispatch. AttemptID is this attempt's own id, the same id the
+	// envelope lists in attempt_ids. Together they join a fact on a shared root
+	// scope — every dispatch of a session appends there — to its envelope
+	// (yaah-dgkh review).
+	DispatchID string
+	AttemptID  string
 	// Status is the envelope status the attempt reported: proposal, report,
 	// shared, running, completed, or error.
 	Status string
-	// Retryable reports that the retry policy may re-run this attempt. It is
-	// derived from FailureClass (the first four classes are retry
-	// candidates), not from ResultRecovery.Retryable.
+	// Retryable is the retry loop's verdict for this attempt: whether the policy
+	// actually permitted a next attempt at the point this one ended — the lane,
+	// the `only` allowlist, the attempt cap, cancellation, the remaining budget,
+	// and the world the attempt ran in all included (yaah-dgkh review). It is
+	// not the class candidacy a reader could re-derive from FailureClass, and it
+	// is false for a dispatch the loop never drives to a retry (a background
+	// job, a single-attempt dispatch).
 	Retryable bool
 	// FailureClass is the dispatch-level failure classification, or "" when
 	// the attempt did not fail.
@@ -59,6 +72,8 @@ type DispatchAttempt struct {
 func (a DispatchAttempt) payload() map[string]any {
 	return map[string]any{
 		"attempt":        a.Attempt,
+		"dispatch_id":    a.DispatchID,
+		"attempt_id":     a.AttemptID,
 		"status":         a.Status,
 		"retryable":      a.Retryable,
 		"failure_class":  a.FailureClass,
@@ -80,10 +95,45 @@ func attemptEvidenceFor(res DispatchResult) DispatchAttempt {
 	return DispatchAttempt{
 		Attempt:      attempt,
 		Status:       env.Status,
-		Retryable:    RetryCandidate(env.FailureClass),
+		Retryable:    res.RetryAllowed,
 		FailureClass: env.FailureClass,
 		ProposalID:   env.ProposalID,
+		DispatchID:   env.DispatchID,
+		AttemptID:    lastAttemptID(env),
 	}
+}
+
+// lastAttemptID is the id that names the attempt this envelope ends with: the
+// most recent of the ids the retry loop appended, which is the one the fact
+// being recorded is about.
+func lastAttemptID(env ProposalEnvelope) string {
+	if n := len(env.AttemptIDs); n > 0 {
+		return env.AttemptIDs[n-1]
+	}
+	return env.attemptID()
+}
+
+// RecordBackgroundAttempt records the attempt fact for a background dispatch
+// when its job reaches a terminal state (yaah-dgkh review). A background
+// dispatch returns its accept before any attempt runs — the accept is not an
+// attempt — so its one attempt is recorded at completion, from the same
+// completion envelope the orchestrator receives, on the session's root scope.
+//
+// Nothing will re-run a background job at the dispatch boundary, so the
+// recorded decision is that no next attempt follows.
+func (rt *RetainedRuntime) RecordBackgroundAttempt(ctx context.Context, st jobs.BackgroundJobStatus, result string, err error) {
+	if rt == nil {
+		return
+	}
+	env := BackgroundCompletionEnvelope(st, result, err)
+	recordDispatchAttemptFact(ctx, rt.ScopeManager, rt.RootScopeID, DispatchAttempt{
+		Attempt:      max(env.Attempts, 1),
+		Status:       env.Status,
+		FailureClass: env.FailureClass,
+		ProposalID:   env.ProposalID,
+		DispatchID:   env.DispatchID,
+		AttemptID:    lastAttemptID(env),
+	})
 }
 
 // recordDispatchAttemptFact appends one attempt's evidence to the trace. A

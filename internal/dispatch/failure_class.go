@@ -1,6 +1,11 @@
 package dispatch
 
-import "github.com/goatherdai/yaah/internal/agent/errorclassify"
+import (
+	"context"
+	"errors"
+
+	"github.com/goatherdai/yaah/internal/agent/errorclassify"
+)
 
 // failure_class.go is the dispatch-level failure taxonomy (yaah-i5k8, decision
 // yaah-hxk3.5). The provider layer already classifies its own errors
@@ -166,4 +171,87 @@ func RetryCandidate(class string) bool {
 		return true
 	}
 	return false
+}
+
+// RetainedFailureStage names how far a retained start got before it failed
+// (yaah-dgkh review). It is the typed answer to "did the child run?", which is
+// what decides whether a retry can start from the same place: a failure before
+// the world existed leaves nothing behind, and a failure after the body ran
+// must never be called a preflight one.
+type RetainedFailureStage string
+
+const (
+	// RetainedStageNone: the start did not fail, or a failure a later stage
+	// already describes.
+	RetainedStageNone RetainedFailureStage = ""
+	// RetainedStageProvisioning: the dispatch world could not be set up — the
+	// worktree, the container, its scope, its copy-in. Nothing ran, so a fresh
+	// attempt starts from the same place; this is the one retryable stage.
+	RetainedStageProvisioning RetainedFailureStage = "provisioning"
+	// RetainedStageRefused: the dispatch was refused before any world existed —
+	// a precondition, an unknown world, an authority declaration no plan
+	// covers, a seed that cannot be threaded. A config change fixes it; a
+	// re-run of the same dispatch does not.
+	RetainedStageRefused RetainedFailureStage = "refused"
+	// RetainedStageBody: the child ran and its body failed.
+	RetainedStageBody RetainedFailureStage = "body"
+	// RetainedStageSeal: the body ran and the sealing work after it failed
+	// (the authority citation could not be resolved, the delta could not be
+	// captured). The world existed and did work, so it is never a preflight
+	// failure however transient the cause looks.
+	RetainedStageSeal RetainedFailureStage = "seal"
+)
+
+// failureClass lowers a stage onto the dispatch taxonomy. "" means the stage
+// says nothing the envelope's own status and stop_reason do not say better.
+func (s RetainedFailureStage) failureClass() string {
+	switch s {
+	case RetainedStageProvisioning:
+		return FailureClassPreflightTransient
+	case RetainedStageRefused:
+		return FailureClassConfiguration
+	}
+	return ""
+}
+
+// failedAttemptClass is the dispatch boundary's final word on how one attempt
+// failed: the class that overrides the one the envelope derives. The precedence
+// is deliberate.
+//
+//	ctx already cancelled -> cancelled: the parent went away, and a start can
+//	                        fail *because* it did, so a deliberate stop
+//	                        outranks whatever the failing call reported.
+//	typed stage          -> preflight_transient (provisioning only) or
+//	                        configuration (a permanent refusal).
+//	unclassified failure -> the provider layer's classification of the cause,
+//	                        so a terminal auth/billing/model-not-found/
+//	                        content-policy failure is not retried as if it
+//	                        were transient.
+//
+// "" means the envelope's status and stop_reason name the cause more precisely
+// (a timeout, a stuck child, a deliberate cancellation), and its own
+// derivation stands.
+func failedAttemptClass(ctx context.Context, stage RetainedFailureStage, res DispatchResult, err error) string {
+	if ctx.Err() != nil {
+		return FailureClassCancelled
+	}
+	if class := stage.failureClass(); class != "" {
+		return class
+	}
+	if res.Status != DispatchFailed || err == nil {
+		return ""
+	}
+	return causeFailureClass(err)
+}
+
+// causeFailureClass classifies an arbitrary failure cause through the provider
+// layer's taxonomy. Without it every unclassified failure would read as
+// provider_transient and be retried, including the ones no retry can fix.
+func causeFailureClass(err error) string {
+	var classified *errorclassify.ClassifiedError
+	c := errorclassify.Classify(err, errorclassify.ErrorMeta{})
+	if errors.As(err, &classified) {
+		c = *classified
+	}
+	return FailureClass(FailureInput{Status: EnvelopeStatusError, Classified: &c})
 }

@@ -282,6 +282,9 @@ func runDispatchContainer(
 		if note == "" {
 			return
 		}
+		// The caveat is a typed warning as well as prose: a retry replaces the
+		// result, so the structured channel is what survives one (yaah-dgkh).
+		out.Warnings = append(out.Warnings, note)
 		if runErr != nil {
 			runErr = &RetainedRunError{cause: runErr, note: note}
 			return

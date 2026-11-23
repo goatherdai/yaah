@@ -112,6 +112,26 @@ type DispatchResult struct {
 	// before.
 	Attempt    int
 	AttemptIDs []string
+
+	// RetryAllowed is the retry loop's verdict for this attempt: whether the
+	// policy permitted a next attempt at the point this one ended — lane,
+	// allowlist, attempt cap, cancellation, remaining budget and the world the
+	// attempt ran in all included (yaah-dgkh). It is what the attempt fact
+	// records, so the evidence and the loop can never disagree; a dispatch the
+	// loop never ran leaves it false, which is also true, because nothing will
+	// follow it.
+	RetryAllowed bool
+
+	// MutableWorld reports that the attempt ran in a world a retry cannot
+	// reset — the session container a degraded report dispatch falls back to,
+	// which outlives the attempt and keeps whatever it wrote. Such an attempt
+	// is never re-run (yaah-dgkh).
+	MutableWorld bool
+
+	// Warnings carries the attempt's own caveats (a teardown that stranded a
+	// worktree). The loop carries them forward across attempts, so a successful
+	// retry cannot hide what a failed attempt left behind (yaah-dgkh).
+	Warnings []string
 }
 
 // Run executes one sub-agent dispatch through the runtime's only scheduler and
@@ -227,23 +247,29 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 
 	// One attempt's lane work, extracted so the retry loop can run it again
 	// without a second copy of any lane's body (yaah-dgkh). timeout is this
-	// attempt's slice of the dispatch budget: the whole of it for attempt 1,
-	// what is left of it for a retry.
+	// attempt's slice of the dispatch budget: the whole of it when the policy
+	// permits only one attempt, its share of the remainder otherwise.
 	attempt := func(ctx context.Context, timeout time.Duration, _ int) DispatchResult {
 		attemptStarted := time.Now()
+		// The budget is an absolute deadline across provisioning and the body,
+		// not a per-phase allowance: the retained lane provisions a world before
+		// the child's own timeout starts, so a dispatch that spent its budget
+		// getting one would otherwise overshoot the deadline the caller set
+		// (yaah-dgkh review).
+		if timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, attemptStarted.Add(timeout))
+			defer cancel()
+		}
 		if req.Retained != nil {
 			switch lane {
 			case LaneReport:
 				res, err := startRetainedRun(ctx, *req.Retained, req.Prompt, params, timeout, true)
 				out := ClassifyRunnerResult(res.Report, err, role, timeout, ctx).
 					withMeta(meta.after(time.Since(attemptStarted)))
-				if strings.TrimSpace(res.Report) == "" && preflightFailure(err) {
-					// The world was never provisioned (runner, scope, registry,
-					// world refusal, worktree creation): nothing ran and nothing
-					// was left behind, so a fresh attempt starts from the same
-					// place (yaah-i5k8).
-					out.FailureClass = FailureClassPreflightTransient
-				}
+				out.FailureClass = failedAttemptClass(ctx, res.Stage, out, err)
+				out.MutableWorld = res.SessionFallback
+				out.Warnings = res.Warnings
 				return out
 			case LaneShared:
 				// A shared-lane role cannot mutate the tree; isolation buys
@@ -258,31 +284,32 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 					// error (yaah-was9.1).
 					out := ClassifyRunnerResult("", err, role, timeout, ctx).
 						withMeta(meta.after(time.Since(attemptStarted)))
-					// The world is created inside startRetainedRun, so an error
-					// here means nothing ran: a preflight failure, whose retry
-					// starts from an untouched tree (yaah-i5k8).
-					out.FailureClass = FailureClassPreflightTransient
+					out.FailureClass = failedAttemptClass(ctx, res.Stage, out, err)
+					out.Warnings = res.Warnings
 					return out
 				}
-				return DispatchResult{
+				out := DispatchResult{
 					Status:   DispatchProposal,
 					Role:     role,
 					Timeout:  timeout,
 					Proposal: res.Proposal,
 				}.withMeta(meta.after(time.Since(attemptStarted)))
+				// A sealed error envelope is the one failure the proposal lane
+				// reports without an error value (a provisioning failure that
+				// left nothing to settle), so the stage is read from the result.
+				out.FailureClass = failedAttemptClass(ctx, res.Stage, out, nil)
+				out.Warnings = res.Warnings
+				return out
 			}
 		}
 
 		runCtx := ctx
-		if timeout > 0 {
-			var cancel context.CancelFunc
-			runCtx, cancel = context.WithTimeout(ctx, timeout)
-			defer cancel()
-		}
 		NotifySubAgentReady(runCtx)
 		result, err := runner(runCtx, req.Prompt, params)
-		return ClassifyRunnerResult(result, err, role, timeout, runCtx).
+		out := ClassifyRunnerResult(result, err, role, timeout, runCtx).
 			withMeta(meta.after(time.Since(attemptStarted)))
+		out.FailureClass = failedAttemptClass(ctx, RetainedStageNone, out, err)
+		return out
 	}
 
 	// The total timeout is the budget for the whole retry sequence, not per
@@ -294,18 +321,6 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 		deadline = started.Add(req.Timeout)
 	}
 	return runAttempts(ctx, req, lane, deadline, retryPolicyFor(req.Retained, role), attempt), nil
-}
-
-// preflightFailure reports whether a retained start failed before its body ran.
-// A RetainedRunError carries a body failure — the world existed and the child
-// ran in it — so it is not a preflight failure; a plain error from the start is
-// a failure to provision the world at all.
-func preflightFailure(err error) bool {
-	if err == nil {
-		return false
-	}
-	var runErr *RetainedRunError
-	return !errors.As(err, &runErr)
 }
 
 // ClassifyRunnerResult maps a runner outcome to the typed dispatch result. A
