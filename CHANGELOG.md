@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.206.2](https://github.com/goatherdai/yaah/compare/v0.206.1...v0.206.2) (2026-11-23)
+
+
+### Bug Fixes
+
+* **acp:** load the model picker lazily so session/new always carries it ([#378](https://github.com/goatherdai/yaah/issues/378)) ([61e140b](https://github.com/goatherdai/yaah/commit/61e140be1a33f0bf40ce402df320bdd9f92746dd))
+
 ## [0.206.1](https://github.com/goatherdai/yaah/compare/v0.206.0...v0.206.1) (2026-11-23)
 
 
