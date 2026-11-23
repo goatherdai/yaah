@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.206.0](https://github.com/goatherdai/yaah/compare/v0.205.0...v0.206.0) (2026-11-23)
+
+
+### Features
+
+* **dispatch:** per-attempt evidence and dispatch-boundary retry (yaah-i5k8, yaah-dgkh) ([#369](https://github.com/goatherdai/yaah/issues/369)) ([d2a5c6a](https://github.com/goatherdai/yaah/commit/d2a5c6a65800707e12ab2c3efd42707c6e80c272))
+
 ## [0.205.0](https://github.com/goatherdai/yaah/compare/v0.204.2...v0.205.0) (2026-11-23)
 
 
