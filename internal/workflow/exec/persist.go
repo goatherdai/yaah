@@ -186,8 +186,8 @@ func (r *Run) checkpoint() error {
 		return nil
 	}
 	cp := r.Checkpoint()
-	cp.EventBase = r.persisted
-	cp.TraceBase = r.recordsPersisted
+	cp.EventBase = r.trace.persisted
+	cp.TraceBase = r.trace.recordsPersisted
 	ctx := r.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -195,8 +195,8 @@ func (r *Run) checkpoint() error {
 	if err := r.cfg.Store.SaveCheckpoint(ctx, cp); err != nil {
 		return fmt.Errorf("workflow/exec: persisting run %s: %w", r.runID, err)
 	}
-	r.persisted = len(r.events)
-	r.recordsPersisted = len(r.records)
+	r.trace.persisted = len(r.trace.events)
+	r.trace.recordsPersisted = len(r.trace.records)
 	return nil
 }
 
@@ -222,14 +222,14 @@ func (r *Run) Checkpoint() Checkpoint {
 			AbortAsked: copyStringMap(r.proposals.abortAsked),
 		},
 		Seq:      r.seq,
-		Warnings: append([]string(nil), r.warnings...),
-		Events:   append([]string(nil), r.events[r.newEvents():]...),
-		Trace:    append([]trace.Record(nil), r.records[r.newRecords():]...),
+		Warnings: append([]string(nil), r.trace.warnings...),
+		Events:   append([]string(nil), r.trace.events[r.trace.newEvents():]...),
+		Trace:    append([]trace.Record(nil), r.trace.records[r.trace.newRecords():]...),
 	}
 	if r.graph != nil {
 		cp.GraphName = r.graph.Name
 	}
-	for _, p := range r.allPaths() {
+	for _, p := range r.inst.allPaths(r.paths) {
 		cp.Nodes = append(cp.Nodes, copyNodeState(r.state[p]))
 		if inst := r.inst.instances[p]; inst != nil {
 			cp.Instances = append(cp.Instances, InstanceState{
@@ -244,31 +244,6 @@ func (r *Run) Checkpoint() Checkpoint {
 		}
 	}
 	return cp
-}
-
-// newEvents is the index of the first log line the store has not recorded. It is
-// clamped so a caller that rewinds the marker cannot make the snapshot slice out
-// of range.
-func (r *Run) newEvents() int {
-	if r.persisted < 0 {
-		return 0
-	}
-	if r.persisted > len(r.events) {
-		return len(r.events)
-	}
-	return r.persisted
-}
-
-// newRecords is newEvents for the trace projection: the index of the first record
-// the store has not recorded, clamped the same way.
-func (r *Run) newRecords() int {
-	if r.recordsPersisted < 0 {
-		return 0
-	}
-	if r.recordsPersisted > len(r.records) {
-		return len(r.records)
-	}
-	return r.recordsPersisted
 }
 
 // Resume rebuilds a run from a checkpoint and returns it ready to drive: the
@@ -346,7 +321,7 @@ func Resume(g *ir.Graph, rt Runtime, cfg Config, cp Checkpoint) (*Run, error) {
 	// be re-decided, so the unknown outcome is recorded on its ledger, the ask is
 	// cleared, and the proposal stays open — which keeps the run from reporting
 	// success over it while never asking for one disposition twice.
-	for _, p := range r.allPaths() {
+	for _, p := range r.inst.allPaths(r.paths) {
 		st := r.state[p]
 		if st.Asked == "" {
 			continue
@@ -358,7 +333,7 @@ func Resume(g *ir.Graph, rt Runtime, cfg Config, cp Checkpoint) (*Run, error) {
 			// is left set and the run that cancelled it reports the open
 			// proposal through the ledger, never by re-asking.
 			if n := r.byPath[p]; n != nil && n.Kind == ir.KindFanout && cancelJoin(n) {
-				r.warnOnce("join-discard-unknown:"+p, fmt.Sprintf(
+				r.trace.warnOnce("join-discard-unknown:"+p, fmt.Sprintf(
 					"%s: a discard of proposal %s was asked for before the run stopped and the door never reported an outcome; refusing to ask a second time (a proposal has exactly one disposition), so the proposal stays open",
 					p, st.Asked))
 				st.Discards = append(st.Discards, Settled{
@@ -400,15 +375,15 @@ func (r *Run) install(cp Checkpoint) error {
 	r.peakInFlight = cp.PeakInFlight
 	r.startedAt = cp.StartedAt
 	r.finishedAt = cp.FinishedAt
-	r.warnings = append([]string(nil), cp.Warnings...)
-	r.events = append([]string(nil), cp.Events...)
-	r.records = append([]trace.Record(nil), cp.Trace...)
+	r.trace.warnings = append([]string(nil), cp.Warnings...)
+	r.trace.events = append([]string(nil), cp.Events...)
+	r.trace.records = append([]trace.Record(nil), cp.Trace...)
 	r.seq = cp.Seq
-	if r.seq < len(r.events) {
-		r.seq = len(r.events)
+	if r.seq < len(r.trace.events) {
+		r.seq = len(r.trace.events)
 	}
-	r.persisted = len(r.events)
-	r.recordsPersisted = len(r.records)
+	r.trace.persisted = len(r.trace.events)
+	r.trace.recordsPersisted = len(r.trace.records)
 	r.proposals.open = copyStringMap(cp.Ledger.Open)
 	r.proposals.claims = copyStringMap(cp.Ledger.Claims)
 	r.proposals.settled = copyStringMap(cp.Ledger.Settled)
@@ -438,9 +413,9 @@ func (r *Run) install(cp Checkpoint) error {
 	r.rebuildTopology()
 	// The ready queue is state, not an event: a node the checkpoint recorded
 	// ready was ready, and it is startable again the moment the run advances.
-	for _, p := range r.allPaths() {
+	for _, p := range r.inst.allPaths(r.paths) {
 		if st := r.state[p]; st.State == StateReady {
-			r.insertReady(p)
+			r.queue.insertReady(p)
 		}
 	}
 	return nil
@@ -488,7 +463,7 @@ func (r *Run) reopenInterrupted(st *NodeState) {
 	if a := st.LastAttempt(); a != nil {
 		a.Status = AttemptStatusInterrupted
 		a.StopReason = AttemptStatusInterrupted
-		r.warnOnce("interrupted:"+st.Path, fmt.Sprintf(
+		r.trace.warnOnce("interrupted:"+st.Path, fmt.Sprintf(
 			"%s: attempt %d was in flight when the run stopped; it is re-dispatched as a new attempt (no completion was ever recorded)",
 			st.Path, a.Number))
 	}
@@ -499,7 +474,7 @@ func (r *Run) reopenInterrupted(st *NodeState) {
 // restored node set, exactly as New and instantiateBody build them.
 func (r *Run) rebuildTopology() {
 	r.dependents = map[string][]string{}
-	for _, p := range r.allPaths() {
+	for _, p := range r.inst.allPaths(r.paths) {
 		needs, ok := r.needPaths(r.byPath[p])
 		if !ok {
 			continue // a need naming no step strands the node; reach.go reports it as WF004
@@ -512,7 +487,7 @@ func (r *Run) rebuildTopology() {
 		sort.Strings(r.dependents[dep])
 	}
 	r.inst.arms = map[string]map[string]bool{}
-	for _, p := range r.allPaths() {
+	for _, p := range r.inst.allPaths(r.paths) {
 		r.inst.registerArms(r.byPath[p], r.byID)
 	}
 }

@@ -56,7 +56,7 @@ func (r *Run) callStepOnce(ctx context.Context) (bool, error) {
 // what is not a call — a call that is not ready is waiting on a need, and a
 // call whose state is terminal never returns here.
 func (r *Run) nextCallPath() (string, bool) {
-	for _, p := range r.ready {
+	for _, p := range r.queue.ready {
 		n := r.byPath[p]
 		if n == nil || n.Kind != ir.KindCall {
 			continue

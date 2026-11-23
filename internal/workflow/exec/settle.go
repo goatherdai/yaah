@@ -145,7 +145,7 @@ func settlementVerb(a ir.SettleAction) (string, bool) {
 // The ready queue is kept in canonical path order, so a graph with two settle
 // nodes plans and settles them in the same order every run.
 func (r *Run) nextSettlePath() (string, bool) {
-	for _, p := range r.ready {
+	for _, p := range r.queue.ready {
 		n := r.byPath[p]
 		if n == nil || n.Kind != ir.KindSettle {
 			continue
@@ -322,7 +322,7 @@ func (r *Run) onSettlementAsked(e SettlementAskedEvent) error {
 		// residue was known. It keeps the same write-ahead record a settle node
 		// does, so a resume can tell "asked, outcome unknown" from "never asked".
 		if n := r.byPath[e.NodePath]; n != nil && n.Kind == ir.KindFanout && cancelJoin(n) {
-			return r.onJoinDiscardAsked(e.NodePath, st, e)
+			return r.join.onJoinDiscardAsked(e.NodePath, st, e)
 		}
 		return fmt.Errorf("workflow/exec: settlement_asked for node %s with no planned settlement", e.NodePath)
 	}

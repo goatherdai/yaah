@@ -142,7 +142,7 @@ func maxIterationsOf(n *ir.Node) int {
 // run does whatever else it can — the same rule a fan-out whose `over` producer
 // has not terminated follows.
 func (r *Run) loopStepOnce() (bool, error) {
-	for _, p := range r.ready {
+	for _, p := range r.queue.ready {
 		n := r.byPath[p]
 		if n == nil || n.Kind != ir.KindLoop {
 			continue

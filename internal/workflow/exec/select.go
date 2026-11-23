@@ -161,7 +161,7 @@ func (st *NodeState) selectCandidatesResolved() bool {
 // ready, records its candidates, and the judge is dispatched by the ordinary
 // start path on a later cycle.
 func (r *Run) selectStepOnce() (bool, error) {
-	for _, p := range r.ready {
+	for _, p := range r.queue.ready {
 		n := r.byPath[p]
 		if n == nil || n.Kind != ir.KindSelect {
 			continue
@@ -313,7 +313,7 @@ func (r *Run) onSelectChosen(e SelectChosenEvent) error {
 	// over them. Saying so once is what turns an author's surprise into a fact
 	// they can act on.
 	if losers := nonWinningProposals(st.Candidates, e.Chosen); len(losers) > 0 {
-		r.warnOnce("select-open:"+e.NodePath, fmt.Sprintf(
+		r.trace.warnOnce("select-open:"+e.NodePath, fmt.Sprintf(
 			"%s: chose candidate %d; %d non-winning candidate proposal(s) stay open (%s) and need their own disposition — the run will not report success over them",
 			e.NodePath, e.Chosen, len(losers), strings.Join(losers, ",")))
 	}

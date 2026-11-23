@@ -239,7 +239,7 @@ func (r *Run) itemBindings(path string) []itemBinding {
 // its last item terminating, and consequences belong to the reducer
 // (noteItemOutcome). Nothing here mutates state.
 func (r *Run) fanoutStepOnce() (bool, error) {
-	for _, p := range r.ready {
+	for _, p := range r.queue.ready {
 		n := r.byPath[p]
 		if n == nil || n.Kind != ir.KindFanout {
 			continue
@@ -477,7 +477,7 @@ func (r *Run) onFanoutExpanded(e FanoutExpandedEvent) error {
 			return r.failTerminal(n.Path, ReasonFanoutJoinUnmet+": "+n.Path+
 				" over resolved to zero items and join "+joinLabel(n)+" needs at least one success")
 		}
-		r.warnOnce("fanout-empty:"+n.Path, n.Path+": over resolved to zero items; the fan-out closes with an empty collect")
+		r.trace.warnOnce("fanout-empty:"+n.Path, n.Path+": over resolved to zero items; the fan-out closes with an empty collect")
 		return r.closeFanout(n, st)
 	}
 	// Entry instances — the ones with no needs — become ready in item order and
@@ -624,7 +624,7 @@ func (r *Run) closeFanout(n *ir.Node, st *NodeState) error {
 		Value:    st.Result,
 	})
 	if failed > 0 {
-		r.warnOnce("fanout-failed:"+n.Path, fmt.Sprintf(
+		r.trace.warnOnce("fanout-failed:"+n.Path, fmt.Sprintf(
 			"%s: %d of %d item(s) failed under on_item_failure: %s; the collect carries %d value(s)",
 			n.Path, failed, len(st.Items), policy, len(collect)))
 	}

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/goatherdai/yaah/internal/workflow/ir"
+	"github.com/goatherdai/yaah/internal/workflow/trace"
 )
 
 // settlementLedger is the run's proposal bookkeeping, extracted from Run so
@@ -161,4 +162,145 @@ func (l *instanceLedger) armRouting(path string, state map[string]*NodeState) (s
 		}
 	}
 	return false, false
+}
+
+// traceLedger is the run's written record: the canonical event log, the
+// once-only warnings, and the typed trace projection (yaah-0u0v.17). They are
+// one ledger because they are three renderings of one event sequence and must
+// never disagree; none of them is read by a scheduler decision, which is why
+// moving them off Run changes no behaviour.
+//
+// events is every committed log line; persisted the high-water mark the Store
+// has already recorded; warnings the statements a partly-honored declaration
+// produced; warned their keys; records the trace projection and
+// recordsPersisted its high-water mark. Every projection method takes a
+// traceView, so the whole ledger can be exercised without constructing a Run.
+type traceLedger struct {
+	events           []string
+	persisted        int
+	warnings         []string
+	warned           map[string]bool
+	records          []trace.Record
+	recordsPersisted int
+}
+
+func newTraceLedger() traceLedger { return traceLedger{warned: map[string]bool{}} }
+
+// warnOnce appends a run warning the first time a fact is observed and never
+// again. Warnings are not part of the event log, so this cannot move a byte of
+// the deterministic sequence; it exists so a declaration the run honored only
+// partly is stated once instead of on every cycle that consults it.
+func (l *traceLedger) warnOnce(key, msg string) {
+	if l.warned == nil {
+		l.warned = map[string]bool{}
+	}
+	if l.warned[key] {
+		return
+	}
+	l.warned[key] = true
+	l.warnings = append(l.warnings, msg)
+}
+
+// newEvents is the index of the first log line the store has not recorded. It is
+// clamped so a caller that rewinds the marker cannot make the snapshot slice out
+// of range.
+func (l *traceLedger) newEvents() int {
+	if l.persisted < 0 {
+		return 0
+	}
+	if l.persisted > len(l.events) {
+		return len(l.events)
+	}
+	return l.persisted
+}
+
+// newRecords is newEvents for the trace projection: the index of the first
+// record the store has not recorded, clamped the same way.
+func (l *traceLedger) newRecords() int {
+	if l.recordsPersisted < 0 {
+		return 0
+	}
+	if l.recordsPersisted > len(l.records) {
+		return len(l.records)
+	}
+	return l.recordsPersisted
+}
+
+// traceView is the immutable graph and state view one trace record is built
+// from, and the ledger's whole input: the projection reads no lifecycle fact the
+// fold of the same event is about to change, which is what lets a record be
+// built before the switch and disagree with nothing.
+type traceView struct {
+	byPath    map[string]*ir.Node
+	state     map[string]*NodeState
+	instances map[string]*instance
+	runID     string
+	specHash  string
+}
+
+// joinLedger owns the join decisions: which item of a fan-out is residue, which
+// proposal a non-winning item left for the run to discard, and the write-ahead
+// record of the discard ask.
+//
+// It holds no maps of its own on purpose. The join's per-container facts —
+// items, winners, discards, the outstanding ask — are lifecycle state on
+// NodeState, and Apply is the one mutator that may change them, so a copy here
+// would be a second answer to the same question. What the ledger owns is the
+// READING of those facts, which is the cohesive unit: the four questions the
+// reducer and the driver ask a decided join, answerable from a hand-built state
+// map with no Run in sight.
+type joinLedger struct{}
+
+// joinView is the state a join reading needs: the graph, the node states, the
+// instance relation an item's owner comes from, and the proposal ledger a
+// discard is derived from.
+type joinView struct {
+	byPath    map[string]*ir.Node
+	state     map[string]*NodeState
+	instances map[string]*instance
+	proposals *settlementLedger
+}
+
+// readyLedger is the launch queue: node paths in canonical order, which is what
+// makes the launch order a function of the document rather than of the order
+// events happened to arrive in.
+type readyLedger struct{ ready []string }
+
+// insertReady queues a path in canonical position, doing nothing when it is
+// already queued.
+func (l *readyLedger) insertReady(path string) {
+	i := sort.SearchStrings(l.ready, path)
+	if i < len(l.ready) && l.ready[i] == path {
+		return
+	}
+	l.ready = append(l.ready, "")
+	copy(l.ready[i+1:], l.ready[i:])
+	l.ready[i] = path
+}
+
+// dropReady removes a queued path, doing nothing when it is not there.
+func (l *readyLedger) dropReady(path string) {
+	i := sort.SearchStrings(l.ready, path)
+	if i < len(l.ready) && l.ready[i] == path {
+		l.ready = append(l.ready[:i], l.ready[i+1:]...)
+	}
+}
+
+// allPaths lists every top-level path and, recursively, every instance beneath
+// it, in canonical order, so a graph yields one order everywhere and no scan can
+// quietly miss an instance. paths is the run's top-level order, passed in so the
+// ledger stays independently testable.
+func (l *instanceLedger) allPaths(paths []string) []string {
+	out := make([]string, 0, len(paths)+len(l.instances))
+	var emit func(path string)
+	emit = func(path string) {
+		out = append(out, path)
+		for _, ip := range l.of[path] {
+			emit(ip)
+		}
+	}
+	for _, p := range paths {
+		emit(p)
+	}
+	return out
 }

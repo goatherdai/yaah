@@ -74,7 +74,7 @@ const (
 // that has not terminated is a WAIT, not an empty input list, so the cycle falls
 // through and the run does whatever else it can.
 func (r *Run) aggregateStepOnce() (bool, error) {
-	for _, p := range r.ready {
+	for _, p := range r.queue.ready {
 		n := r.byPath[p]
 		if n == nil || n.Kind != ir.KindAggregate {
 			continue
