@@ -182,12 +182,55 @@ func (e *proposalEnvelope) SetRecovery() {
 	}
 }
 
+// SetFailureClass derives the dispatch-level failure classification from the
+// status and stop_reason the envelope already carries, when the lane has not set
+// one itself. Deriving it here rather than at each call site is what keeps it
+// from contradicting the fields a reader checks it against.
+func (e *proposalEnvelope) SetFailureClass() {
+	if e.FailureClass != "" {
+		return
+	}
+	e.FailureClass = FailureClass(FailureInput{Status: e.Status, StopReason: e.StopReason})
+}
+
+// SetAttempts fills the attempt counters from the ids the envelope carries: an
+// envelope always reports at least one attempt, and names one attempt id — the
+// dispatch id when the lane had one, else the proposal id — so a reader can
+// correlate the attempt with the conflict evidence. A retried dispatch
+// (yaah-dgkh) appends the further ids and the counters follow.
+func (e *proposalEnvelope) SetAttempts() {
+	if len(e.AttemptIDs) == 0 {
+		if id := e.attemptID(); id != "" {
+			e.AttemptIDs = []string{id}
+		}
+	}
+	if e.Attempts < len(e.AttemptIDs) {
+		e.Attempts = len(e.AttemptIDs)
+	}
+	if e.Attempts < 1 {
+		e.Attempts = 1
+	}
+	e.Retried = e.Attempts > 1
+}
+
+// attemptID is the id that names this envelope's attempt: the dispatch id the
+// conflict tracker minted, or failing that the proposal the attempt produced.
+func (e *proposalEnvelope) attemptID() string {
+	if e.DispatchID != "" {
+		return e.DispatchID
+	}
+	return e.ProposalID
+}
+
 // finalize fills the blocks every dispatch-completion envelope must carry, so no
 // lane has to remember all of them. Settlement envelopes call it too: the
-// recovery block is nil-safe there because a settlement's stop_reason is empty.
+// recovery block is nil-safe there because a settlement's stop_reason is empty,
+// and an empty stop_reason on a non-error status classifies as no failure.
 func (e *proposalEnvelope) finalize() {
+	e.SetAttempts()
 	e.SetProposalArtifacts()
 	e.SetRecovery()
+	e.SetFailureClass()
 }
 
 // RecoveryFor derives retryable/recommended from a stop_reason. Budget and
@@ -315,6 +358,9 @@ func (r DispatchResult) Envelope() ProposalEnvelope {
 	if r.Timeout > 0 {
 		env.Timeout = r.Timeout.String()
 	}
+	// A lane that knows more than the stop reason says — a retained start that
+	// failed before its world ran — names the failure class itself.
+	env.FailureClass = r.FailureClass
 	env.Recovery = failureRecovery(env.StopReason)
 	env.finalize()
 	return env
@@ -387,8 +433,11 @@ func BackgroundCompletionEnvelope(st jobs.BackgroundJobStatus, result string, er
 	default:
 		env.StopReason = "completed"
 	}
+	// A background dispatch is one attempt, and its job id names it (yaah-i5k8).
+	env.SetAttempts()
 	if env.Status == EnvelopeStatusError {
 		env.Recovery = failureRecovery(env.StopReason)
 	}
+	env.SetFailureClass()
 	return env
 }

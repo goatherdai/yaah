@@ -99,6 +99,11 @@ type DispatchResult struct {
 	// observe (lane, world, model, duration). Envelope() stamps it onto the
 	// one result shape every lane returns (yaah-was9.1).
 	Meta EnvelopeMeta
+
+	// FailureClass is the dispatch-level classification of how the attempt
+	// failed, for a lane that knows more than the envelope's stop_reason says
+	// (yaah-i5k8). Envelope() derives one when this is empty.
+	FailureClass string
 }
 
 // Run executes one sub-agent dispatch through the runtime's only scheduler and
@@ -216,8 +221,8 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 		switch lane {
 		case LaneReport:
 			res, err := startRetainedRun(ctx, *req.Retained, req.Prompt, params, req.Timeout, true)
-			return ClassifyRunnerResult(res.Report, err, role, req.Timeout, ctx).
-				withMeta(meta.after(time.Since(started))), nil
+			return finishDispatch(ctx, req, ClassifyRunnerResult(res.Report, err, role, req.Timeout, ctx).
+				withMeta(meta.after(time.Since(started)))), nil
 		case LaneShared:
 			// A shared-lane role cannot mutate the tree; isolation buys
 			// nothing, so fall through to the direct runner.
@@ -229,15 +234,20 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 				// through the classifier so the caller renders status=error
 				// with dispatch_id/role/lane/recovery instead of a bare Go
 				// error (yaah-was9.1).
-				return ClassifyRunnerResult("", err, role, req.Timeout, ctx).
-					withMeta(meta.after(time.Since(started))), nil
+				out := ClassifyRunnerResult("", err, role, req.Timeout, ctx).
+					withMeta(meta.after(time.Since(started)))
+				// The world is created inside startRetainedRun, so an error
+				// here means nothing ran: a preflight failure, whose retry
+				// starts from an untouched tree (yaah-i5k8).
+				out.FailureClass = FailureClassPreflightTransient
+				return finishDispatch(ctx, req, out), nil
 			}
-			return DispatchResult{
+			return finishDispatch(ctx, req, DispatchResult{
 				Status:   DispatchProposal,
 				Role:     role,
 				Timeout:  req.Timeout,
 				Proposal: res.Proposal,
-			}.withMeta(meta.after(time.Since(started))), nil
+			}.withMeta(meta.after(time.Since(started)))), nil
 		}
 	}
 
@@ -249,8 +259,8 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 	}
 	NotifySubAgentReady(runCtx)
 	result, err := runner(runCtx, req.Prompt, params)
-	return ClassifyRunnerResult(result, err, role, req.Timeout, runCtx).
-		withMeta(meta.after(time.Since(started))), nil
+	return finishDispatch(ctx, req, ClassifyRunnerResult(result, err, role, req.Timeout, runCtx).
+		withMeta(meta.after(time.Since(started)))), nil
 }
 
 // ClassifyRunnerResult maps a runner outcome to the typed dispatch result. A

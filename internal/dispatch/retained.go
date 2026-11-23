@@ -249,6 +249,23 @@ type proposalEnvelope struct {
 	// Recovery says whether re-dispatching can make progress and what to do
 	// next. It is derived from stop_reason, never from prose.
 	Recovery *ResultRecovery `json:"recovery,omitempty"`
+	// FailureClass is the dispatch-level classification of how this attempt
+	// failed (yaah-i5k8): one of preflight_transient, provider_transient,
+	// timeout, stuck, content, configuration, cancelled, or sealed. It is
+	// absent when the attempt did not fail, and two readers must not confuse
+	// the two: absence means "no failure", never "unclassified failure".
+	FailureClass string `json:"failure_class,omitempty"`
+	// Attempts is how many attempts this envelope reports, always >= 1. A
+	// dispatch that was retried at the boundary reports the total
+	// (yaah-dgkh); every dispatch today reports 1.
+	Attempts int `json:"attempts,omitempty"`
+	// Retried reports that this envelope covers more than one attempt. It is
+	// derived from Attempts and is present only when true, so a
+	// single-attempt dispatch carries Attempts 1 and no Retried.
+	Retried bool `json:"retried,omitempty"`
+	// AttemptIDs names the attempts this envelope covers, in order. Absent
+	// when the lane minted no id to name one with.
+	AttemptIDs []string `json:"attempt_ids,omitempty"`
 }
 
 // proposalVerbs is the settlement vocabulary advertised to the orchestrator,
