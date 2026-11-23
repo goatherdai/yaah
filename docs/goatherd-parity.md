@@ -45,8 +45,8 @@ not claim it wholesale.
 | Egress postures | not modeled in the Python reference | `allow_all` / `deny_all` / `broker` | **Shipped, beyond reference** |
 | Supervision | `JudgePredicate`, gates, permission plans | rule-based supervisor + blocking guard | **Partial**; `yaah-hxk3.1` |
 | Task / step / combinators | `task`, `step`, gate/retry/parallel/race | own streaming loop + delegate | **Not ported**; decision `yaah-hxk3.5` |
-| Contexts / effect fold | workspace, session, KV, DB, MCP, appstore | own state/memory/MCP + kernel effect bus | **Partial**; decision `yaah-hxk3.4` |
-| Citation checking | Shepherd 0.3.1 citation checker | none | **Not ported**; `yaah-hxk3.2` |
+| Contexts / effect fold | workspace, session, KV, DB, MCP, appstore | own state/memory/MCP + kernel effect bus | **Declined** (the fold; workspace/session/MCP ship under other layers) — decision `yaah-hxk3.4` (`docs/context-effect-fold-decision.md`) |
+| Citation checking | Shepherd 0.3.1 citation checker | none | **Declined**; `yaah-hxk3.2` (`docs/citation-checker-decision.md`) |
 | Export / transform | dedicated packages | none | **Declined** for the coding-agent scope |
 | Devices / remote carriers | device and remote backends | git worktree + croft container only | **Declined** beyond current carriers |
 | Provider SDK shape | Python provider protocol/adapters | yaah provider layer | **Different surface, not a parity target** |
@@ -296,10 +296,11 @@ seals; a proposal seals a `GitDelta` manifest before teardown.
 unchanged captures return the previous state verbatim, so the kernel's
 digest-stability contract holds without a per-capture content diff. The
 `sandbox/croft` adapter deliberately does **not** carry croft's
-`ContentDigest`: a capture's digest must include `Revision`, and settlement
-compares the host basis separately, so the field would not buy cross-timeline
-content equality here. The underlying croft option remains available to a host
-that wants it; yaah does not read it.
+`ContentDigest`: producing it costs a full-tree daemon diff on every capture,
+and the kernel's `Digest` already includes `Revision`, so `select` compares
+timeline positions, not bare content. The underlying croft option remains
+available to a host that wants cross-timeline content equality; yaah does not
+read it.
 
 yaah's settlement path does not use a croft state across backends. In a host
 session the parent root is a **git** sandbox while the dispatch world is croft,

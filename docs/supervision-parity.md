@@ -29,7 +29,7 @@ deterministic predicate, not an LLM call.
 | Settlement monitor | `internal/dispatch/git_delta.go` (container manifest) and `internal/dispatch/proposal_merge.go` (worktree three-way merge) — delta posture declared in the plan, digest cited at seal and settle as `authority_plan_digest` | Adopted (Stage 3) |
 | `gate` deterministic predicate (`JudgePredicate`) | `internal/workflow/assert` (named deterministic checks) + `internal/workflow/exec/gate.go` | Adopted — the `judge:` (LLM verdict) half is a yaah extension beyond Shepherd's deterministic predicate |
 | `budget`/`timeout` combinators | not present in `internal/workflow/exec` | Not ported (`yaah-hxk3.5`) |
-| Citation checking | not ported | Declined (`yaah-hxk3.2`) |
+| Citation checking | not ported | Declined (`yaah-hxk3.2` — `docs/citation-checker-decision.md`) |
 | Effects supervisor handler | advisory rules engine (`destructive_tool`, `high_error_rate`, `stuck_detection`) | Diverged — see below |
 
 ## Advisory-rules divergence
@@ -69,11 +69,37 @@ two lanes produce the same digest; for `auto`, the empty default, and
 `paddock`/`jail` they differ, and they must, because for that config the two
 worlds enforce different declarations.
 
+## Explicit declines
+
+Beyond the mapping table, three Shepherd surfaces are deliberately not
+adopted, recorded here so each gap reads as a decision rather than an
+omission:
+
+- **Kind hierarchies** — Shepherd subsumes effect kinds under parent kinds.
+  yaah's `Match` reasons over a flat `kind` field; a hierarchy would widen the
+  surface without a conformance question it answers.
+- **YAML loaders** — Shepherd lowers `Match`/`Plan` from a Python policy DSL.
+  yaah declares authority as typed Go (`effectpolicy` + `permissionplan`);
+  configuration loading, when it arrives, is a separate wiring increment.
+- **Handle/observe grant enforcement** — Shepherd enforces grants through a
+  per-effect handler. yaah enforces at the tool/dispatch boundary (the jail and
+  settlement monitors) and observes through the advisory `EffectBus`; a
+  per-effect handler is redundant with that.
+
 ## Open parity
 
-`docs/goatherd-parity.md` is the ledger of record. Open items: `yaah-hxk3.1`
-(supervision, Partial — the biggest gap), `hxk3.2` (citation checking, not
-ported), `hxk3.4` (contexts/effect fold, Partial), `hxk3.5`
-(task/step/combinators — the workflow DSL exists under `internal/workflow/`
-with `gate`/`assert` adopted; `budget`/`timeout` remain unported),
-`hxk3.3` (scorecard, ongoing); umbrella `yaah-1tkp`.
+`docs/goatherd-parity.md` is the ledger of record. The `yaah-hxk3` scorecard is
+complete: every layer carries a shipped / partial / declined / not-ported
+verdict, each backed by a decision doc or a bead. "Complete" means every layer
+has a recorded verdict — not that every shipped/partial verdict's work is built.
+The once-open items are now closed — `hxk3.1` (supervision → Partial; the
+mapping, `effectpolicy` algebra, and `permissionplan` unification all landed),
+`hxk3.2` (citation checking → declined), `hxk3.3` (scorecard → published),
+`hxk3.4` (contexts/effect fold → declined), `hxk3.5` (task/step/combinators →
+decided, `budget`/`timeout` not ported). No open parity items remain under this
+epic.
+
+Implementation the decisions defer is tracked in follow-up beads, not as open
+parity: `yaah-dgkh` (dispatch-boundary retry for preflight/report lanes) and
+`yaah-i5k8` (per-attempt `dispatch_attempt` evidence), both adopted from
+`yaah-hxk3.5` / `docs/dispatch-retry-decision.md`.
