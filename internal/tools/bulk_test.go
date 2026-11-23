@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func bulkWorkspace(t *testing.T) (string, Workspace) {
@@ -149,5 +150,104 @@ func TestBulkFilesDeleteAndFailureReporting(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("error does not name the existing destination: %v", err)
+	}
+}
+
+// TestBulkFilesMutationHoldsTheWholeSet pins the fileguard.go contract for a
+// multi-path tool: ONE acquisition over every matched source plus its resolved
+// destination, held across the per-file primitives. Without it a bulk call was a
+// bare sequence of copies/renames a concurrent writer could interleave with,
+// file by file.
+func TestBulkFilesMutationHoldsTheWholeSet(t *testing.T) {
+	pv := NewPathValidator(t.TempDir(), false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	src := filepath.Join(pv.WorkspaceRoot, "src")
+	seedBulk(t, src)
+	to := filepath.Join(pv.WorkspaceRoot, "out")
+	if err := os.MkdirAll(to, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	probe := newBlockingTransferWorkspace(newLocalWorkspace(pv))
+	tool := &BulkFilesTool{WS: probe}
+	args := mustJSON(t, map[string]any{"action": "copy", "pattern": "*.txt", "path": src, "to": to, "mkdir_p": true})
+	done := runTransferAsync(tool, args)
+	defer probe.unblock()
+	waitParked(t, probe)
+
+	// The whole set is held, not just the file whose copy is in flight.
+	for _, p := range []string{
+		filepath.Join(src, "a.txt"),
+		filepath.Join(src, "b.txt"),
+		filepath.Join(src, "sub", "c.txt"),
+		filepath.Join(to, "a.txt"),
+		filepath.Join(to, "b.txt"),
+		filepath.Join(to, "sub", "c.txt"),
+	} {
+		if !pathLockHeld(p) {
+			t.Errorf("%s is not locked while the bulk copy runs: the call takes no set lock", p)
+		}
+	}
+
+	probe.unblock()
+	if err := <-done; err != nil {
+		t.Fatalf("bulk copy: %v", err)
+	}
+	for _, rel := range []string{"a.txt", "b.txt", filepath.Join("sub", "c.txt")} {
+		if _, err := os.Stat(filepath.Join(to, rel)); err != nil {
+			t.Errorf("copied %s missing: %v", rel, err)
+		}
+	}
+	for _, p := range []string{filepath.Join(src, "a.txt"), filepath.Join(to, "a.txt")} {
+		if pathLockHeld(p) {
+			t.Errorf("%s is still locked after the bulk call returned", p)
+		}
+	}
+}
+
+// TestBulkFilesDryRunTakesNoLock pins the flip side: a dry run writes nothing, so
+// it must not take the write guard. Every lock the mutating path would take is
+// held here, so a dry run that acquired them would park — the bounded wait turns
+// that into a failure instead of a hung test.
+func TestBulkFilesDryRunTakesNoLock(t *testing.T) {
+	dir, ws := bulkWorkspace(t)
+	src := filepath.Join(dir, "src")
+	seedBulk(t, src)
+	to := filepath.Join(dir, "out")
+	unlock := lockConflictPathSet(
+		filepath.Join(src, "a.txt"),
+		filepath.Join(src, "b.txt"),
+		filepath.Join(src, "sub", "c.txt"),
+		filepath.Join(to, "a.txt"),
+		filepath.Join(to, "b.txt"),
+		filepath.Join(to, "sub", "c.txt"),
+	)
+	defer unlock()
+
+	tool := &BulkFilesTool{WS: ws}
+	args := mustJSON(t, map[string]any{"action": "copy", "pattern": "*.txt", "path": src, "to": to, "dry_run": true})
+	type outcome struct {
+		out string
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		out, err := tool.Execute(context.Background(), args)
+		done <- outcome{out, err}
+	}()
+	var got outcome
+	select {
+	case got = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the dry run blocked on the per-path lock: a preview must stay lock-free")
+	}
+	if got.err != nil {
+		t.Fatalf("dry run: %v", got.err)
+	}
+	if !strings.Contains(got.out, "a.txt") {
+		t.Errorf("dry run output = %q, want the matched files", got.out)
+	}
+	if _, err := os.Stat(to); !os.IsNotExist(err) {
+		t.Errorf("dry run created the destination root: %v", err)
 	}
 }

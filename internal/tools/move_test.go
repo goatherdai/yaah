@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/goatherdai/yaah/internal/sandboxfake"
 )
@@ -288,5 +290,105 @@ func TestMoveTool_requiresBothPaths(t *testing.T) {
 		if _, err := tool.Execute(context.Background(), args); err == nil {
 			t.Errorf("args %q must be refused", args)
 		}
+	}
+}
+
+// blockingTransferWorkspace parks the FIRST transfer primitive until the test
+// unblocks it, so a test can inspect which per-path locks a tool holds across
+// that primitive. Later calls pass straight through — a bulk call issues one
+// per match, and only the first needs to be observable.
+type blockingTransferWorkspace struct {
+	Workspace
+
+	entered     chan struct{}
+	release     chan struct{}
+	enteredOnce sync.Once
+	releaseOnce sync.Once
+}
+
+func newBlockingTransferWorkspace(inner Workspace) *blockingTransferWorkspace {
+	return &blockingTransferWorkspace{Workspace: inner, entered: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (w *blockingTransferWorkspace) Move(ctx context.Context, src, dst string) error {
+	return w.park(func() error { return w.Workspace.Move(ctx, src, dst) })
+}
+
+func (w *blockingTransferWorkspace) Copy(ctx context.Context, src, dst string) error {
+	return w.park(func() error { return w.Workspace.Copy(ctx, src, dst) })
+}
+
+func (w *blockingTransferWorkspace) park(op func() error) error {
+	w.enteredOnce.Do(func() { close(w.entered) })
+	<-w.release
+	return op()
+}
+
+// unblock releases the parked primitive; it is safe to call more than once so a
+// test can defer it and still release early.
+func (w *blockingTransferWorkspace) unblock() { w.releaseOnce.Do(func() { close(w.release) }) }
+
+// transferProbeSetup builds a host workspace, a seeded source, and a blocking
+// double the tool can be pointed at.
+func transferProbeSetup(t *testing.T) (pv *PathValidator, src, dst string, probe *blockingTransferWorkspace) {
+	t.Helper()
+	dir := t.TempDir()
+	pv = NewPathValidator(dir, false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	src = filepath.Join(pv.WorkspaceRoot, "a.txt")
+	dst = filepath.Join(pv.WorkspaceRoot, "b.txt")
+	writeFile(t, src, []byte("payload"))
+	return pv, src, dst, newBlockingTransferWorkspace(NewLocalWorkspace(pv))
+}
+
+// runTransferAsync starts one Execute and returns its error channel.
+func runTransferAsync(tool Tool, args string) <-chan error {
+	done := make(chan error, 1)
+	go func() {
+		_, err := tool.Execute(context.Background(), args)
+		done <- err
+	}()
+	return done
+}
+
+// waitParked waits for the probe's primitive to be entered.
+func waitParked(t *testing.T, probe *blockingTransferWorkspace) {
+	t.Helper()
+	select {
+	case <-probe.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the transfer primitive never ran")
+	}
+}
+
+// TestMoveTool_holdsBothPathLocksAcrossThePrimitive pins the lane-independent
+// guard: the lock lives in the tool, not in the RecorderingTool wrapper, so an
+// ORCHESTRATOR move is serialized too (before this, only a sub-agent dispatch
+// was). Both ends are held while the primitive runs, and both are released when
+// it returns.
+func TestMoveTool_holdsBothPathLocksAcrossThePrimitive(t *testing.T) {
+	pv, src, dst, probe := transferProbeSetup(t)
+	tool := &MoveTool{PV: pv, WS: probe}
+	defer probe.unblock()
+
+	done := runTransferAsync(tool, transferArgs(t, map[string]any{"path": src, "to": dst}))
+	waitParked(t, probe)
+	for _, p := range []string{src, dst} {
+		if !pathLockHeld(p) {
+			t.Errorf("%s is not locked while the move primitive runs: the tool holds no per-path lock", p)
+		}
+	}
+
+	probe.unblock()
+	if err := <-done; err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	for _, p := range []string{src, dst} {
+		if pathLockHeld(p) {
+			t.Errorf("%s is still locked after the move returned", p)
+		}
+	}
+	if _, err := os.Stat(dst); err != nil {
+		t.Errorf("moved destination missing: %v", err)
 	}
 }

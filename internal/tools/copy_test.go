@@ -225,3 +225,37 @@ func TestCopyTool_isDangerous(t *testing.T) {
 		t.Error("copy writes a file and must require approval")
 	}
 }
+
+// TestCopyTool_holdsBothPathLocksAcrossThePrimitive is the copy half of the
+// lane-independent guard: the source is held so a concurrent move of it cannot
+// race the read, and the destination so a writer cannot slip into the window the
+// no-clobber check is about to fill.
+func TestCopyTool_holdsBothPathLocksAcrossThePrimitive(t *testing.T) {
+	pv, src, dst, probe := transferProbeSetup(t)
+	tool := &CopyTool{PV: pv, WS: probe}
+	defer probe.unblock()
+
+	done := runTransferAsync(tool, transferArgs(t, map[string]any{"path": src, "to": dst}))
+	waitParked(t, probe)
+	for _, p := range []string{src, dst} {
+		if !pathLockHeld(p) {
+			t.Errorf("%s is not locked while the copy primitive runs: the tool holds no per-path lock", p)
+		}
+	}
+
+	probe.unblock()
+	if err := <-done; err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	for _, p := range []string{src, dst} {
+		if pathLockHeld(p) {
+			t.Errorf("%s is still locked after the copy returned", p)
+		}
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Errorf("a copy must leave the source in place: %v", err)
+	}
+	if got, err := os.ReadFile(dst); err != nil || string(got) != "payload" {
+		t.Errorf("destination content = %q, err = %v; want payload", got, err)
+	}
+}

@@ -65,9 +65,29 @@ func (t *MoveTool) Schema() json.RawMessage {
 // IsDangerous is true for every call: a move relocates a file the user has.
 func (t *MoveTool) IsDangerous(string) bool { return true }
 
+// selfGuardsPath marks move as taking the per-path lock for both ends inside
+// its own Execute (lockConflictPathSet, fileguard.go), so the RecordingTool
+// wrapper does not hold the same non-reentrant lock across it. The marker is
+// what keeps the lock on EVERY lane: the orchestrator calls this tool directly,
+// with no recording wrapper to take it.
+func (*MoveTool) selfGuardsPath() {}
+
 func (t *MoveTool) Execute(ctx context.Context, args string) (string, error) {
 	req, err := prepareTransfer(ctx, "move", t.Schema(), workspaceOf(t.WS, t.PV), args)
 	if err != nil {
+		return "", err
+	}
+	// Both ends in one sorted acquisition (see lockConflictPathSet): the guard
+	// belongs here, at the tool boundary, so it holds on every lane — an
+	// orchestrator move previously did a bare read-then-write that a concurrent
+	// sub-agent write could silently revert. Sorted order is what keeps two
+	// transfers A→B and B→A from deadlocking.
+	unlock := lockConflictPathSet(req.Path, req.To)
+	defer unlock()
+	// validate runs INSIDE the lock: its no-clobber check is check-then-act, and
+	// holding the lock across both the check and the primitive is what stops an
+	// in-process writer from slipping a create in between.
+	if err := req.validate(ctx, "move"); err != nil {
 		return "", err
 	}
 	if err := req.ws.Move(ctx, req.Path, req.To); err != nil {
@@ -81,39 +101,24 @@ func (t *MoveTool) Execute(ctx context.Context, args string) (string, error) {
 // decoding and every safety rule live here rather than being copied — a rule
 // added to one file cannot be missing from the other.
 type transferRequest struct {
-	ws    Workspace
-	Path  string // resolved source
-	To    string // resolved destination
-	Force bool
+	ws     Workspace
+	Path   string // resolved source
+	To     string // resolved destination
+	Force  bool
+	MkdirP bool
 }
 
-// prepareTransfer decodes and validates a move/copy argument object.
+// prepareTransfer decodes a move/copy argument object and resolves both paths
+// through the workspace's PathValidator, so deny patterns and workspace-root
+// containment apply exactly as they do for read/write/edit/delete.
 //
-// Three rules are enforced for both tools, by construction rather than by the
-// substrate's replace semantics (host rename, sandbox mv/cp, and the in-memory
-// double all disagree on clobbering, so the rule is applied once, above them):
-//
-//   - the source must exist and be a regular file as the path layer leaves it —
-//     a directory, FIFO, socket, or device is refused with a clear error, which
-//     keeps the tool's semantics bounded and the host copy from blocking on a
-//     special file. A symlink follows the substrate: the host path validator
-//     resolves it first (like every other file tool, transferring the target),
-//     while a lexical-path substrate such as the container sandbox refuses it;
-//   - the destination must not be a directory; a symlink destination is refused
-//     on a lexical-path substrate, while the host resolves a valid link first
-//     and applies the clobber rule to its target;
-//   - an existing destination is refused unless force is set.
-//
-// The no-clobber rule is check-then-act: a writer that creates dst between the
-// Lstat here and the substrate primitive below can still be overwritten.
-// The ConflictTracker locks serialize sub-agent dispatches only; the
-// orchestrator tier has no such serialization for this window, and an
-// external writer racing a dispatch is a documented limitation — no portable
-// no-replace rename exists on every supported OS.
-//
-// Both paths are resolved through the workspace's PathValidator first, so deny
-// patterns and workspace-root containment apply exactly as they do for
-// read/write/edit/delete.
+// The safety rules that depend on the filesystem — the source must exist and be
+// a regular file, the destination must not be a directory, an existing
+// destination is refused unless force is set, and the destination parent must
+// already exist — live in transferRequest.validate, which the tools call AFTER
+// taking the per-path lock. Splitting the two is deliberate: it is what lets the
+// no-clobber check and the substrate primitive share one critical section
+// without either call site copying the resolution rules.
 func prepareTransfer(ctx context.Context, tool string, schema json.RawMessage, ws Workspace, args string) (transferRequest, error) {
 	var params struct {
 		Path   string `json:"path"`
@@ -131,7 +136,7 @@ func prepareTransfer(ctx context.Context, tool string, schema json.RawMessage, w
 		return transferRequest{}, fmt.Errorf("%s: to is required", tool)
 	}
 
-	req := transferRequest{ws: ws, Force: params.Force}
+	req := transferRequest{ws: ws, Force: params.Force, MkdirP: params.MkdirP}
 	src, err := ws.ResolveWritePath(params.Path)
 	if err != nil {
 		return transferRequest{}, fmt.Errorf("%s: %w", tool, err)
@@ -141,6 +146,35 @@ func prepareTransfer(ctx context.Context, tool string, schema json.RawMessage, w
 		return transferRequest{}, fmt.Errorf("%s: %w", tool, err)
 	}
 	req.Path, req.To = src, dst
+	return req, nil
+}
+
+// validate applies the move/copy safety rules to a resolved request. It is
+// check-then-act, so both tools call it with the per-path lock already held
+// (see MoveTool.Execute): the lock is in-process only, which means an in-process
+// writer — the orchestrator lane, another dispatch — cannot create the
+// destination between the Lstat here and the substrate primitive below. An
+// OUTSIDE writer still can: no portable no-replace rename exists on every
+// supported OS, so a concurrent editor or a second yaah instance racing the
+// transfer is a documented limitation.
+//
+// Three rules are enforced for both tools, by construction rather than by the
+// substrate's replace semantics (host rename, sandbox mv/cp, and the in-memory
+// double all disagree on clobbering, so the rule is applied once, above them):
+//
+//   - the source must exist and be a regular file as the path layer leaves it —
+//     a directory, FIFO, socket, or device is refused with a clear error, which
+//     keeps the tool's semantics bounded and the host copy from blocking on a
+//     special file. A symlink follows the substrate: the host path validator
+//     resolves it first (like every other file tool, transferring the target),
+//     while a lexical-path substrate such as the container sandbox refuses it;
+//   - the destination must not be a directory; a symlink destination is refused
+//     on a lexical-path substrate, while the host resolves a valid link first
+//     and applies the clobber rule to its target;
+//   - an existing destination is refused unless force is set.
+func (req transferRequest) validate(ctx context.Context, tool string) error {
+	ws := req.ws
+	src, dst := req.Path, req.To
 
 	// Lstat, not Stat: the entry at the path is what a rename moves and a copy
 	// reads. The source must be a regular file as the path layer leaves it, so
@@ -154,10 +188,10 @@ func prepareTransfer(ctx context.Context, tool string, schema json.RawMessage, w
 	// IsRegular check refuses it — the documented substrate difference.
 	info, err := ws.Lstat(ctx, src)
 	if err != nil {
-		return transferRequest{}, fmt.Errorf("%s: %s: %w", tool, src, err)
+		return fmt.Errorf("%s: %s: %w", tool, src, err)
 	}
 	if !info.Mode().IsRegular() {
-		return transferRequest{}, fmt.Errorf("%s: %s is not a regular file; %s operates on regular files only", tool, src, tool)
+		return fmt.Errorf("%s: %s is not a regular file; %s operates on regular files only", tool, src, tool)
 	}
 
 	dstInfo, err := ws.Lstat(ctx, dst)
@@ -165,7 +199,7 @@ func prepareTransfer(ctx context.Context, tool string, schema json.RawMessage, w
 	case errors.Is(err, fs.ErrNotExist):
 		// The common case: a fresh destination.
 	case err != nil:
-		return transferRequest{}, fmt.Errorf("%s: %s: %w", tool, dst, err)
+		return fmt.Errorf("%s: %s: %w", tool, dst, err)
 	case dstInfo.Mode()&fs.ModeSymlink != 0:
 		// A symlink destination is refused on a lexical-path substrate: mv
 		// would replace the link while cp writes through it — and for a link to
@@ -176,11 +210,11 @@ func prepareTransfer(ctx context.Context, tool string, schema json.RawMessage, w
 		// its target) and a dangling link fails in the path layer; it remains
 		// here so a substrate that stops resolving cannot silently accept a
 		// link.
-		return transferRequest{}, fmt.Errorf("%s: destination %s is a symlink; pass the real path or remove the link", tool, dst)
+		return fmt.Errorf("%s: destination %s is a symlink; pass the real path or remove the link", tool, dst)
 	case dstInfo.IsDir():
-		return transferRequest{}, fmt.Errorf("%s: destination %s is a directory", tool, dst)
+		return fmt.Errorf("%s: destination %s is a directory", tool, dst)
 	case !req.Force:
-		return transferRequest{}, fmt.Errorf("%s: destination %s already exists; pass force=true to replace it", tool, dst)
+		return fmt.Errorf("%s: destination %s already exists; pass force=true to replace it", tool, dst)
 	}
 
 	// The destination parent must already exist. Creating it here would make
@@ -189,18 +223,18 @@ func prepareTransfer(ctx context.Context, tool string, schema json.RawMessage, w
 	// opaque "create temp: no such file or directory" into an actionable
 	// message.
 	parent := wsPathDir(ws, dst)
-	if params.MkdirP {
+	if req.MkdirP {
 		if err := ws.MkdirAll(ctx, parent, 0o755); err != nil {
-			return transferRequest{}, fmt.Errorf("%s: create destination parent %s: %w", tool, parent, err)
+			return fmt.Errorf("%s: create destination parent %s: %w", tool, parent, err)
 		}
 	}
 	switch info, statErr := ws.Stat(ctx, parent); {
 	case errors.Is(statErr, fs.ErrNotExist):
-		return transferRequest{}, fmt.Errorf("%s: destination parent %s does not exist; create it first with mkdir", tool, parent)
+		return fmt.Errorf("%s: destination parent %s does not exist; create it first with mkdir", tool, parent)
 	case statErr != nil:
-		return transferRequest{}, fmt.Errorf("%s: %s: %w", tool, parent, statErr)
+		return fmt.Errorf("%s: %s: %w", tool, parent, statErr)
 	case !info.IsDir():
-		return transferRequest{}, fmt.Errorf("%s: destination parent %s is not a directory", tool, parent)
+		return fmt.Errorf("%s: destination parent %s is not a directory", tool, parent)
 	}
-	return req, nil
+	return nil
 }

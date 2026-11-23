@@ -406,6 +406,25 @@ func TestWithFileWriteSet_ReturnsFnError(t *testing.T) {
 	}
 }
 
+// pathLockHeld reports whether some goroutine currently holds the per-path
+// lock for p. It probes the same mutex the tools take, with TryLock, so a test
+// can assert that a critical section is (or is no longer) held without blocking
+// itself or perturbing the lock it observes.
+func pathLockHeld(p string) bool {
+	key := pathKey(normalizeTrackedPath(p))
+	conflictPathLocksMu.Lock()
+	lock := conflictPathLocks[key]
+	conflictPathLocksMu.Unlock()
+	if lock == nil {
+		return false
+	}
+	if !lock.mu.TryLock() {
+		return true
+	}
+	lock.mu.Unlock()
+	return false
+}
+
 // TestGuardRoutedToolsImplementSelfGuardsPath pins the invariant that makes
 // the RecordingTool wrapper safe: every tool that takes the per-path lock
 // inside its own Execute must implement selfGuardingTool, or the wrapper
@@ -419,8 +438,11 @@ func TestGuardRoutedToolsImplementSelfGuardsPath(t *testing.T) {
 		tool Tool
 	}{
 		{"append", &AppendTool{}},
+		{"bulk_files", &BulkFilesTool{}},
+		{"copy", &CopyTool{}},
 		{"edit", &EditTool{}},
 		{"json_query", &JSONQueryTool{}},
+		{"move", &MoveTool{}},
 		{"patch", &PatchTool{}},
 		{"replace", &ReplaceTool{}},
 		{"write", &WriteTool{}},

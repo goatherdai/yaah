@@ -117,12 +117,13 @@ func (rt *RecordingTool) workspace() Workspace {
 	return nil
 }
 
-// selfGuardingTool is implemented by single-path tools that take the
-// per-path write guard (withFileWrite / lockConflictPath, fileguard.go)
-// inside their own Execute. RecordingTool must not hold the per-path lock
-// across such a tool: the lock is refcounted but not reentrant per
-// goroutine, so the wrapper's acquisition would block the wrapped tool's
-// own forever.
+// selfGuardingTool is implemented by tools that take the per-path lock
+// (withFileWrite / lockConflictPath / lockConflictPathSet / withFileWriteSet,
+// fileguard.go) inside their own Execute — single-path tools such as write and
+// edit, and the two-path transfer tools move and copy. RecordingTool must not
+// hold the per-path lock across such a tool: the lock is refcounted but not
+// reentrant per goroutine, so the wrapper's acquisition would block the wrapped
+// tool's own forever.
 type selfGuardingTool interface{ selfGuardsPath() }
 
 func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, error) {
@@ -289,8 +290,18 @@ func (rt *RecordingTool) recordTransfer(ctx context.Context, dispatch ConflictDi
 
 	// Both paths in one critical section. The locks are taken in sorted order so
 	// two dispatches moving A→B and B→A cannot deadlock.
-	unlock := lockConflictPathSet(absSrc, absDst)
-	defer unlock()
+	//
+	// A transfer that takes this same {src,dst} lock inside its own Execute
+	// (selfGuardingTool: move and copy do, so the orchestrator lane is guarded
+	// without any wrapper) must not have it taken again here — the lock is not
+	// reentrant per goroutine, and the wrapper would park on the wrapped tool's
+	// own acquisition forever. Evidence collection is still serialized: the
+	// inner tool's critical section is the one that orders these snapshots
+	// against the transfer.
+	if _, guarded := rt.inner.(selfGuardingTool); !guarded {
+		unlock := lockConflictPathSet(absSrc, absDst)
+		defer unlock()
+	}
 
 	beforeSrc := captureConflictSnapshot(ctx, ws, absSrc)
 	beforeDst := captureConflictSnapshot(ctx, ws, absDst)
