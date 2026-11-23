@@ -82,7 +82,14 @@ func (t *CopyTool) Execute(ctx context.Context, args string) (string, error) {
 	if err := req.validate(ctx, "copy"); err != nil {
 		return "", err
 	}
-	if err := req.ws.Copy(ctx, req.Path, req.To); err != nil {
+	err = req.ws.Copy(ctx, req.Path, req.To)
+	// Publish the destination from inside the lock (write_evidence.go): the
+	// recording wrapper cannot take this lock across a self-guarding transfer,
+	// so its own after-read could otherwise observe — and claim — a concurrent
+	// dispatch's write to the destination (yaah-1615). The source is not
+	// published: a copy leaves it untouched, and the recorder must not record it.
+	publishPathSnapshot(ctx, req.ws, req.To)
+	if err != nil {
 		return "", fmt.Errorf("copy: %w", err)
 	}
 	return fmt.Sprintf("Copied %s to %s", req.Path, req.To), nil

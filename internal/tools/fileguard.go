@@ -166,6 +166,11 @@ func (e *StaleWriteError) Error() string {
 // goroutine: a lower-layer acquisition would deadlock any outer tool that
 // loops over files. Mutate must not call back into withFileWrite for the same
 // path.
+//
+// On success the guard also fires its onCommit hook — publishing the
+// post-write image to the recording wrapper's evidence sink, still under the
+// lock (write_evidence.go) — so a self-guarding tool's change is attributed to
+// the dispatch that made it.
 func withFileWrite(ctx context.Context, ws Workspace, abs string, mutate func(cur []byte, mode fs.FileMode) ([]byte, error)) (FileWriteReceipt, error) {
 	unlock := lockConflictPath(abs)
 	defer unlock()
@@ -206,13 +211,21 @@ func withFileWrite(ctx context.Context, ws Workspace, abs string, mutate func(cu
 	if err := ws.WriteFile(ctx, abs, next, mode); err != nil {
 		return FileWriteReceipt{}, fmt.Errorf("%s: %w", conflictWorkspaceRel(ws, abs), err)
 	}
-	return FileWriteReceipt{
+	receipt := FileWriteReceipt{
 		Path:        conflictWorkspaceRel(ws, abs),
 		BeforeBytes: before.Bytes,
 		AfterBytes:  len(next),
 		Digest:      proposalContentDigest(next),
 		Created:     !before.Exists,
-	}, nil
+	}
+	// onCommit hook: publish the post-write image for the recording wrapper
+	// (write_evidence.go) while the per-path lock is still held. The wrapper
+	// cannot take this lock itself for a self-guarding tool, so this is the only
+	// point at which the after-image is provably this write's — a capture after
+	// unlock can observe a concurrent dispatch's write instead. A no-op unless a
+	// recorder installed a sink in ctx.
+	publishFileWriteEvidence(ctx, ws, abs, receipt)
+	return receipt, nil
 }
 
 // withFileWriteSet takes the per-path lock for every path (sorted, single

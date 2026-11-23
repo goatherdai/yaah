@@ -124,6 +124,11 @@ func (rt *RecordingTool) workspace() Workspace {
 // hold the per-path lock across such a tool: the lock is refcounted but not
 // reentrant per goroutine, so the wrapper's acquisition would block the wrapped
 // tool's own forever.
+//
+// Because the wrapper cannot hold that lock, such a tool also owns publishing
+// its post-mutation image from inside it: withFileWrite does it as its onCommit
+// hook, and the tools whose write is not a withFileWrite call (append, move,
+// copy) call publishPathSnapshot while they hold the lock (write_evidence.go).
 type selfGuardingTool interface{ selfGuardsPath() }
 
 func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, error) {
@@ -228,9 +233,13 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 	// two divergent writes can look identical. Guard-routed tools
 	// (selfGuardingTool) take the same lock inside their own Execute, so
 	// holding it here would re-enter the non-reentrant lock on this same
-	// goroutine and deadlock; their own critical section provides the
-	// serialization this sequence wants.
-	if _, guarded := rt.inner.(selfGuardingTool); !guarded {
+	// goroutine and deadlock; instead they publish their own post-write image
+	// from INSIDE that critical section (write_evidence.go), which is what keeps
+	// a concurrent dispatch's write out of this dispatch's after-snapshot.
+	// recordSnapshot prefers a published image over a fresh read.
+	if _, guarded := rt.inner.(selfGuardingTool); guarded {
+		ctx, _ = withWriteEvidence(ctx)
+	} else {
 		unlock := lockConflictPath(abs)
 		defer unlock()
 	}
@@ -249,7 +258,7 @@ func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, erro
 // ones (move/copy) both record through here, so the evidence shape cannot
 // diverge between them.
 func (rt *RecordingTool) recordSnapshot(ctx context.Context, dispatch ConflictDispatch, toolName string, ws Workspace, abs string, before conflictSnapshot) {
-	after := captureConflictSnapshot(ctx, ws, abs)
+	after := snapshotAfter(ctx, ws, abs)
 	if conflictSnapshotsEqual(before, after) {
 		return
 	}
@@ -296,9 +305,14 @@ func (rt *RecordingTool) recordTransfer(ctx context.Context, dispatch ConflictDi
 	// without any wrapper) must not have it taken again here — the lock is not
 	// reentrant per goroutine, and the wrapper would park on the wrapped tool's
 	// own acquisition forever. Evidence collection is still serialized: the
-	// inner tool's critical section is the one that orders these snapshots
-	// against the transfer.
-	if _, guarded := rt.inner.(selfGuardingTool); !guarded {
+	// inner tool publishes its own post-transfer images from inside that
+	// critical section (write_evidence.go), and recordSnapshot prefers them. A
+	// guarded transfer that publishes nothing for a path falls back to a fresh
+	// read — correct bytes for the file, but a concurrent writer in the gap
+	// after the tool unlocked would be attributed to this dispatch.
+	if _, guarded := rt.inner.(selfGuardingTool); guarded {
+		ctx, _ = withWriteEvidence(ctx)
+	} else {
 		unlock := lockConflictPathSet(absSrc, absDst)
 		defer unlock()
 	}

@@ -83,6 +83,11 @@ func (t *AppendTool) Execute(ctx context.Context, args string) (string, error) {
 	if err := ws.Append(ctx, params.FilePath, []byte(params.Content), 0o644); err != nil {
 		return "", fmt.Errorf("append: %w", err)
 	}
+	// Publish the post-append image from inside the lock (write_evidence.go):
+	// the recording wrapper cannot take this lock across a self-guarding tool,
+	// so its own after-read could otherwise observe — and claim — a concurrent
+	// dispatch's write to this path (yaah-1615).
+	publishPathSnapshot(ctx, ws, params.FilePath)
 	// Receipt line, with no digest on purpose. Appends cannot lose each
 	// other — the substrate's append primitive is append-atomic and the
 	// per-path lock above orders this call against in-process rewrites — so
