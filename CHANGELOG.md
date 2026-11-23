@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.204.2](https://github.com/goatherdai/yaah/compare/v0.204.1...v0.204.2) (2026-11-23)
+
+
+### Code Refactoring
+
+* **workflow:** extract trace, join, and ready sub-ledgers from Run ([#370](https://github.com/goatherdai/yaah/issues/370)) ([87c2673](https://github.com/goatherdai/yaah/commit/87c2673351e2d9cc312d82a96029d77f0b7e9728))
+
 ## [0.204.1](https://github.com/goatherdai/yaah/compare/v0.204.0...v0.204.1) (2026-11-23)
 
 
