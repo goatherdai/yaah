@@ -39,12 +39,12 @@ func TestRunSharedLaneReportsGuardDenials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	want := `supervisor guard denied bash (git status) by role_shell_allowlist: command "git status" is not in this role's allow_commands allowlist`
+	want := `supervisor guard denied bash ("git status") by role_shell_allowlist: command "git status" is not in this role's allow_commands allowlist`
 	if len(res.Warnings) != 1 || res.Warnings[0] != want {
 		t.Fatalf("warnings = %q, want the one guard refusal", res.Warnings)
 	}
 	env := res.Envelope()
-	if len(env.Warnings) != 1 || !strings.Contains(env.Warnings[0], "supervisor guard denied bash (git status)") {
+	if len(env.Warnings) != 1 || !strings.Contains(env.Warnings[0], "supervisor guard denied bash (\"git status\")") {
 		t.Errorf("envelope warnings = %q, want the guard refusal", env.Warnings)
 	}
 	if !strings.Contains(env.Warning, "supervisor guard denied bash") {
@@ -74,7 +74,7 @@ func TestRetainedReportLaneCarriesGuardDenials(t *testing.T) {
 	if len(res.Warnings) != 1 {
 		t.Fatalf("warnings = %q, want the one guard refusal", res.Warnings)
 	}
-	if !strings.Contains(res.Warnings[0], "supervisor guard denied bash (git status)") {
+	if !strings.Contains(res.Warnings[0], "supervisor guard denied bash (\"git status\")") {
 		t.Errorf("warning = %q, want it to name the tool and command", res.Warnings[0])
 	}
 }
@@ -102,7 +102,7 @@ func TestRetainedProposalLaneCarriesGuardDenials(t *testing.T) {
 	}
 	found := false
 	for _, w := range res.Proposal.Warnings {
-		if strings.Contains(w, "supervisor guard denied bash (git status)") {
+		if strings.Contains(w, "supervisor guard denied bash (\"git status\")") {
 			found = true
 		}
 	}
@@ -134,5 +134,58 @@ func TestDenialWarnings_Rendering(t *testing.T) {
 	}
 	if !strings.Contains(got[denialWarningBudget], "refused 2 more call(s)") {
 		t.Errorf("last warning = %q, want the remainder count", got[denialWarningBudget])
+	}
+}
+
+// TestDenialWarnings_QuotesAndFoldsControlCharacters proves a model-supplied
+// command cannot forge extra warning lines with embedded newlines (review).
+func TestDenialWarnings_QuotesAndFoldsControlCharacters(t *testing.T) {
+	got := denialWarning(jobs.SubAgentDenial{
+		Tool:    "bash",
+		Command: "echo ok\nwarning: trusted\nrm -rf .",
+		Reason:  "refused\nfor safety",
+		Rule:    "role_shell_allowlist",
+	})
+	if strings.ContainsAny(got, "\n\r") {
+		t.Errorf("warning has a control character: %q", got)
+	}
+	if !strings.Contains(got, `bash ("echo ok warning: trusted rm -rf .")`) {
+		t.Errorf("warning = %q, want the command quoted and folded to one line", got)
+	}
+	if !strings.Contains(got, "refused for safety") {
+		t.Errorf("warning = %q, want the reason folded to one line", got)
+	}
+}
+
+// TestDenialWarnings_OverlongReasonStaysOneLine proves truncation does not
+// reintroduce a newline through substrate.TruncationMarker (Qodo review).
+func TestDenialWarnings_OverlongReasonStaysOneLine(t *testing.T) {
+	got := denialWarning(jobs.SubAgentDenial{
+		Tool:    "bash",
+		Command: "echo ok",
+		Reason:  strings.Repeat("long reason ", 40),
+	})
+	if strings.ContainsAny(got, "\n\r") {
+		t.Errorf("warning has a control character: %q", got)
+	}
+	if !strings.Contains(got, "...[clipped]") {
+		t.Errorf("warning = %q, want the single-line clip marker", got)
+	}
+}
+
+// TestRetainedRunResult_StringCarriesWarnings proves the background job path,
+// which persists a plain report rather than an envelope, still records the
+// refusals so an orchestrator reading the finished job sees them.
+func TestRetainedRunResult_StringCarriesWarnings(t *testing.T) {
+	res := retainedRunResult{
+		Report:   "done",
+		Warnings: []string{`supervisor guard denied bash ("git status")`},
+	}
+	got := res.String()
+	if !strings.HasPrefix(got, "done\nwarning: ") {
+		t.Errorf("String() = %q, want the report followed by the warning", got)
+	}
+	if !strings.Contains(got, `supervisor guard denied bash ("git status")`) {
+		t.Errorf("String() = %q, want the refusal in the persisted report", got)
 	}
 }

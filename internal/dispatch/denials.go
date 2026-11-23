@@ -8,6 +8,8 @@ package dispatch
 
 import (
 	"fmt"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/goatherdai/yaah/internal/jobs"
 )
@@ -16,6 +18,10 @@ import (
 // keeps retrying a refused command is bounded here rather than allowed to fill
 // the envelope's warning list with one line per turn.
 const denialWarningBudget = 5
+
+// denialFieldClip bounds one command or reason field. A single denial must not
+// be able to dominate the envelope with a huge payload the model supplied.
+const denialFieldClip = 240
 
 // denialWarnings renders one run's guard refusals as envelope warnings, one per
 // distinct refusal and a trailing count when there are more than the budget.
@@ -44,10 +50,34 @@ func denialWarning(d jobs.SubAgentDenial) string {
 		target = "a tool call"
 	}
 	if d.Command != "" {
-		target = fmt.Sprintf("%s (%s)", target, d.Command)
+		// A command is model-supplied text: keep it on one line and quoted so
+		// embedded newlines cannot forge extra warning entries.
+		target = fmt.Sprintf("%s (%q)", target, oneLine(d.Command, denialFieldClip))
 	}
+	reason := oneLine(d.Reason, denialFieldClip)
 	if d.Rule != "" {
-		return fmt.Sprintf("supervisor guard denied %s by %s: %s", target, d.Rule, d.Reason)
+		return fmt.Sprintf("supervisor guard denied %s by %s: %s", target, d.Rule, reason)
 	}
-	return fmt.Sprintf("supervisor guard denied %s: %s", target, d.Reason)
+	return fmt.Sprintf("supervisor guard denied %s: %s", target, reason)
+}
+
+// oneLine collapses control characters to spaces and bounds the field length.
+// It must NOT use substrate.TruncateAt: that helper's marker starts with a
+// newline, which would reintroduce the very line break this function folds.
+func oneLine(s string, max int) string {
+	s = strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t':
+			return ' '
+		}
+		return r
+	}, s)
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "...[clipped]"
 }
