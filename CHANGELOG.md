@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.206.6](https://github.com/goatherdai/yaah/compare/v0.206.5...v0.206.6) (2026-11-23)
+
+
+### Bug Fixes
+
+* **tools:** close the RecordingTool evidence window (yaah-1615) ([#387](https://github.com/goatherdai/yaah/issues/387)) ([9fe1f22](https://github.com/goatherdai/yaah/commit/9fe1f22e82ac2388ccc903d1d7e44b8f9864f285))
+
 ## [0.206.5](https://github.com/goatherdai/yaah/compare/v0.206.4...v0.206.5) (2026-11-23)
 
 
