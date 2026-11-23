@@ -219,6 +219,35 @@ func TestChatRequestToAnthropic_ToolCalls(t *testing.T) {
 	}
 }
 
+func TestChatRequestToAnthropic_DropsDuplicateToolResult(t *testing.T) {
+	req := types.ChatRequest{
+		Model:     "claude-3.5-sonnet",
+		MaxTokens: 1000,
+		Messages: []types.Message{
+			{Role: "user", Content: "go"},
+			{Role: "assistant", Content: "", ToolCalls: []types.ToolCall{
+				{ID: "call_1", Type: "function", Function: types.ToolCallFn{Name: "bash", Arguments: `{}`}},
+			}},
+			{Role: "tool", ToolCallID: "call_1", Content: "first"},
+			{Role: "tool", ToolCallID: "call_1", Content: "second"}, // re-execution artifact
+		},
+	}
+
+	result := lowerAnthropicRequest(req, "auto")
+
+	count := 0
+	for _, m := range result.Messages {
+		for _, block := range m.Content {
+			if blockType(block) == "tool_result" && blockToolResult(block).ToolUseID == "call_1" {
+				count++
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("tool_result blocks for call_1 = %d; want 1 (duplicate must be dropped)", count)
+	}
+}
+
 func TestChatRequestToAnthropic_Tools(t *testing.T) {
 	params := json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`)
 	req := types.ChatRequest{
