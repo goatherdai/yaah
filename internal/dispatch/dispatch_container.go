@@ -302,9 +302,13 @@ func runDispatchContainer(
 		defer cancel()
 	}
 	runCtx = substrate.WithDispatchWorkspace(runCtx, sandbox.Workspace())
+	// The container is another world for the same child; its guard refusals
+	// must reach the envelope just as the worktree lane's do (yaah-938).
+	var denials []jobs.SubAgentDenial
+	runCtx = jobs.WithSubAgentDenials(runCtx, &denials)
 
 	report, err := rt.Runner(runCtx, prompt, sp)
-	return retainedRunResult{Report: report}, err
+	return retainedRunResult{Report: report, Warnings: denialWarnings(denials)}, err
 }
 
 // runDispatchContainerProposal runs one proposal dispatch inside its own
@@ -379,7 +383,10 @@ func runDispatchContainerProposal(
 		runCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
 	runCtx = substrate.WithDispatchWorkspace(runCtx, sandbox.Workspace())
+	var denials []jobs.SubAgentDenial
+	runCtx = jobs.WithSubAgentDenials(runCtx, &denials)
 	result, bodyErr := rt.Runner(runCtx, prompt, sp)
+	env.Warnings = append(env.Warnings, denialWarnings(denials)...)
 	runErrState := runCtx.Err()
 	parentErr := ctx.Err()
 	if cancel != nil {

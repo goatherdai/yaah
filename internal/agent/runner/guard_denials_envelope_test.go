@@ -56,7 +56,7 @@ func TestGuardDenialsReachTheDispatchEnvelope(t *testing.T) {
 		}, "clean the tree", "analyst")
 
 		joined := strings.Join(env.Warnings, "\n")
-		want := "supervisor guard denied bash (rm -rf src): " + reason
+		want := "supervisor guard denied bash (\"rm -rf src\"): " + reason
 		if !strings.Contains(joined, want) {
 			t.Fatalf("envelope warnings = %q, want %q", env.Warnings, want)
 		}
@@ -81,7 +81,7 @@ func TestGuardDenialsReachTheDispatchEnvelope(t *testing.T) {
 		}, "look at the tree", "developer")
 
 		joined := strings.Join(env.Warnings, "\n")
-		if !strings.Contains(joined, "supervisor guard denied bash (git status) by role_shell_allowlist") {
+		if !strings.Contains(joined, "supervisor guard denied bash (\"git status\") by role_shell_allowlist") {
 			t.Fatalf("envelope warnings = %q, want the allowlist refusal naming its rule", env.Warnings)
 		}
 		if !strings.Contains(joined, "allow_commands allowlist") {

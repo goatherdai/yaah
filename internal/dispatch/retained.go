@@ -660,11 +660,16 @@ func sessionContainerFallback(
 	// it already exists: the child starts here, so the stuck-child deadline
 	// may start counting (yaah-95ri.2).
 	NotifySubAgentReady(runCtx)
+	// The fallback still runs the same guarded child; its refusals must reach
+	// the envelope like any other lane's (yaah-938).
+	var denials []jobs.SubAgentDenial
+	runCtx = jobs.WithSubAgentDenials(runCtx, &denials)
 	result, err := rt.Runner(runCtx, prompt, subParams)
+	warnings := denialWarnings(denials)
 	if err != nil {
-		return fallback(retainedRunResult{}), err
+		return fallback(retainedRunResult{Warnings: warnings}), err
 	}
-	return fallback(retainedRunResult{Report: retainedNote(result, "dispatch world degraded: "+reason)}), nil
+	return fallback(retainedRunResult{Report: retainedNote(result, "dispatch world degraded: "+reason), Warnings: warnings}), nil
 }
 
 // retainedRunResult is the typed result of one retained dispatch. Exactly one
@@ -695,11 +700,30 @@ type retainedRunResult struct {
 
 // String renders the result in the model-facing shape for callers that still
 // need a single string (the background job contract and the legacy wrapper).
+// A background dispatch has no envelope to carry warnings, so they are folded
+// into the persisted report here — otherwise guard refusals are lost across
+// the job boundary (yaah-938 review).
 func (r retainedRunResult) String() string {
 	if r.Proposal != nil {
 		return marshalProposalEnvelope(*r.Proposal)
 	}
-	return r.Report
+	return appendResultWarnings(r.Report, r.Warnings)
+}
+
+// appendResultWarnings appends caveats to a plain report for the string-only
+// callers. It mirrors the envelope's warnings channel without changing the
+// report body when there is nothing to say.
+func appendResultWarnings(report string, warnings []string) string {
+	if len(warnings) == 0 {
+		return report
+	}
+	var b strings.Builder
+	b.WriteString(report)
+	for _, w := range warnings {
+		b.WriteString("\nwarning: ")
+		b.WriteString(w)
+	}
+	return b.String()
 }
 
 // startRetainedRun dispatches one sub-agent into an isolated worktree and seals
