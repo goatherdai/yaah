@@ -61,9 +61,25 @@ func (t *CopyTool) Schema() json.RawMessage {
 // IsDangerous is true for every call: a copy writes a file at the destination.
 func (t *CopyTool) IsDangerous(string) bool { return true }
 
+// selfGuardsPath marks copy as taking the per-path lock for both ends inside
+// its own Execute (lockConflictPathSet, fileguard.go), so the RecordingTool
+// wrapper does not hold the same non-reentrant lock across it. The marker is
+// what keeps the lock on EVERY lane: the orchestrator calls this tool directly,
+// with no recording wrapper to take it.
+func (*CopyTool) selfGuardsPath() {}
+
 func (t *CopyTool) Execute(ctx context.Context, args string) (string, error) {
 	req, err := prepareTransfer(ctx, "copy", t.Schema(), workspaceOf(t.WS, t.PV), args)
 	if err != nil {
+		return "", err
+	}
+	// Both ends in one sorted acquisition (see lockConflictPathSet) so a copy and
+	// a move of the same pair cannot deadlock. The source is included because a
+	// concurrent move of it must not race this read, and the destination because
+	// the no-clobber check below is check-then-act.
+	unlock := lockConflictPathSet(req.Path, req.To)
+	defer unlock()
+	if err := req.validate(ctx, "copy"); err != nil {
 		return "", err
 	}
 	if err := req.ws.Copy(ctx, req.Path, req.To); err != nil {

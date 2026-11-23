@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -454,5 +455,111 @@ func TestConflictWorkspaceRel_ResolvesThroughAnAliasedRoot(t *testing.T) {
 	}
 	if got, want := conflictWorkspaceRel(ws, target), "internal/x.go"; got != want {
 		t.Errorf("conflictWorkspaceRel for a removed file = %q, want %q", got, want)
+	}
+}
+
+// TestRecordingTool_SelfGuardingTransferDoesNotDoubleLock pins the wrapper
+// contract for the two-path tools. MoveTool and CopyTool take the {src,dst} lock
+// inside their own Execute (so an orchestrator call is guarded with no wrapper at
+// all), and the recording wrapper must therefore NOT take it again: the lock is
+// not reentrant per goroutine, so a second acquisition would park the wrapper on
+// the wrapped tool's own acquisition forever. Recording semantics are unchanged —
+// a move records both ends, a copy only the destination.
+func TestRecordingTool_SelfGuardingTransferDoesNotDoubleLock(t *testing.T) {
+	cases := []struct {
+		name string
+		tool Tool
+		args string
+		want []string
+	}{
+		{"move records both ends", &MoveTool{}, `{"path":"src.txt","to":"dst.txt"}`, []string{"src.txt", "dst.txt"}},
+		{"copy records the destination only", &CopyTool{}, `{"path":"src.txt","to":"dst.txt"}`, []string{"dst.txt"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tracker := &ConflictTracker{}
+			pv := NewPathValidator(dir, false, nil)
+			pv.WorkDir = pv.WorkspaceRoot
+			writeFile(t, filepath.Join(pv.WorkspaceRoot, "src.txt"), []byte("payload"))
+			rt := NewRecordingTool(tc.tool, tracker)
+			rt.SetPathValidator(pv)
+			rt.SetWorkspace(newLocalWorkspace(pv))
+
+			done := make(chan error, 1)
+			go func() {
+				_, err := rt.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared), tc.args)
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("Execute: %v", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("RecordingTool.Execute did not return: the wrapper held the per-path lock across a self-guarding transfer and deadlocked")
+			}
+
+			tracker.mu.Lock()
+			var got []string
+			for _, rec := range tracker.records {
+				got = append(got, rec.FilePath)
+			}
+			tracker.mu.Unlock()
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("recorded paths = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRecordingCopySerializesAnOrchestratorLaneCopy pins the cross-lane case the
+// missing lock was about: while a sub-agent copy (the RecordingTool-wrapped lane)
+// is inside the transfer primitive, an ORCHESTRATOR copy of the same source must
+// not run to completion — the two share one per-path lock, and both finish once
+// it is released.
+func TestRecordingCopySerializesAnOrchestratorLaneCopy(t *testing.T) {
+	dir := t.TempDir()
+	pv := NewPathValidator(dir, false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	src := filepath.Join(pv.WorkspaceRoot, "a.txt")
+	subDst := filepath.Join(pv.WorkspaceRoot, "sub.txt")
+	orchDst := filepath.Join(pv.WorkspaceRoot, "orch.txt")
+	writeFile(t, src, []byte("payload"))
+
+	probe := newBlockingTransferWorkspace(newLocalWorkspace(pv))
+	sub := NewRecordingTool(&CopyTool{}, &ConflictTracker{})
+	sub.SetPathValidator(pv)
+	sub.SetWorkspace(probe)
+	subArgs := transferArgs(t, map[string]any{"path": src, "to": subDst})
+	orchArgs := transferArgs(t, map[string]any{"path": src, "to": orchDst})
+
+	subDone := make(chan error, 1)
+	go func() {
+		_, err := sub.Execute(WithConflictDispatch(context.Background(), "worker", ConflictLaneShared), subArgs)
+		subDone <- err
+	}()
+	defer probe.unblock()
+	waitParked(t, probe)
+
+	orch := &CopyTool{PV: pv, WS: newLocalWorkspace(pv)}
+	orchDone := runTransferAsync(orch, orchArgs)
+	select {
+	case err := <-orchDone:
+		t.Fatalf("the orchestrator copy completed inside the sub-agent's lock window (err = %v): the two lanes do not share the guard", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	probe.unblock()
+	if err := <-subDone; err != nil {
+		t.Fatalf("sub-agent copy: %v", err)
+	}
+	if err := <-orchDone; err != nil {
+		t.Fatalf("orchestrator copy: %v", err)
+	}
+	for _, p := range []string{subDst, orchDst} {
+		if got, err := os.ReadFile(p); err != nil || string(got) != "payload" {
+			t.Errorf("%s content = %q, err = %v; want payload", p, got, err)
+		}
 	}
 }
