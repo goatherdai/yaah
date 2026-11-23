@@ -30,6 +30,90 @@
 
 yaah is structured as a single Go binary. The entry point is `main.go`, which delegates to `cmd/yaah.Execute()` (cobra). The CLI layer (`cmd/yaah/`) wires providers, tools, memory, MCP clients, and creates an `agent.Loop` for each conversation turn. `internal/agent/` contains the loop, middleware pipeline, tool dispatch, streaming, and context management.
 
+### System-level view (retained dispatch)
+
+The sketch above is the in-process loop. This is the same system at deployment
+altitude: the orchestrator stays unconfined on the host, sub-agent runs are
+retained in isolated worlds, and nothing reaches the parent tree before
+settlement.
+
+```mermaid
+flowchart TD
+  USER(["👤 Human / client<br/>CLI · TUI · web · ACP"])
+  ORCH["<b>Orchestrator — host, unconfined</b><br/>provider-driven async streaming loop<br/>+ host-side deterministic workflow scheduler<br/>(not a retained run — D8)"]
+  USER -->|"prompt / session"| ORCH
+
+  subgraph Control["Control & observation plane"]
+    SUP["Supervision (deterministic rules)<br/>advisory [STEER] · destructive guard<br/>per-role allow_commands<br/>supervisor tool: inject / halt / list_scopes"]
+    CTRL["Typed control<br/>todos · questions · approvals<br/>session/request_permission"]
+    BROKER["Event broker<br/>pubsub.Broker[Event]<br/>→ TUI / REPL / web / ACP"]
+  end
+  ORCH --- SUP
+  ORCH --- CTRL
+  ORCH --- BROKER
+
+  subgraph World["Dispatch worlds — retained lane is the default"]
+    DEL["delegate / workflow fanout"]
+    WT["World: linked git worktree"]
+    CT["World: croft container<br/>seccomp · NoNewPrivileges"]
+    JAIL["Syscall jail<br/>Landlock / Seatbelt / WinACL"]
+    EGRESS["Egress<br/>allow_all / deny_all / broker"]
+    DEL --> WT
+    DEL --> CT
+    WT --> JAIL
+    CT --> JAIL
+    JAIL --> EGRESS
+  end
+  ORCH -->|"delegate / subagent"| DEL
+
+  subgraph Run["Retained sub-agent run"]
+    RUN1["Sub-agent execution<br/>scratch → .yaah-scratch"]
+    CKPT["Per-turn checkpoint/restore<br/>off by default · single-use · max 3<br/>(not a settlement mechanism)"]
+    SEAL["Seal() → RetainedOutput<br/>snapshot · diff · metadata · lineage"]
+    RUN1 -.-> CKPT
+    RUN1 --> SEAL
+  end
+  WT --> RUN1
+  CT --> RUN1
+
+  subgraph Settlement["Proposal envelope + settlement — consume-once"]
+    PROP["{status: proposal, diff, files,<br/>next: select · apply · release ·<br/>discard · continue · fork}"]
+    DECIDE["Orchestrator or workflow gate decides<br/>(LLM judgment — narrows, does not remove)"]
+    HOST["Host working tree<br/>untouched until apply"]
+    DROP["Residue → janitor reclaim"]
+    PROP --> DECIDE
+    DECIDE -->|"select / apply / release"| HOST
+    DECIDE -->|"discard"| DROP
+    DECIDE -->|"continue / fork (worktree lane only)"| DEL
+  end
+  SEAL --> PROP
+  HOST -.-> ORCH
+
+  subgraph Record["Trace & evidence — goatherd-kernel abi.v0"]
+    TRK["Trace ledger: witness chain · frontiers · cuts<br/>SQLite / PostgreSQL<br/>(exact Shepherd ABI parity)"]
+    OBS["Observability<br/>goatherd_trace · OTel"]
+    JAN["Janitor<br/>trace-derived residue reclamation"]
+    TRK --- OBS
+    TRK --- JAN
+  end
+  DEL -.->|"records"| TRK
+  SEAL -.->|"records"| TRK
+  DROP -.-> TRK
+
+  classDef host fill:#fff4e6,stroke:#d97706,color:#92400e
+  classDef control fill:#e6f4f1,stroke:#187077,color:#187077
+  classDef world fill:#eef2ff,stroke:#4f46e5,color:#3730a3
+  classDef run fill:#f3e8ff,stroke:#8b5cf6,color:#6d28d9
+  classDef settle fill:#ecfdf5,stroke:#16a34a,color:#166534
+  classDef record fill:#f3f4f6,stroke:#6b7280,color:#374151
+  class USER,ORCH,HOST host
+  class SUP,CTRL,BROKER control
+  class DEL,WT,CT,JAIL,EGRESS world
+  class RUN1,CKPT,SEAL run
+  class PROP,DECIDE,DROP settle
+  class TRK,OBS,JAN record
+```
+
 ---
 
 ## Agent loop
@@ -555,6 +639,62 @@ A retained dispatch runs the sub-agent in an **isolated dispatch world** — a g
 
 ---
 
+## Workflow execution
+
+Files: `internal/workflow/spec`, `internal/workflow/ir`,
+`internal/workflow/validate`, `internal/workflow/exec`,
+`internal/workflow/host` (plus `discover`, `replay`, `store`, `trace`)
+
+A workflow is one `yaah.workflow/v1` document taken through four stages, each
+its own package with its own authority:
+
+1. **Decode and resolve.** `spec` decodes and canonicalizes the document (YAML
+   or JSON) and hashes it, so a run is identified by the bytes an author
+   wrote. `ir` resolves that document into the immutable graph the executor
+   walks: template paths expanded, ids scoped, node kinds fixed, the body of
+   every container an ordinary sub-scope.
+2. **Validate before anything runs.** `validate` judges the graph, not a run:
+   WF001–WF037 across structure, values and binds, scope, reachability and
+   cycles, authority, cost, and proposal linearity, plus the `Explain`
+   summary (the authority union and the worst-case dispatch count) the CLI
+   prints.
+3. **Schedule.** `exec` is the deterministic core and nothing else: node
+   lifecycle state, the ready queue, the concurrency cap, per-node attempts,
+   join-all readiness, the fan-out/loop/branch/aggregate/select/gate rules,
+   and the failure, skip and cancellation policy. `Apply` is the single state
+   mutator — driver events go in, derived events (`node_ready`,
+   `node_succeeded`, `retry_scheduled`) only ever come out — so there is no
+   second in-memory graph to disagree with it, and no lock: one driver
+   goroutine owns a `Run`. The package must never import `internal/tools`;
+   every side effect leaves through the one narrow `Runtime` interface.
+4. **Cross the door.** `host` is the door `exec` documents but cannot
+   implement. It turns one `exec.Dispatch` into one `internal/dispatch.Run` on
+   the report lane (role, prompt rendered from the compiled template segments,
+   per-node model/turn/timeout overrides, typed output), mirrors the
+   completion envelope back into the scheduler's `Completion` (pinned by
+   `envelope_parity_test.go`), and performs the effects a deterministic core
+   may not — writing an `emit` node's declared artifact path. A node the lane
+   cannot honor is declined at the door with an error rather than run with a
+   silently weaker meaning.
+
+**Durability, resume, and replay.** With `--state`, the checkpoint is written
+*inside* `Apply` — after folding the event, before returning — so an attempt, a
+sealed proposal handle, and a settlement's intent each exist in the record
+before the run can act past them. `resume` installs the reducer from that
+checkpoint and dispatches only what the record does not show; a finished run is
+final. `internal/workflow/replay` is an `exec.Runtime` built from a completed
+run's checkpoint: it answers each dispatch from the record with zero model
+calls, and refuses a missing record rather than filling the hole with one.
+
+**Live progress.** `exec.Config.Progress` fires after every committed event
+with a projection of it, so derived terminal states reach a view without
+widening the sealed event set; the CLI maps those onto control-plane progress
+and the TUI renders them as live node state. In session the whole surface is
+two always-on tools: `workflow_list` names the discoverable documents and
+`workflow_run` executes one behind the ordinary approval path.
+
+---
+
 ## Tool execution
 
 ### Registry
@@ -580,6 +720,12 @@ Additional tools are registered by the CLI layer after `NewRegistry()`:
 - `memory_search`, `memory_add`, `memory_delete`, `memory_update`, `memory_promote`, `memory_search_sessions`
 - `skill`, `plan`, `todowrite`
 - `delegate`, `list_subagents`, `subagent_jobs`
+- `workflow_run`, `workflow_list` — the in-session workflow surface: list the
+  discovered specs, then execute one through the same approval path as any
+  other tool call (the search order is `internal/workflow/discover`, shared
+  with the CLI, the TUI and ACP `workflow/list`)
+- `toolbelt` — the lazy toolbelt's mount loader (see
+  [lazy-toolbelt-design.md](./lazy-toolbelt-design.md))
 - `wait_for`, `watch` — one predicate engine (`internal/wake`) with two faces:
   `wait_for` blocks inside the tool call (zero model turns); `watch` persists
   an armed predicate and delivers a batched wake follow-up when it fires, so

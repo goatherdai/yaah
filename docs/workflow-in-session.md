@@ -23,8 +23,11 @@ the conversation stream.
   in-session definition storage) — that is Scope C.
 - Live per-node progress, cancel, and persistence into the session store as
   first-class objects — that is Scope B.
-- REPL, web, and ACP surfaces. The command and control-message plumbing is
-  shared, but only the TUI surface is wired in Scope A.
+- REPL and web surfaces. The command and control-message plumbing is shared,
+  but only the TUI surface was wired in Scope A. **ACP landed later**: the
+  selector shipped in PR #357 as `workflow/list` (read-only discovery for a
+  client's picker), and the server advertises no `workflow/run` method —
+  execution goes through the permissioned `workflow_run` tool.
 
 ---
 
@@ -34,9 +37,9 @@ All references are against the current tree (`github.com/goatherdai/yaah`).
 
 | Concern | Location | What it gives us |
 |---|---|---|
-| Run path | `cmd/yaah/workflow_run.go:116` `runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) error` | validate → `host.Execute` → report. Lives in the same package as the TUI driver, so it is a direct call. |
-| Runner seam | `cmd/yaah/workflow_run.go:48` `var workflowRunRunner = newStandaloneWorkflowRunner` | Tests already inject a deterministic runner here — that is how the golden end-to-end runs with no model calls, and it is how Scope A is tested. |
-| Nil-context safety | `cmd/yaah/workflow_run.go:164` | `ctx := cmd.Context(); if ctx == nil { ctx = context.Background() }` — a synthetic command without a context still runs. |
+| Run path | `cmd/yaah/workflow_run.go`, `func runWorkflowRun(cmd *cobra.Command, path string, opts workflowRunOptions) error` | validate → `host.Execute` → report. Lives in the same package as the TUI driver, so it is a direct call. |
+| Runner seam | `cmd/yaah/workflow_run.go`, `var workflowRunRunner = newStandaloneWorkflowRunner` | Tests already inject a deterministic runner here — that is how the golden end-to-end runs with no model calls, and it is how Scope A is tested. |
+| Nil-context safety | `cmd/yaah/workflow_run.go`, `runWorkflowRun` | `ctx := cmd.Context(); if ctx == nil { ctx = context.Background() }` — a synthetic command without a context still runs. |
 | TUI command table | `internal/tui/components/command/command.go` (`Cmd` enum, `commandNames`, `takesArg`, `Split`) | Add one enum value, one name entry, and one arg-taking flag. |
 | TUI dispatch | `internal/tui/commands.go` `HandleCommand(cmd command.Cmd, arg string)` | The existing `if t.OnX == nil { t.SetEphemeral(...) }` pattern to copy. |
 | Callback surface | `internal/tui/app.go` `On*` fields | Add `OnWorkflowRun func(string)`. |
@@ -87,7 +90,14 @@ to idle. When `!m.OK`, tag the header with `Theme.Error`.
 - Add an entry to the command palette (`DefaultEntries`) and tab completion
   (`complete.go`) so the command is discoverable.
 
-### 3.4 `internal/tui/commands.go` — dispatch case
+### 3.4 `internal/tui/commands.go` — dispatch case (original Scope A sketch)
+
+> **Superseded in shape, not in location.** The sketch below is Scope A as
+> written; the shipped dispatch is `HandleCommand` in
+> `internal/tui/commands.go`. It grew a `list` verb and a picker: with no spec,
+> `:workflow run` calls `OnWorkflowPicker`; `:workflow list` lists the
+> discovered specs; bare `:workflow` prints usage. Read that file, not this
+> snippet, for current behavior.
 
 ```go
 case command.CmdWorkflow:

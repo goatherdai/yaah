@@ -1,5 +1,10 @@
 # Workflow DSL Architecture Audit — `internal/workflow`
 
+> **Snapshot, not a live report.** The findings below are a dated snapshot taken
+> at `b63735c9`. Two have since been addressed: **W4** (`store` and `trace` now
+> carry their own test files) and **W7**'s `validate/proposal.go` (split into
+> `proposal.go`, `proposal_flow.go`, `proposal_query.go`).
+
 **Date:** 2026-11-18
 **Commit audited:** `b63735c9`
 **Method:** direct inspection of every package's public surface, the core

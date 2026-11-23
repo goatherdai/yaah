@@ -14,9 +14,12 @@ sub-agent team, see [sub-agents.md](./sub-agents.md); for agent personas, see
   collapsible tool cards (`ctrl+t`)
 - Sub-agent dispatch cards with role, duration, and status
 - A command palette (`ctrl+p`) with `:help`, `:clear`, `:compact`, `:stop`,
-  `:steer`, `:followup`, `:model`, `:agent`, `:mode`, `:search`, `:verbose`,
-  `:banner`, `:top`, `:bottom`, and `:quit`. The `:` typeahead and `:help`
-  show the same complete set (all derived from `command.DefaultEntries()`).
+  `:steer`, `:followup`, `:workflow`, `:model`, `:agent`, `:mode`, `:search`,
+  `:verbose`, `:banner`, `:top`, `:bottom`, and `:quit`. `:workflow run
+  <spec>` executes a workflow document (`:workflow run` with no spec opens the
+  discovered-spec picker) and `:workflow list` lists what is discoverable. The
+  `:` typeahead and `:help` show the same complete set (all derived from
+  `command.DefaultEntries()`).
 - A paned layout: conversation, info pane (session, context, MCP, config),
   todo sidebar, and background sub-agent jobs
 - Mouse and keyboard navigation, input history, and multi-line input
@@ -37,6 +40,7 @@ Running `yaah` with no arguments starts a readline REPL:
 | `/login`, `/logout` | Manage provider OAuth login |
 | `/agents` | List agent personas |
 | `/agent [name]` | Switch this session's persona (bare `/agent` reports the current persona) |
+| `/mode [read-only\|full]` | Switch this session's mode axis (`plan`/`build` are accepted as the same words); bare `/mode` reports the current mode. Takes effect on the next run, and the choice is not persisted |
 
 History persists at `~/.yaah/history` (or `$YAAH_HOME/history` when `YAAH_HOME` is set).
 
@@ -255,8 +259,8 @@ Built-in tools include:
 | Web | `http`, `webfetch` |
 | Utility | `calculate`, `question` |
 | Memory | `memory_search`, `memory_add`, `memory_update`, `memory_delete`, `memory_promote`, `memory_search_sessions` |
-| Orchestration | `delegate`, `list_subagents`, `subagent_jobs`, `wait_for`, `watch`, `role`, `proposal`, `supervisor` |
-| Session | `plan`, `todowrite`, `skill`, `background_process` |
+| Orchestration | `delegate`, `list_subagents`, `subagent_jobs`, `wait_for`, `watch`, `role`, `proposal`, `supervisor`, `workflow_run`, `workflow_list` |
+| Session | `plan`, `todowrite`, `skill`, `background_process`, `toolbelt` (the lazy toolbelt's mount loader) |
 | Isolated sessions | `apply_out` (only when a container-backed workspace is active) |
 
 Host-only tools (`role`, `background_process`, `go_refactor`) are omitted from
@@ -405,8 +409,13 @@ documents — YAML or JSON specs that name the dispatches, their prompts and
 roles, the graph between them, the budgets, and the settlement verbs. The
 spec is the artifact: `yaah workflow validate` checks it against five
 validator families (WF001–WF037) before anything runs, `explain` diagrams
-it and prices its worst case, and `run` executes it deterministically with
-every dispatch, proposal, and settlement recorded. Runs are durable
+it and prices its worst case, `list` names the documents discoverable from
+the search dirs (`--workflow-dir`, then `./workflows` up to the git root,
+then `~/.yaah/workflows`), and `run` executes one deterministically with
+every dispatch, proposal, and settlement recorded. In a session the same
+surface is two tools: `workflow_list` discovers the specs and `workflow_run`
+executes one behind the ordinary approval path, so an orchestrator can
+list-then-run without shelling out to the CLI. Runs are durable
 (`--state`), resumable (`yaah workflow resume <run_id>`), and replayable
 (`run --replay <run_id>`), with crash/resume idempotency proven by a seeded
 property suite. The full guide — node kinds, templates, validation codes,

@@ -40,7 +40,7 @@ sub-agents, and prompts all resolve against it.
 
 | Method | Status | Notes |
 |---|---|---|
-| `initialize` | supported | advertises `agentCapabilities.loadSession: true` plus `sessionCapabilities` for `resume`, `list`, `close`, `delete`, and a static catalog of agent-typed `authMethods` (see [Authentication and credentials](#authentication-and-credentials)) |
+| `initialize` | supported | advertises `agentCapabilities.loadSession: true`, `sessionCapabilities` for `resume`, `list`, `close`, `delete`, `workflowCapabilities.list` when a workflow-listing callback is wired (see [Workflows](#workflows-yaah-extension)), and a static catalog of agent-typed `authMethods` (see [Authentication and credentials](#authentication-and-credentials)) |
 | `authenticate` | supported | validates the named auth method and answers `{}`; no credential check, no network call |
 | `logout` | supported | removes all stored OAuth provider tokens; advertised only when wired (`agentCapabilities.auth.logout`) |
 | `session/new` | supported | requires the client's absolute cwd; every call creates a distinct session; advertises `configOptions` (the agent, mode and approval selectors, plus model when a catalog is wired) |
@@ -56,6 +56,7 @@ sub-agents, and prompts all resolve against it.
 | `session/set_config_option` | supported | the three session axes — `configId: "agent"` (persona), `"mode"` (read-only/full), `"approval"` (`allow`/`ask`/`deny`) — and the model picker (`configId: "model"`); validates the value, applies it to subsequent turns, emits `config_option_update`, and echoes the recomputed `configOptions` set. A model pick persists with the session row, so a resume re-routes to it (parity W4); a persona switch supersedes the pick with the persona file's routing, after which a new pick can be made |
 | `session/update` | supported | variants below |
 | `session/request_permission` | supported | tool approvals delegated to the client; all four option kinds (`allow_once`/`allow_always`/`reject_once`/`reject_always`) are offered, and an always-decision is remembered for the rest of the session — an `allow_always` also persists project-scoped for later sessions, except for credential-shaped targets (see [Approvals and questions](#approvals-and-questions)) |
+| `workflow/list` | supported (yaah extension) | discovered workflow documents for a client's picker; advertised only when wired, and read-only by design — running one goes through the `workflow_run` tool (see [Workflows](#workflows-yaah-extension)) |
 
 `session/update` variants: `agent_message_chunk`, `agent_thought_chunk`,
 `tool_call`, `tool_call_update`, `plan`, `usage_update`,
@@ -102,6 +103,51 @@ digest back as a prompt would duplicate it.
 has no client notification channel and keeps the queued-follow-up behaviour
 only.
 
+## Workflows (yaah extension)
+
+`initialize` advertises `agentCapabilities.workflowCapabilities.list` **only
+when the server was wired with a workflow-listing callback** — the same
+wired-means-advertised rule as `sessionCapabilities.resume`/`list`, so a client
+never calls a method the server cannot execute. Without the callback the
+capability object is omitted entirely and `workflow/list` answers
+method-not-found.
+
+`workflow/list` takes optional `{cwd}` and returns the runnable
+`yaah.workflow/v1` documents for that workspace:
+
+```json
+{"jsonrpc":"2.0","id":7,"method":"workflow/list","params":{"cwd":"/home/me/project"}}
+```
+
+```json
+{"jsonrpc":"2.0","id":7,"result":{"workflows":[
+  {"name":"review-pr","path":"/home/me/project/workflows/review-pr.yaml"}
+]}}
+```
+
+- `cwd` is canonicalized exactly like a session cwd (absolute, symlinks
+  resolved); a relative or otherwise malformed path is `invalid params`, not
+  an internal error. Omitting it searches only the global tier
+  (`~/.yaah/workflows`), because the project tiers are rooted at the client's
+  workspace — a picker should send the session cwd.
+- `workflows` is never null: an empty page is `[]`.
+- Discovery is `internal/workflow/discover`, the same search order the CLI and
+  the model-facing tools use: caller-supplied `--workflow-dir` entries, then
+  the workspace `workflows/` directories up to the nearest git root, then
+  `~/.yaah/workflows`, deduplicated by base name (an earlier directory wins)
+  and sorted by name. `name` is the run handle; `path` is absolute.
+
+**Read-only by design.** ACP advertises no run method: executing a workflow
+goes through the permissioned `workflow_run` tool, so the approval gate, the
+session's mode axis, and the tool-call update stream all apply exactly as they
+do for any other tool call. `workflow/list` only names what is available;
+it never opens or executes a document.
+
+**Palette caveat.** `available_commands_update` carries skills only
+(`cmd/yaah/acp_cmd.go`), so a workflow spec never appears as a slash command.
+A client that wants a workflow picker reads `workflow/list` and then asks the
+agent to run the chosen name through `workflow_run`.
+
 ## Command palette
 
 After `session/new`, `session/load`, and `session/resume`, the agent sends an
@@ -112,6 +158,10 @@ ACP sends a selected command back as ordinary prompt text (`/name args`); the
 server translates a known skill command into an explicit `skill` tool load
 instruction before the model turn starts. Unknown slash text passes through
 unchanged.
+
+The catalog is **skills-only**: discovered workflow specs are never advertised
+as slash commands, so a workflow picker composes `workflow/list` with a prompt
+instead (see [Workflows](#workflows-yaah-extension)).
 
 ## Authentication
 

@@ -1,4 +1,4 @@
-# Shepherd parity: dispatch worlds and framework scope
+# Goatherd parity: dispatch worlds and framework scope
 
 Status: in-repo ledger. `yaah-ihfh` (Shepherd parity closure) is closed;
 the remaining useful Python-framework surface is owned by `yaah-hxk3`.
@@ -54,6 +54,114 @@ not claim it wholesale.
 The useful missing surface is scoped in `yaah-hxk3`; that epic owns the
 adopt/decline decisions so this table does not become a wish list. Scorecard
 maintenance and the decline register are themselves tracked as `yaah-hxk3.3`.
+
+## Meta-agent model: the paper vs. yaah
+
+Shepherd's Figure 1 is the conceptual ancestor of yaah's retained dispatch
+model, not its blueprint. The first diagram is the paper's model; the second is
+the architecture this repo actually implements.
+
+A full read of the paper against yaah — what actually drives the CooperBench
+result and which parity work missed it — is in
+[cooperbench-parity-audit.md](./cooperbench-parity-audit.md). It also maps the
+Figure 2 scenarios: runtime supervision (`yaah-1050.1`), counterfactual
+meta-optimization / CRO (`yaah-1050.2`), and why Tree-GRPO is out of scope.
+
+### Figure 1 — a meta-agent over a reversible execution trace
+
+```mermaid
+flowchart TD
+  subgraph Meta["Meta-agent execution trace"]
+    MA(["🐑 Meta-agent"]) --> MC(["Create"])
+    MC --> MO(["Observe"])
+    MO --> MN(["..."])
+    MN --> MI(["Intercept"])
+    MI --> MN2(["..."])
+  end
+  subgraph Agent["Agent execution trace"]
+    A(["🐑 Agent"]) --> L1(["LLM-call"])
+    L1 --> T(["tool-call"])
+    T --> E(["edit (buggy)"])
+    E -.-> L2(["LLM-call"])
+    L2 -.-> FAIL(["✕ fail"])
+    T -->|"Fork"| P(["edit (patched)"])
+    P --> L3(["LLM-call"])
+    L3 --> PASS(["✓ pass"])
+    E -->|"Revert"| T
+  end
+  MC -->|"Create"| A
+  MO -->|"Observe"| L1
+  MI -->|"Intercept"| E
+
+  classDef meta fill:#e6f4f1,stroke:#187077,color:#187077
+  classDef agent fill:#f3e8ff,stroke:#8b5cf6,color:#6d28d9
+  classDef bad fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray:4 3,color:#dc2626
+  classDef ok fill:#ecfdf5,stroke:#16a34a,color:#166534
+  class MA,MC,MO,MN,MI,MN2 meta
+  class A,L1,T,E,P,L3 agent
+  class L2,FAIL bad
+  class PASS ok
+```
+
+### yaah — the same five operations, mapped to retained dispatch
+
+```mermaid
+flowchart TD
+  subgraph Meta["Orchestrator = meta-agent (host, unconfined — D8)"]
+    MA(["🧠 Orchestrator"]) --> MC(["delegate / Create"])
+    MC --> MO(["Observe"])
+    MO --> MI(["Intercept"])
+    MI --> MM(["Modify"])
+    MM --> MN(["..."])
+  end
+  subgraph Agent["Sub-agent run — retained, isolated world"]
+    A(["Sub-agent<br/>role + prompt"]) --> L1(["LLM turns"])
+    L1 --> T(["tool calls"])
+    T --> E(["edit / propose"])
+    E -.-> L2(["LLM turns"])
+    L2 -.-> FAIL(["✕ discard"])
+    T -->|"Fork"| P(["edit (continued)"])
+    P --> L3(["LLM turns"])
+    L3 --> PASS(["✓ settled"])
+    E -->|"Revert"| T
+  end
+  MC -->|"Create: worktree / container"| A
+  MO -->|"Observe: events + trace"| L1
+  MI -->|"Intercept: [STEER] / halt"| E
+  MM -->|"Modify: re-seed / workflow"| P
+
+  classDef meta fill:#e6f4f1,stroke:#187077,color:#187077
+  classDef agent fill:#f3e8ff,stroke:#8b5cf6,color:#6d28d9
+  classDef bad fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray:4 3,color:#dc2626
+  classDef ok fill:#ecfdf5,stroke:#16a34a,color:#166534
+  class MA,MC,MO,MI,MM,MN meta
+  class A,L1,T,E,P,L3 agent
+  class L2,FAIL bad
+  class PASS ok
+```
+
+**Where the model diverges (source-verified).** The orchestrator is the meta
+agent, but the automatic supervisor is deterministic rules, not an LLM.
+`observe` has strong infrastructure (typed events, JSONL hooks, the
+append-only kernel trace, `EffectBus`, OTel) yet no replay cursor or
+subscribe-from-commit: views receive a best-effort event stream, not a
+branchable trace. `intercept` is the closest match — approval hooks,
+`control.Msg`, the blocking shell guard, and `supervisor inject` → `[STEER]`
+into a live loop, plus halt. `revert` is the weakest: no trace-level checkout
+exists; the only rewind is an off-by-default, single-use, max-3 per-turn
+checkpoint of workspace + conversation whose interface declares branching out
+of scope, and settlement `discard` is a forward, consumptive operation. `fork`
+is strong for the *world* (worktree or container, `ForkFromOutput` with
+baseline/seed lineage) but weak for the *agent*: a new loop is seeded from
+captured messages and sealed files, and `continue`/`fork` is worktree-lane
+only. `modify` has no in-place task redefinition — steering text and re-seeded
+runs only; workflow `resume` refuses a changed spec hash and finished runs are
+final.
+
+For the full deployment view — clients, control plane, isolated worlds,
+settlement, and the record — see
+[System-level view (retained dispatch)](architecture.md#system-level-view-retained-dispatch)
+in `docs/architecture.md`.
 
 ## Dispatch worlds
 

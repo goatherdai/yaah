@@ -1,0 +1,175 @@
+# pr-from-bead — one bead, unattended, ending with an OPEN GitHub PR.
+#
+# `yaah workflow run pr-from-bead --param issue=<bead id>` takes one bead from
+# triage to an open PR. It reuses the verified `dev-issue` shape (brief →
+# proposal → review → settle → verify → bounded repair) and adds a final
+# `open_pr` delegate that commits, pushes, and calls `gh pr create`.
+#
+# Honesty notes:
+# - This is a one-PR workflow, not the whole parity epic. Chain runs or use a
+#   parent workflow for the ~20 PRs.
+# - `resume` is hash-pinned and finished runs are final: carry state in the
+#   emitted artifact and start a NEW run if the spec has to change.
+# - The workflow applies sealed changes to the host tree (`settle`), then the
+#   final delegate performs the irreversible external actions (push, PR).
+#   Keep `network: allow_all` scoped to that one node.
+# - The reviewer is a report-lane sub-agent, not an external PR bot. External
+#   bot reviews must be polled with wait_for/watch inside a delegate.
+# - The PR is opened, NOT merged. Merge stays a human decision.
+
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: pr-from-bead
+  version: 1.0.0
+
+spec:
+  params:
+    issue:
+      type: string
+      required: true
+    branch:
+      type: string
+      default: ""
+  # NOTE: do not declare network/grants in defaults — a delegate that declares
+  # a world, grants, or a network posture is dispatched on the shared report
+  # lane with that isolation silently unenforced (internal/workflow/host.go:36).
+  # The retained proposal lane needs none of them to seal its own world.
+  defaults:
+    lane: proposal
+  budgets:
+    max_dispatches: 12
+    max_concurrent_dispatches: 2
+    max_wall_clock_seconds: 3600
+  on_abort: discard_all
+
+  steps:
+    - id: brief
+      kind: delegate
+      role: analyst
+      lane: report
+      output: Brief
+      prompt: |
+        Triage this bead for implementation: "{{ params.issue }}"
+        Resolve the canonical text with `bd show {{ params.issue }}` (local).
+        If the embedded Dolt DB cannot be opened from the sandbox, fall back
+        to `.beads/issues.jsonl` and cross-check `updated_at`. Survey the code
+        before proposing anything. Return JSON only:
+        {"summary":"...", "paths":["..."], "approach":"...",
+         "risks":["..."], "tests":"..."}
+
+    - id: implement
+      kind: delegate
+      role: developer
+      needs: [brief]
+      output: proposal
+      prompt: |
+        Implement bead {{ params.issue }} faithfully.
+        Brief: {{ steps.brief.output }}
+        Follow AGENTS.md: internal/ only; errors are values, not panics;
+        tests next to code; gofmt clean. Do NOT commit.
+        Return ONLY the proposal_id string from the delegate result — no
+        prose, no JSON, no code fence. The downstream review and settle nodes
+        consume that exact id.
+
+    - id: review
+      kind: delegate
+      role: code-reviewer
+      lane: report
+      needs: [implement]
+      output: ReviewVerdict
+      prompt: |
+        Review the sealed proposal {{ steps.implement.output }} for
+        {{ params.issue }} against the brief below. Inspect the proposal's
+        diff with the proposal tool — do NOT assume any output field exists.
+        Brief: {{ steps.brief.output }}
+        Check correctness, AGENTS.md conventions, and test coverage.
+        Return JSON: {"verdict":"pass"|"fail","reasons":["..."]}
+
+    - id: land
+      kind: settle
+      needs: [implement, review]
+      proposals: { from: steps.implement.output, as_list: true }
+      where: { from: steps.review.output, field: verdict, equals: pass, as_list: true }
+      action: apply
+      policy: three_way
+      on_conflict: stop
+      on_empty: fail
+
+    - id: verify
+      kind: delegate
+      role: golang-tester
+      lane: report
+      needs: [land]
+      timeout_seconds: 900
+      output: VerifyVerdict
+      prompt: |
+        The change for {{ params.issue }} has landed. Run the quality gates:
+        go build ./..., go test ./..., gofmt -l ., staticcheck ./...
+        Return JSON: {"verdict":"pass"|"fail","failures":["..."]}
+
+    - id: repair
+      kind: loop
+      needs: [verify]
+      max_iterations: 2
+      until: { from: steps.repair.collect, field: verdict, equals: pass }
+      collect: rounds
+      on_failure: continue
+      body:
+        - id: fix
+          kind: delegate
+          role: developer
+          output: fix_proposal
+          prompt: |
+            The quality gates failed for {{ params.issue }}:
+            {{ steps.verify.output }}
+            Repair the failures and return a fresh proposal against the
+            current tree. Do not commit. Return ONLY the proposal_id string
+            from the delegate result — no prose, no JSON, no code fence.
+        - id: land_fix
+          kind: settle
+          proposals: { from: steps.fix.output, as_list: true }
+          action: apply
+          policy: three_way
+          on_conflict: stop
+          on_empty: fail
+        - id: recheck
+          kind: delegate
+          role: golang-tester
+          lane: report
+          timeout_seconds: 900
+          output: RecheckVerdict
+          prompt: |
+            Re-run go build ./..., go test ./..., gofmt -l ., staticcheck ./...
+            after the repair for {{ params.issue }}.
+            Return JSON: {"verdict":"pass"|"fail","failures":["..."]}
+
+    - id: open_pr
+      kind: delegate
+      role: developer
+      lane: report
+      network: allow_all
+      needs: [repair]
+      timeout_seconds: 600
+      output: Report
+      prompt: |
+        The change for {{ params.issue }} is gate-clean on the host tree.
+        Perform these external actions now, in order:
+        1. Create a branch named "{{ params.branch }}" if that param is
+           non-empty; otherwise use "agent/{{ params.issue }}".
+        2. `git add` the files changed for this bead only and commit with a
+           conventional message naming the bead.
+        3. `git push -u origin <branch>`.
+        4. `gh pr create --base main --head <branch> --title "<conventional
+           title>" --body "<summary, bead id, validation performed>"`.
+        Do NOT merge the PR, do NOT close the bead, and do not touch any
+        unrelated staged files. Return ONLY the resulting PR URL.
+
+    - id: report
+      kind: emit
+      needs: [open_pr]
+      value: |
+        PR opened for {{ params.issue }}: {{ steps.open_pr.output }}
+        Repair rounds: {{ steps.repair.collect }}.
+        Still human: review, PR-bot feedback, merge, bead close.
+      path: artifacts/pr-from-bead.md

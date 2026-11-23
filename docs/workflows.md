@@ -86,15 +86,15 @@ spec:
 |---|---|---|
 | `delegate` | Dispatch one sub-agent on a lane | `role`, `prompt`, `lane`, `grants`, `network`, `world`, `max_turns`, `timeout_seconds`, `output` |
 | `fanout` | One body per item of a list | `over` (literal list or selector), `as` (item binding), `max_parallel`, `collect`, `join`, `quorum`, `on_item_failure` |
-| `loop` | Repeat a body until a terminator | `max_iterations` (required), `until`, `collect`, `continue_from`, `continue_from`-shaped proposal threading |
+| `loop` | Repeat a body until a terminator | `max_iterations` (required), `until`, `collect`, `body`, `continue_from` |
 | `branch` | Route on a selector | `on` (selector), `cases` with `when`, `default` |
 | `gate` | Deterministic check | `assert` (registered asserts), or `judge` (a dispatched verdict), `on_pass`/`on_fail` jump labels |
-| `select` | Choose one candidate proposal | `candidates`, `judge` or `policy: first_success | smallest_diff`, `judge` dispatches with the fixed verdict shape |
+| `select` | Choose one candidate proposal | `candidates`, `judge` or `policy: first_success \| smallest_diff`, `judge` dispatches with the fixed verdict shape |
 | `settle` | Dispose proposals: one verb per handle | `proposals`, `where`, `action: select\|apply\|release\|discard`, `policy`, `on_conflict`, `on_empty` |
 | `aggregate` | Combine outputs | `inputs` (selector list), `strategy: concat\|json_merge\|summarize` |
 | `call` | Run a registered subworkflow | `workflow` (name under `--workflow-root`), `params`, `max_depth` |
 | `emit` | Write a value to an artifact | `value`, `path` |
-| `human` | Wait for a person | `on_timeout` |
+| `human` | **Not implemented** — declared in the schema so a document can express the intent, but the executor refuses the node (a human response is an approval door v1 does not have) | `prompt`, `on_timeout` |
 
 Notes worth knowing per kind:
 
@@ -148,10 +148,13 @@ is a contract:
 
 - **Errors** (WF001–WF029 mostly) mean the document is invalid — it will
   never run.
-- **Warnings** (WF030, WF031, WF032, WF033, WF035, WF036) are
-  host-relative facts: roles, worlds, network ceilings, budget ceilings. A
-  different host might accept them. `--strict` promotes warnings to
+- **Warnings** (WF030, WF031, WF032, WF033, WF035) are host-relative
+  facts: roles, worlds, network ceilings, budget ceilings, configured caps.
+  A different host might accept them. `--strict` promotes warnings to
   refusals — CI and self-modification flows should use it.
+- **Errors** also include WF034 (unbounded repetition), WF036 (inline secret
+  markers), and WF037 (invented assert vocabulary): document-intrinsic
+  defects refused on every host, whatever its configuration.
 
 ## Commands
 
@@ -163,6 +166,7 @@ yaah workflow run       <spec>   [... validate flags ...]
                                  [--run-id <id>] [--state <db>] [--artifact-root <dir>]
                                  [--replay <run_id>]
 yaah workflow resume    <run_id> [--state <db>] [--artifact-root <dir>] [--spec <path>]
+yaah workflow list      [--workflow-dir <dir>]... [--json]
 ```
 
 - **`validate`**: the gate. Report (JSON) kind `yaah.workflow.validate.v1`;
@@ -182,11 +186,42 @@ yaah workflow resume    <run_id> [--state <db>] [--artifact-root <dir>] [--spec 
   node that terminated stays terminated; only work the record does not show
   is dispatched. A finished run is final: resume refuses it (`already
   finished`), because its disposition is a fact, not a todo.
+- **`list`**: discovery only — it opens no document and executes nothing.
+  Search order is `--workflow-dir` (repeatable, prepended), then
+  `workflows/` in the workspace and in each ancestor up to the git
+  repository root, then `~/.yaah/workflows`. The git root is the project
+  boundary, so a directory above it is never searched. Documents are
+  deduplicated by base name and the earlier directory wins; `--json` emits
+  `[{ "name", "path", "dir" }]`.
+- **Bare names.** `validate`, `explain`, `run`, and `list` share one search:
+  each takes the repeatable `--workflow-dir` and resolves a bare name through
+  that same order, so `yaah workflow run kickoff` finds
+  `workflows/kickoff.yaml` without a path.
 
 Reports: `run --json` emits `yaah.workflow.run.v1` (status, dispatch tally,
 per-node states, outputs, artifacts, warnings); `explain --json` emits the
-match shape; `explain --from-trace --json` emits `yaah.workflow.trace.v1`
+same shape; `explain --from-trace --json` emits `yaah.workflow.trace.v1`
 (the typed record set, proposals, settlements, divergences).
+
+### In-session surfaces
+
+The same documents run from inside a session, and every surface resolves
+names through the search order above:
+
+- **Tools.** `workflow_run` and `workflow_list` are on the default belt, so
+  the orchestrator can run a spec and read its report without leaving the
+  turn. Execution stays behind the tool's permission gate.
+- **TUI.** `:workflow run <spec>` runs a document and renders the report as a
+  durable block; `:workflow run` with no spec opens a picker over the
+  discovered specs; `:workflow list` prints them. Bare `:workflow` only
+  prints usage.
+- **ACP.** `workflow/list` is advertised read-only for a client's picker. The
+  server advertises no `workflow/run` method: execution goes through the
+  permissioned `workflow_run` tool instead.
+
+Not shipped: `propose` (model-authored specs plus a bounded repair loop),
+`render` (a template gallery and metrics), and an approval-gated
+`workflow_run` — the tool is always-on, the gate is outstanding.
 
 ## Durability, recovery, and replay
 
@@ -197,10 +232,16 @@ match shape; `explain --from-trace --json` emits `yaah.workflow.trace.v1`
   not a graph edge: `yaah goatherd` scans the durable trace and reports the
   adopted worktrees. The workflow surface's part is reporting — the
   `orch-recovery` bench spec delegates the scan and emits `recovery.txt`.
-- **Replay** (`run --replay <run_id>`): re-run a completed run's orchestration
-  from its checkpoint with the same doors but a live runner — the original
-  run's own state is untouched. Replay answers "what would this run do now
-  with this model", with zero double-settlement by construction.
+- **Replay** (`run --replay <run_id>`): re-drive a completed run's
+  orchestration through the same scheduler with **no model called**. Recorded
+  answers are substituted from the run's checkpoint — each dispatch's
+  envelope, each settlement's outcome, each call node's bindings — and the
+  original run's own state is untouched (settle answers are replayed from the
+  records, never re-merged, so no worktree is touched). Because the answers
+  are fixed, replay is *equivalence testable*: what the reducer derives from
+  known answers must reproduce the recorded node outcomes and dispositions.
+  A record that is not there is refused loudly, never filled in by a model
+  call.
 
 Crash/resume determinism is proven at the scheduler core with seeded kill
 schedules (`internal/workflow/exec/resume_property_test.go`): a converged
