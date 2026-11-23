@@ -125,13 +125,12 @@ func TestLedgerStatesDeliberateBypasses(t *testing.T) {
 	}
 }
 
-// TestLedgerScorecardVocabulary pins the scorecard's layer names and verdict
-// words, so the scorecard cannot silently drop a layer or drift to a new status
-// word without this guard moving too. It is the "every row in the epic's scope"
-// half of yaah-1018's acceptance.
+// TestLedgerScorecardVocabulary parses the scorecard table and pins its layer
+// names and verdict words, so a dropped layer, an added layer, or a verdict
+// renamed in a single row all fail the guard. A bare contains() over the whole
+// file would still pass if a word drifted into prose only, which is exactly the
+// drift this guard exists to catch.
 func TestLedgerScorecardVocabulary(t *testing.T) {
-	ledger := read(t, ledgerPath)
-
 	layers := []string{
 		"Kernel / record",
 		"Retained runs / settlement",
@@ -149,16 +148,70 @@ func TestLedgerScorecardVocabulary(t *testing.T) {
 		"Devices / remote carriers",
 		"Provider SDK shape",
 	}
-	for _, layer := range layers {
-		if !strings.Contains(ledger, layer) {
-			t.Errorf("scorecard does not name the %q layer", layer)
-		}
-	}
-
 	verdicts := []string{"Shipped", "Partial", "Declined", "Not ported", "Different surface"}
-	for _, verdict := range verdicts {
-		if !strings.Contains(ledger, verdict) {
-			t.Errorf("scorecard does not use the %q verdict", verdict)
+
+	rows := scorecardRows(t, read(t, ledgerPath))
+	if len(rows) != len(layers) {
+		t.Errorf("scorecard has %d layer rows, want %d", len(rows), len(layers))
+	}
+	expected := make(map[string]bool, len(layers))
+	for _, layer := range layers {
+		expected[layer] = true
+		status, ok := rows[layer]
+		if !ok {
+			t.Errorf("scorecard does not name the %q layer", layer)
+			continue
+		}
+		matched := false
+		for _, v := range verdicts {
+			if strings.HasPrefix(status, "**"+v) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			t.Errorf("scorecard row %q has unrecognized verdict %q", layer, status)
 		}
 	}
+	for layer := range rows {
+		if !expected[layer] {
+			t.Errorf("scorecard names an unexpected %q layer", layer)
+		}
+	}
+}
+
+// scorecardRows returns the scorecard table's layer→verdict-cell mapping. The
+// scorecard is the only table under "## Scope and scorecard"; a row is a `| … |`
+// line whose final cell carries a bold verdict token.
+func scorecardRows(t *testing.T, ledger string) map[string]string {
+	t.Helper()
+	rows := map[string]string{}
+	in := false
+	for _, line := range strings.Split(ledger, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## Scope and scorecard") {
+			in = true
+			continue
+		}
+		if in && strings.HasPrefix(trimmed, "## ") {
+			break
+		}
+		if !in || !strings.HasPrefix(trimmed, "|") {
+			continue
+		}
+		cols := strings.Split(line, "|")
+		if len(cols) < 5 {
+			continue
+		}
+		layer := strings.TrimSpace(cols[1])
+		status := strings.TrimSpace(cols[4])
+		if !strings.Contains(status, "**") {
+			continue // header or separator row
+		}
+		rows[layer] = status
+	}
+	if len(rows) == 0 {
+		t.Fatalf("no scorecard rows parsed under %q", "## Scope and scorecard")
+	}
+	return rows
 }

@@ -29,10 +29,14 @@ behind that channel, each exposing domain effects.
 
 ## Rationale
 
-- **The observation property is already present.** yaah records every boundary
-  crossing through the goatherd-kernel effect bus and the run trace, so the
-  "boundary is the record" guarantee Shepherd's effect model exists to provide
-  is not a capability yaah is missing.
+- **The observation property is already present, split across surfaces.**
+  Authoritative crossings — dispatch, world operations, settlement, retained
+  captures — are recorded by the goatherd-kernel run trace and enforced at the
+  tool/dispatch boundary (jail + settlement monitors). The `EffectBus` is
+  advisory: it observes for review and does not enforce. So the single
+  watched/refused/recorded channel Shepherd's effect model provides is not a
+  missing capability — the "boundary is the record" guarantee is already met
+  where enforcement matters.
 - **The six contexts are plumbing, not semantics.** Workspace, session, and MCP
   are served by yaah's own surfaces; database/KV/app-store are absent by design
   or out of scope. Porting the fold would add a second authority/observation
