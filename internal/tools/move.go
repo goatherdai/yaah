@@ -90,7 +90,17 @@ func (t *MoveTool) Execute(ctx context.Context, args string) (string, error) {
 	if err := req.validate(ctx, "move"); err != nil {
 		return "", err
 	}
-	if err := req.ws.Move(ctx, req.Path, req.To); err != nil {
+	err = req.ws.Move(ctx, req.Path, req.To)
+	// Publish both ends from inside the lock (write_evidence.go): the recording
+	// wrapper cannot take this lock across a self-guarding transfer, so its own
+	// after-read could otherwise observe — and claim — a concurrent dispatch's
+	// write to either path (yaah-1615). Both ends are published even when the
+	// primitive errors, because a cross-filesystem move can create the
+	// destination and then fail to remove the source; the recorded outcome is
+	// whatever the paths actually hold.
+	publishPathSnapshot(ctx, req.ws, req.Path)
+	publishPathSnapshot(ctx, req.ws, req.To)
+	if err != nil {
 		return "", fmt.Errorf("move: %w", err)
 	}
 	return fmt.Sprintf("Moved %s to %s", req.Path, req.To), nil
