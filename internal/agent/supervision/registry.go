@@ -14,6 +14,7 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/goatherdai/yaah/internal/supervisionapi"
 )
@@ -53,7 +54,38 @@ type Run struct {
 	SteerCh chan string
 	Cancel  context.CancelFunc
 	Done    chan struct{}
+
+	// Role, Label, Workdir, and StartedAt are the run's snapshot metadata
+	// (yaah-1050.1.1): who registered, under what role, in which
+	// workspace, and since when. They are advisory bookkeeping only —
+	// nothing in the bridge reads them — and every one of them is
+	// optional: a registrant that supplies none (the existing tests, the
+	// session root) reports zero values and snapshots fine.
+	Role      string
+	Label     string
+	Workdir   string
+	StartedAt time.Time
 }
+
+// Registration is one run as the snapshot sees it: the scope it registered
+// under, its metadata, and its lifecycle clock. It deliberately does not
+// carry the run's channels — a snapshot is a read of state, never a handle
+// on the execution — so it stays copyable and cannot be used to steer.
+type Registration struct {
+	ScopeID      string
+	Role         string
+	Label        string
+	Workdir      string
+	StartedAt    time.Time
+	FinishedAt   time.Time
+	StillRunning bool
+}
+
+// maxFinishedRuns bounds the recently-finished list. A finished run is kept
+// so a supervisor polling just after a dispatch ends still sees what that
+// agent did (the live entry is gone the moment the loop returns); the oldest
+// is dropped past the cap, so the list can never outgrow a session.
+const maxFinishedRuns = 32
 
 // run is the registry's bookkeeping for one registered execution.
 type run struct {
@@ -65,11 +97,19 @@ type run struct {
 type Registry struct {
 	mu   sync.Mutex
 	runs map[string]*run
+	// finished is the bounded recent-history tail, oldest first. It is
+	// what keeps a snapshot useful across the exact instant a dispatch
+	// ends: the entry leaves runs (so Inject and Has stop claiming a live
+	// bridge) while the metadata stays readable here.
+	finished []Registration
+	// now stamps FinishedAt. A field, not a direct time.Now call, so a
+	// test can pin the clock without a sleep.
+	now func() time.Time
 }
 
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
-	return &Registry{runs: make(map[string]*run)}
+	return &Registry{runs: make(map[string]*run), now: time.Now}
 }
 
 // Register associates a scope with its run: the steering channel
@@ -95,15 +135,64 @@ func (r *Registry) Register(scopeID string, entry Run) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.forgetFinishedLocked(scopeID)
 	r.runs[scopeID] = &run{entry: entry}
 }
 
 // Unregister removes a run. Safe to call twice; the run's deferred
-// unregister racing a session-close unregister is the normal case.
+// unregister racing a session-close unregister is the normal case. The
+// run's metadata moves into the bounded recently-finished list, so a
+// snapshot taken just after the dispatch ends still names what the agent
+// did — but the entry is no longer live: Has, Inject, and Cancel report
+// ErrNoRun for it exactly as before.
 func (r *Registry) Unregister(scopeID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	entry, ok := r.runs[scopeID]
+	if !ok {
+		return
+	}
 	delete(r.runs, scopeID)
+	reg := registrationOf(scopeID, entry.entry)
+	reg.StillRunning = false
+	reg.FinishedAt = r.clock()
+	r.finished = append(r.finished, reg)
+	if over := len(r.finished) - maxFinishedRuns; over > 0 {
+		r.finished = r.finished[over:]
+	}
+}
+
+// registrationOf projects a run's bridge surface down to its snapshot
+// metadata: the channels and the cancellation stay with the execution.
+func registrationOf(scopeID string, entry Run) Registration {
+	return Registration{
+		ScopeID:   scopeID,
+		Role:      entry.Role,
+		Label:     entry.Label,
+		Workdir:   entry.Workdir,
+		StartedAt: entry.StartedAt,
+	}
+}
+
+// forgetFinishedLocked drops a finished record for a scope that is
+// registering again: one scope is one line in a snapshot.
+func (r *Registry) forgetFinishedLocked(scopeID string) {
+	for i := range r.finished {
+		if r.finished[i].ScopeID != scopeID {
+			continue
+		}
+		r.finished = append(r.finished[:i], r.finished[i+1:]...)
+		return
+	}
+}
+
+// clock reads the registry clock, defaulting to time.Now for a zero-value
+// Registry built outside NewRegistry.
+func (r *Registry) clock() time.Time {
+	if r.now == nil {
+		return time.Now()
+	}
+	return r.now()
 }
 
 // Inject delivers guidance to the run's steering channel. The send
@@ -156,6 +245,58 @@ func (r *Registry) Has(scopeID string) bool {
 	defer r.mu.Unlock()
 	_, ok := r.runs[scopeID]
 	return ok
+}
+
+// Entries returns the LIVE registrations, sorted by scope ID — the snapshot's
+// metadata view, and the same ordering ScopeIDs reports. The channels stay
+// behind: a Registration cannot deliver guidance or cancel anything.
+func (r *Registry) Entries() []Registration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]Registration, 0, len(r.runs))
+	for id, entry := range r.runs {
+		reg := registrationOf(id, entry.entry)
+		reg.StillRunning = true
+		out = append(out, reg)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ScopeID < out[j].ScopeID })
+	return out
+}
+
+// RecentlyFinished returns the finished registrations still in the bounded
+// window, oldest first. The slice is a copy: a caller cannot reach back into
+// the registry through it.
+func (r *Registry) RecentlyFinished() []Registration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]Registration, len(r.finished))
+	copy(out, r.finished)
+	return out
+}
+
+// SnapshotEntries returns live and finished registrations under ONE lock.
+// Live come first (a supervisor can still steer them), sorted by scope ID;
+// finished come newest first, so an agent cap that drops entries always
+// drops the OLDEST finished runs before one that just ended. Entries() and
+// RecentlyFinished() cannot be combined by a caller: a run that unregisters
+// between two acquisitions would appear in both slices (Qodo review).
+func (r *Registry) SnapshotEntries() []Registration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	live := make([]Registration, 0, len(r.runs))
+	for id, entry := range r.runs {
+		reg := registrationOf(id, entry.entry)
+		reg.StillRunning = true
+		live = append(live, reg)
+	}
+	sort.Slice(live, func(i, j int) bool { return live[i].ScopeID < live[j].ScopeID })
+	// finished is oldest-first; prepend newest-first without mutating it.
+	out := make([]Registration, 0, len(live)+len(r.finished))
+	out = append(out, live...)
+	for i := len(r.finished) - 1; i >= 0; i-- {
+		out = append(out, r.finished[i])
+	}
+	return out
 }
 
 // ScopeIDs returns the registered run scope IDs, sorted — the

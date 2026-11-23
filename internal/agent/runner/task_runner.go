@@ -493,6 +493,17 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 				// bounded quiesce wait before kernel-side sandbox
 				// teardown selects on this.
 				Done: quiesce,
+				// Snapshot metadata (yaah-1050.1.1): who is running, in
+				// which workspace, since when. Advisory only — the
+				// supervisor's `snapshot` action reads it and nothing else
+				// does. Workdir is the dispatch's resolved workdir: the
+				// isolated lanes set it to the sub-agent's own worktree,
+				// and a shared-lane dispatch leaves it empty because it
+				// runs in the session workspace the supervisor already
+				// knows.
+				Role:      string(role),
+				Workdir:   params.Workdir,
+				StartedAt: time.Now(),
 			})
 			defer opts.runs.Unregister(subScope.ID())
 			defer close(quiesce)

@@ -1452,12 +1452,25 @@ func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 	// Goatherd-dependent tool surface: the supervisor and proposal tools
 	// register only when the infrastructure above came up.
 	if st.scopeMgr != nil {
-		// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/status).
+		// Effect-stream snapshot (yaah-1050.1.1): a read-only join of this
+		// session's run registry with the tool facts each agent already
+		// wrote. The reader is the session's OWN open store — the handle
+		// the runner appends through — so a poll opens no second handle
+		// and cannot conjure a store at the default path. Left nil when
+		// either half is missing: the tool then reports the snapshot as
+		// unavailable instead of inventing agents.
+		var snapSrc *supervision.Snapshotter
+		if st.runs != nil && st.traceStore != nil {
+			snapSrc = &supervision.Snapshotter{Runs: st.runs, Store: st.traceStore}
+		}
+
+		// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/status/snapshot).
 		tr.reg.Register(&tools.SupervisorTool{
 			TraceDir:     cfg.Agent.Default.TracePath(),
 			RootScopeID:  st.rootScopeID,
 			ScopeManager: st.scopeMgr,
 			Runs:         st.runs,
+			Snapshot:     snapSrc,
 			// Svc carries the session's advisory rules service so
 			// status can list rule firings (adoption plan B4); nil
 			// when the supervisor stanza is not live.
