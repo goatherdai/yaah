@@ -120,7 +120,9 @@ func lowerMessages(msgs []types.Message, opts lowerOptions) []wireMessage {
 // fresh index — and providers reject it on replay ("Messages with role 'tool'
 // must be a response to a preceding message with 'tool_calls'"). Dedup lives
 // at the wire boundary so it never disturbs the in-memory transcript or the
-// persister's index cursor, which must stay equal to len(messages).
+// persister's index cursor, which must stay equal to len(messages). When a
+// duplicate exists the first result wins: duplicates are assumed identical,
+// so the order is unobservable to a correct caller.
 func dedupeToolResults(msgs []types.Message) []types.Message {
 	out := make([]types.Message, 0, len(msgs))
 	seen := make(map[string]struct{})

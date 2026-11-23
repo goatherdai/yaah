@@ -31,7 +31,7 @@ func TestLedgerPinsMatchGoMod(t *testing.T) {
 
 	pins := []string{
 		"github.com/goatherdai/goatherd-kernel v0.22.0",
-		"github.com/goatherdai/goatherd-runtime v0.24.1-0.20261120033226-a4480ce6969e",
+		"github.com/goatherdai/goatherd-runtime v0.25.0",
 		"github.com/goatherdai/goatherd-runtime/sandbox/croft v0.2.1-0.20261118192512-b4d03a8d225a",
 		"github.com/goatherdai/goatherd-runtime/sandbox/landlock v0.1.3-0.20261118192512-b4d03a8d225a",
 		"github.com/goatherdai/goatherd-runtime/sandbox/winacl v0.1.2-0.20261118192512-b4d03a8d225a",

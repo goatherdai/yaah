@@ -219,6 +219,46 @@ func TestChatRequestToAnthropic_ToolCalls(t *testing.T) {
 	}
 }
 
+func TestChatRequestToAnthropic_DropsDuplicateToolResult(t *testing.T) {
+	req := types.ChatRequest{
+		Model:     "claude-3.5-sonnet",
+		MaxTokens: 1000,
+		Messages: []types.Message{
+			{Role: "user", Content: "go"},
+			{Role: "assistant", Content: "", ToolCalls: []types.ToolCall{
+				{ID: "call_1", Type: "function", Function: types.ToolCallFn{Name: "bash", Arguments: `{}`}},
+			}},
+			{Role: "tool", ToolCallID: "call_1", Content: "first"},
+			{Role: "tool", ToolCallID: "call_1", Content: "second"}, // re-execution artifact
+		},
+	}
+
+	result := lowerAnthropicRequest(req, "auto")
+
+	count := 0
+	survivor := ""
+	for _, m := range result.Messages {
+		for _, block := range m.Content {
+			tr := blockToolResult(block)
+			if blockType(block) == "tool_result" && tr != nil && tr.ToolUseID == "call_1" {
+				count++
+				if len(tr.Content) > 0 && tr.Content[0].OfText != nil {
+					survivor = tr.Content[0].OfText.Text
+				}
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("tool_result blocks for call_1 = %d; want 1 (duplicate must be dropped)", count)
+	}
+	if survivor != "first" {
+		t.Errorf("surviving tool_result content = %q; want %q (first result wins)", survivor, "first")
+	}
+	if len(req.Messages) != 4 {
+		t.Errorf("req.Messages mutated by lowering: len = %d; want 4", len(req.Messages))
+	}
+}
+
 func TestChatRequestToAnthropic_Tools(t *testing.T) {
 	params := json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`)
 	req := types.ChatRequest{

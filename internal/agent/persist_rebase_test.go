@@ -329,3 +329,47 @@ func TestSessionPersister_DropsDuplicateToolResult(t *testing.T) {
 		t.Fatalf("rows = %d; want 2 (assistant + one tool result)", len(msgs))
 	}
 }
+
+// TestSessionPersister_DropsDuplicateToolResult_Debounced pins that the
+// duplicate-tool-result guard holds under the production debouncer. The
+// DB-backed HasToolResult check reads the store directly, but writeMsg is
+// debounced, so two results for the same call persisted inside the flush
+// window would both pass the DB check; the in-memory map closes that window.
+func TestSessionPersister_DropsDuplicateToolResult_Debounced(t *testing.T) {
+	db := newPersistTestDB(t, "sess-dup-debounced")
+	deb := memory.NewDebouncedWriter(db)
+	p := NewSessionPersister(db, deb, "sess-dup-debounced")
+
+	p.Persist(types.AssistantMsg("call", []types.ToolCall{{
+		ID:   "call_1",
+		Type: "function",
+		Function: types.ToolCallFn{
+			Name:      "bash",
+			Arguments: `{}`,
+		},
+	}}))
+	p.Persist(types.ToolResultMsg("call_1", "bash", "result"))
+	// The same call persisted again before the first flushes is a
+	// re-execution artifact; the in-memory guard must still drop it.
+	p.Persist(types.ToolResultMsg("call_1", "bash", "result"))
+
+	if p.MsgIdx() != 2 {
+		t.Fatalf("MsgIdx after duplicate tool result = %d; want 2 (duplicate must not advance the cursor)", p.MsgIdx())
+	}
+	// Prove the debounce window is still open: if the first result has
+	// already flushed, the DB fallback (not the in-memory map) would be
+	// doing the dropping and this test would not exercise the fix.
+	if ok, err := db.HasToolResult("sess-dup-debounced", "call_1"); err != nil || ok {
+		t.Fatalf("debounce window closed before the duplicate persist (HasToolResult=%v, err=%v); test cannot observe the fix", ok, err)
+	}
+	if err := deb.Flush(); err != nil {
+		t.Fatalf("Flush() error: %v", err)
+	}
+	msgs, err := db.GetMessages("sess-dup-debounced")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("rows = %d; want 2 (assistant + one tool result)", len(msgs))
+	}
+}

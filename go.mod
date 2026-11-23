@@ -4,11 +4,11 @@ go 1.26.3
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.81.0
-	github.com/buchenberg/tviewmd v0.4.0
+	github.com/buchenberg/tviewmd v0.4.1
 	github.com/ebitengine/purego v0.10.0
 	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/goatherdai/goatherd-kernel v0.22.0
-	github.com/goatherdai/goatherd-runtime v0.24.1-0.20261120033226-a4480ce6969e
+	github.com/goatherdai/goatherd-runtime v0.25.0
 	github.com/goatherdai/goatherd-runtime/sandbox/croft v0.2.1-0.20261118192512-b4d03a8d225a
 	github.com/goatherdai/goatherd-runtime/sandbox/landlock v0.1.3-0.20261118192512-b4d03a8d225a
 	github.com/goatherdai/goatherd-runtime/sandbox/seatbelt v0.1.1-0.20261118192512-b4d03a8d225a

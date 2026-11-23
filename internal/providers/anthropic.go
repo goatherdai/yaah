@@ -398,6 +398,13 @@ func anthropicTextBlock(text string, cc *types.CacheControl) anthropic.ContentBl
 //     blocks in the immediately following user message)
 //   - consecutive user messages merge into one multi-block message
 func lowerAnthropicRequest(req types.ChatRequest, replay string) anthropic.MessageNewParams {
+	// Drop duplicate tool results before building content blocks: a session
+	// whose transcript carries two results for one tool_use would otherwise
+	// emit two tool_result blocks for the same tool_use_id, and the provider
+	// rejects it with 400 "each tool_use must have a single result". This
+	// mirrors lowerMessages (OpenAI path), which already dedupes.
+	req.Messages = dedupeToolResults(req.Messages)
+
 	var sysBlocks []anthropic.TextBlockParam
 	var convMessages []types.Message
 
