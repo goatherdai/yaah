@@ -57,7 +57,7 @@ spec:
           prompt: |
             The tests failed. Repair the proposal
             {{ steps.implement.output.proposal_id }} so the tests pass.
-            Prior failures: {{ steps.repair.collect }}
+            Keep the fix minimal and under cmd/ and internal/.
         - id: check
           kind: delegate
           role: golang-tester
