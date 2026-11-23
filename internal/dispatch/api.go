@@ -249,16 +249,17 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 	// without a second copy of any lane's body (yaah-dgkh). timeout is this
 	// attempt's slice of the dispatch budget: the whole of it when the policy
 	// permits only one attempt, its share of the remainder otherwise.
-	attempt := func(ctx context.Context, timeout time.Duration, _ int) DispatchResult {
+	attempt := func(parent context.Context, timeout time.Duration, _ int) DispatchResult {
 		attemptStarted := time.Now()
 		// The budget is an absolute deadline across provisioning and the body,
 		// not a per-phase allowance: the retained lane provisions a world before
 		// the child's own timeout starts, so a dispatch that spent its budget
 		// getting one would otherwise overshoot the deadline the caller set
 		// (yaah-dgkh review).
+		ctx := parent
 		if timeout > 0 {
 			var cancel context.CancelFunc
-			ctx, cancel = context.WithDeadline(ctx, attemptStarted.Add(timeout))
+			ctx, cancel = context.WithDeadline(parent, attemptStarted.Add(timeout))
 			defer cancel()
 		}
 		if req.Retained != nil {
@@ -267,7 +268,7 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 				res, err := startRetainedRun(ctx, *req.Retained, req.Prompt, params, timeout, true)
 				out := ClassifyRunnerResult(res.Report, err, role, timeout, ctx).
 					withMeta(meta.after(time.Since(attemptStarted)))
-				out.FailureClass = failedAttemptClass(ctx, res.Stage, out, err)
+				out.FailureClass = failedAttemptClass(parent, res.Stage, out, err)
 				out.MutableWorld = res.SessionFallback
 				out.Warnings = res.Warnings
 				return out
@@ -284,7 +285,7 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 					// error (yaah-was9.1).
 					out := ClassifyRunnerResult("", err, role, timeout, ctx).
 						withMeta(meta.after(time.Since(attemptStarted)))
-					out.FailureClass = failedAttemptClass(ctx, res.Stage, out, err)
+					out.FailureClass = failedAttemptClass(parent, res.Stage, out, err)
 					out.Warnings = res.Warnings
 					return out
 				}
@@ -297,7 +298,7 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 				// A sealed error envelope is the one failure the proposal lane
 				// reports without an error value (a provisioning failure that
 				// left nothing to settle), so the stage is read from the result.
-				out.FailureClass = failedAttemptClass(ctx, res.Stage, out, nil)
+				out.FailureClass = failedAttemptClass(parent, res.Stage, out, nil)
 				out.Warnings = res.Warnings
 				return out
 			}
@@ -308,7 +309,7 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 		result, err := runner(runCtx, req.Prompt, params)
 		out := ClassifyRunnerResult(result, err, role, timeout, runCtx).
 			withMeta(meta.after(time.Since(attemptStarted)))
-		out.FailureClass = failedAttemptClass(ctx, RetainedStageNone, out, err)
+		out.FailureClass = failedAttemptClass(parent, RetainedStageNone, out, err)
 		return out
 	}
 

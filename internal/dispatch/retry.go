@@ -273,7 +273,7 @@ loop:
 		if n > 1 && ctx.Err() != nil {
 			break
 		}
-		timeout := attemptAllowance(req.Timeout, remainingBudget(deadline, timed), timed, n, policy.maxAttempts)
+		timeout := attemptAllowance(req.Timeout, remainingBudget(deadline, timed), timed, n, policy.maxAttempts, laneMayRetry(lane, FailureClassTimeout))
 
 		res := attempt(ctx, timeout, n)
 		if id := attemptIDFor(res, n); id != "" {
@@ -336,17 +336,32 @@ loop:
 // budget is what makes `timeout` a retryable class at all — handing attempt 1 the
 // whole budget leaves nothing for the retry the policy promised (yaah-dgkh
 // review).
-func attemptAllowance(total, remaining time.Duration, timed bool, attempt, maxAttempts int) time.Duration {
-	if !timed || maxAttempts < 2 {
+//
+// The split applies only when the lane may retry a timeout (split is true): a
+// proposal or shared lane whose timeout is terminal keeps its full configured
+// budget, because there is no retry to reserve time for. A non-positive share is
+// still bounded — it returns a nanosecond so the attempt's deadline fires at once
+// instead of reading zero as "no limit".
+func attemptAllowance(total, remaining time.Duration, timed bool, attempt, maxAttempts int, split bool) time.Duration {
+	if !timed {
 		return total
+	}
+	if !split {
+		if attempt == 1 {
+			return total
+		}
+		if remaining <= 0 {
+			return time.Nanosecond
+		}
+		return remaining
 	}
 	left := maxAttempts - attempt + 1
 	if left < 1 {
 		left = 1
 	}
 	share := remaining / time.Duration(left)
-	if share < 0 {
-		return 0
+	if share <= 0 {
+		return time.Nanosecond
 	}
 	return share
 }

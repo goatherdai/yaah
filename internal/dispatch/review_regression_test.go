@@ -74,20 +74,33 @@ func TestCauseFailureClass(t *testing.T) {
 // retryable class: with retry enabled, attempt 1 gets a share, not the whole
 // budget.
 func TestAttemptAllowance(t *testing.T) {
-	if got := attemptAllowance(time.Minute, time.Minute, false, 1, 1); got != time.Minute {
+	// Untimed: no budget to split.
+	if got := attemptAllowance(time.Minute, time.Minute, false, 1, 1, true); got != time.Minute {
 		t.Errorf("untimed = %v, want the whole budget", got)
 	}
-	if got := attemptAllowance(time.Minute, time.Minute, true, 1, 1); got != time.Minute {
-		t.Errorf("no retry configured = %v, want the whole budget", got)
-	}
-	if got := attemptAllowance(time.Minute, time.Minute, true, 1, 3); got != time.Minute/3 {
+	// Split lane (report: timeout is retryable).
+	if got := attemptAllowance(time.Minute, time.Minute, true, 1, 3, true); got != time.Minute/3 {
 		t.Errorf("attempt 1 of 3 = %v, want %v", got, time.Minute/3)
 	}
-	if got := attemptAllowance(time.Minute, 40*time.Second, true, 2, 3); got != 20*time.Second {
+	if got := attemptAllowance(time.Minute, 40*time.Second, true, 2, 3, true); got != 20*time.Second {
 		t.Errorf("attempt 2 of 3 = %v, want 20s (half the remainder)", got)
 	}
-	if got := attemptAllowance(time.Minute, 20*time.Second, true, 3, 3); got != 20*time.Second {
+	if got := attemptAllowance(time.Minute, 20*time.Second, true, 3, 3, true); got != 20*time.Second {
 		t.Errorf("attempt 3 of 3 = %v, want the remainder", got)
+	}
+	// A zero or expired split share is still bounded, never "no limit".
+	if got := attemptAllowance(time.Minute, 0, true, 1, 3, true); got <= 0 {
+		t.Errorf("expired split share = %v, want a positive nanosecond bound", got)
+	}
+	// Non-split lane (proposal/shared: timeout is terminal).
+	if got := attemptAllowance(time.Minute, time.Minute, true, 1, 3, false); got != time.Minute {
+		t.Errorf("non-split attempt 1 = %v, want the full budget", got)
+	}
+	if got := attemptAllowance(time.Minute, 40*time.Second, true, 2, 3, false); got != 40*time.Second {
+		t.Errorf("non-split retry = %v, want the remaining 40s", got)
+	}
+	if got := attemptAllowance(time.Minute, 0, true, 2, 3, false); got <= 0 {
+		t.Errorf("non-split spent retry = %v, want a positive nanosecond bound", got)
 	}
 }
 
@@ -223,5 +236,56 @@ func TestRecordBackgroundAttempt(t *testing.T) {
 	}
 	if p["status"] != "completed" {
 		t.Errorf("status = %v, want completed", p["status"])
+	}
+}
+
+// TestRunTimeoutRetries pins that a timed-out attempt is classified timeout —
+// not cancelled — and is retried on the report lane (yaah-dgkh review #4).
+func TestRunTimeoutRetries(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	runner := &sessionRunner{responses: []runnerResponse{
+		{err: context.DeadlineExceeded},
+		{result: "second time"},
+	}}
+	rt := RetainedRuntime{
+		Runner:       runner.run(),
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		Proposals:    NewProposalRegistry(),
+		Retry:        config.RetryConfig{MaxAttempts: 2},
+	}
+	res, err := Run(context.Background(), DispatchRequest{
+		Lane:     LaneReport,
+		Params:   SubAgentParams{Role: "reviewer"},
+		Prompt:   "review the thing",
+		Retained: &rt,
+		Timeout:  5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	env := res.Envelope()
+	if env.Attempts != 2 || !env.Retried {
+		t.Fatalf("attempts = %d retried = %v, want 2/true: a timeout must be retried, not treated as cancelled", env.Attempts, env.Retried)
+	}
+	root, ok := fx.mgr.Get(rootID)
+	if !ok {
+		t.Fatal("root scope missing")
+	}
+	var attempt1Failure string
+	found := false
+	for _, rec := range findRetainedFacts(t, fx.store, root.OwnerID(), SchemaDispatchAttempt) {
+		if toAttemptInt(rec.Body.Payload["attempt"]) == 1 {
+			attempt1Failure, _ = rec.Body.Payload["failure_class"].(string)
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no attempt-1 fact recorded")
+	}
+	if attempt1Failure != FailureClassTimeout {
+		t.Errorf("attempt 1 failure_class = %q, want %q (not cancelled)", attempt1Failure, FailureClassTimeout)
 	}
 }
