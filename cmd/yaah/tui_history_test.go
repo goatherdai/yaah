@@ -76,7 +76,10 @@ func TestTUIHistoryFromMessagesExcludedRows(t *testing.T) {
 		{"conflict", types.UserMsg("CONFLICT: workers disagreed")},
 		{"background", types.UserMsg("[BACKGROUND worker] job finished")},
 		{"tool result", types.ToolResultMsg("call-1", "read", "orphaned result")},
-		{"synthetic carrier only", types.Message{Role: "assistant", Content: "[tool:read] {}"}},
+		{"delegate call", types.Message{
+			Role:      "assistant",
+			ToolCalls: []types.ToolCall{{ID: "call-delegate", Function: types.ToolCallFn{Name: "delegate", Arguments: "{}"}}},
+		}},
 		{"empty assistant", types.Message{Role: "assistant", Content: ""}},
 	}
 	for _, tc := range cases {
@@ -86,6 +89,19 @@ func TestTUIHistoryFromMessagesExcludedRows(t *testing.T) {
 				t.Fatalf("internal row leaked into history: %+v", items)
 			}
 		})
+	}
+}
+
+// A prefix alone is not enough to identify a synthetic carrier: the
+// persister only writes that placeholder when tool calls are present.
+// Assistant text that happens to start with "[tool:" is a real reply.
+func TestTUIHistoryFromMessagesCarrierPrefixWithoutCallsIsVisible(t *testing.T) {
+	items := tuiHistoryFromMessages([]types.Message{{
+		Role:    "assistant",
+		Content: "[tool:question] asked",
+	}})
+	if len(items) != 1 || items[0].Text != "[tool:question] asked" {
+		t.Fatalf("real assistant text was filtered as a carrier: %+v", items)
 	}
 }
 

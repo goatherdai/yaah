@@ -145,9 +145,11 @@ func (t *App) runContextInfoUpdate() {
 // enqueueUIEvent sends event work into a bounded queue. Non-critical events
 // are dropped when full. Critical events wait briefly, then fall back to
 // direct async QueueUpdate/QueueUpdateDraw so they are not dropped.
-func (t *App) enqueueUIEvent(draw bool, fn func(), critical bool) {
+// It reports whether delivery was scheduled; a non-critical drop returns
+// false so callers that own a "queued" flag can clear it.
+func (t *App) enqueueUIEvent(draw bool, fn func(), critical bool) bool {
 	if fn == nil {
-		return
+		return true
 	}
 
 	t.bgMu.Lock()
@@ -162,7 +164,7 @@ func (t *App) enqueueUIEvent(draw bool, fn func(), critical bool) {
 	if ch == nil {
 		observability.RecordTUIQueueEvent(context.Background(), "direct", "fallback", -1)
 		t.enqueueUIEventDirect(draw, fn)
-		return
+		return true
 	}
 
 	eventType := "update"
@@ -174,14 +176,14 @@ func (t *App) enqueueUIEvent(draw bool, fn func(), critical bool) {
 	select {
 	case ch <- ev:
 		observability.RecordTUIQueueEvent(context.Background(), eventType, "enqueued", depth)
-		return
+		return true
 	default:
 	}
 
 	if !critical {
 		t.uiEventDrops.Add(1)
 		observability.RecordTUIQueueEvent(context.Background(), eventType, "dropped", depth)
-		return
+		return false
 	}
 
 	timer := time.NewTimer(uiEventCriticalWaitLimit)
@@ -189,13 +191,14 @@ func (t *App) enqueueUIEvent(draw bool, fn func(), critical bool) {
 	select {
 	case ch <- ev:
 		observability.RecordTUIQueueEvent(context.Background(), eventType, "enqueued", depth)
-		return
+		return true
 	case <-done:
-		return
+		return false
 	case <-timer.C:
 		t.uiEventFallbacks.Add(1)
 		observability.RecordTUIQueueEvent(context.Background(), eventType, "fallback", depth)
 		t.enqueueUIEventDirect(draw, fn)
+		return true
 	}
 }
 

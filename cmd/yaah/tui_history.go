@@ -9,10 +9,13 @@ import (
 	"github.com/goatherdai/yaah/internal/types"
 )
 
-// toolErrorPrefix is the exact prefix the agent loop writes for a failed
-// tool result (internal/agent/agent_dispatch.go). Matching it exactly —
-// rather than case-insensitively — avoids marking a successful command
-// whose output happens to start with "ERROR:" as failed.
+// toolErrorPrefix is the exact lowercase prefix the agent loop writes for
+// normalized tool failures (internal/agent/agent_dispatch.go). Persisted
+// result rows carry no error flag, so this is a heuristic: a successful
+// command whose output starts with exactly "error: " is still misclassified.
+// Matching case-sensitively only avoids the broader false-positive class
+// ("ERROR:", leading whitespace). yaah-bmv3 tracks persisting an explicit
+// flag so replay can stop guessing.
 const toolErrorPrefix = "error: "
 
 // tuiHistoryFromMessages projects a persisted conversation onto the
@@ -39,7 +42,7 @@ func tuiHistoryFromMessages(history []types.Message) []tui.HistoryItem {
 			items = append(items, tui.HistoryItem{Kind: tui.HistoryUser, Text: m.Content})
 		case "assistant":
 			text := m.Content
-			if agentcontext.IsSyntheticToolCarrier(text) {
+			if len(m.ToolCalls) > 0 && agentcontext.IsSyntheticToolCarrier(text) {
 				text = ""
 			}
 
@@ -53,6 +56,11 @@ func tuiHistoryFromMessages(history []types.Message) []tui.HistoryItem {
 				// result, so replaying them would show a block with no
 				// outcome. Keep the same rule here.
 				if call.ID == "" {
+					continue
+				}
+				// The live TUI routes delegate calls to the Subagents pane
+				// and never adds a conversation block for them (proxy.go).
+				if call.Function.Name == "delegate" {
 					continue
 				}
 				hc := tui.HistoryToolCall{

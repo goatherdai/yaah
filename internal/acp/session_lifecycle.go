@@ -241,7 +241,7 @@ func replayable(m types.Message) (updateKind, text string) {
 		}
 		return UpdateUserMessageChunk, m.Content
 	case "assistant":
-		if agentcontext.IsSyntheticToolCarrier(m.Content) {
+		if len(m.ToolCalls) > 0 && agentcontext.IsSyntheticToolCarrier(m.Content) {
 			return "", ""
 		}
 		if m.Content == "" {

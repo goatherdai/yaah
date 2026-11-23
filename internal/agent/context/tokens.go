@@ -130,9 +130,10 @@ func IsInternalUserContent(content string) bool {
 // assistant row that carried only tool calls (internal/agent/persist.go).
 const syntheticToolCarrierPrefix = "[tool:"
 
-// IsSyntheticToolCarrier reports whether content is that placeholder rather
-// than agent text. Transcript consumers use it alongside a tool-call check
-// to skip rows that were never streamed as text to a client.
+// IsSyntheticToolCarrier reports whether content has the placeholder
+// prefix. Callers MUST also check that the row carries tool calls: the
+// persister only writes the placeholder in that case, and assistant text
+// that merely starts with "[tool:" is a real reply, not an internal row.
 func IsSyntheticToolCarrier(content string) bool {
 	return strings.HasPrefix(content, syntheticToolCarrierPrefix)
 }
