@@ -516,3 +516,38 @@ func TestServer_CanonicalFilterCwd(t *testing.T) {
 		t.Fatalf("nonexistent filter must still canonicalize: %v", err)
 	}
 }
+
+// The "[tool:" prefix identifies a synthetic carrier only when the row
+// also carries tool calls. Assistant text with that prefix is a real
+// reply and must survive session/load replay.
+func TestReplayableSyntheticCarrierNeedsToolCalls(t *testing.T) {
+	tests := []struct {
+		name     string
+		message  types.Message
+		wantKind string
+		wantText string
+	}{
+		{
+			name: "carrier with calls is skipped",
+			message: types.Message{
+				Role:      "assistant",
+				Content:   "[tool:read] {}",
+				ToolCalls: []types.ToolCall{{ID: "call-1"}},
+			},
+		},
+		{
+			name:     "prefix without calls is real text",
+			message:  types.Message{Role: "assistant", Content: "[tool:question] asked"},
+			wantKind: UpdateAgentMessageChunk,
+			wantText: "[tool:question] asked",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			kind, text := replayable(tc.message)
+			if kind != tc.wantKind || text != tc.wantText {
+				t.Errorf("replayable() = (%q, %q), want (%q, %q)", kind, text, tc.wantKind, tc.wantText)
+			}
+		})
+	}
+}

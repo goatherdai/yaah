@@ -31,13 +31,20 @@ func (t *App) requestRefresh() {
 		return
 	}
 
-	t.queueUpdateDraw(func() {
+	// Refresh is critical: dropping it would leave refreshQueued set while
+	// the rendered pane stays stale forever. enqueueUIEvent falls back to
+	// a direct QueueUpdateDraw when the queue is saturated.
+	if !t.enqueueUIEvent(true, func() {
 		t.flushRefresh()
 		t.refreshQueued.Store(false)
 		if t.needsRefresh.Load() {
 			t.requestRefresh()
 		}
-	})
+	}, true) {
+		// Shutdown raced the enqueue. Clear the flag so a later caller can
+		// schedule a refresh instead of being coalesced into nothing.
+		t.refreshQueued.Store(false)
+	}
 }
 
 // flushRefresh performs the actual render if dirty, then clears the flag.

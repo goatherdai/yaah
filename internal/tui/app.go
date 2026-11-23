@@ -56,6 +56,10 @@ type App struct {
 	McpServers []mcpinfo.Server
 
 	// --- QueueUpdateDraw ONLY fields below ---
+	//
+	// Exception: bootstrapHistory mutates conversationLog directly on the
+	// setup goroutine before App.Run starts. No queued callback executes
+	// until App.Run drains them, so the seed cannot race with a live event.
 
 	conversationLog []convItem
 	activityLine    *activity.Row
@@ -205,6 +209,10 @@ type App struct {
 	// <spec>` (workflow-in-session Scope B, piece C): set via
 	// SetInitialPrompt before Run, read on the Run goroutine.
 	initialPrompt string
+
+	// history is the restored conversation seeded before Run. Consumed by
+	// restoreHistory on the setup goroutine, then cleared; see history.go.
+	history []HistoryItem
 }
 
 type convItem struct {

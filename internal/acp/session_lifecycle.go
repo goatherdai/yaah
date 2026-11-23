@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	agentcontext "github.com/goatherdai/yaah/internal/agent/context"
 	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/control"
 	"github.com/goatherdai/yaah/internal/cwdpath"
@@ -211,35 +212,18 @@ func (s *Server) handleSessionNew(ctx context.Context, msg Message, sendUpdate u
 	s.refreshAvailableCommands(st, sendUpdate)
 }
 
-// syntheticAssistantText is the content the loop persister stores for
-// an assistant message that carried only tool calls: no real text
-// existed, so the row's content is a falsified tool-call summary.
-// Replay skips those rows — they are conversation internals, not
-// user-visible agent text.
-const syntheticAssistantText = "[tool:"
+// Tool-call-only assistant rows carry a synthetic "[tool:...]" content
+// placeholder instead of real text. agentcontext.IsSyntheticToolCarrier is
+// the shared predicate; replay skips those rows because they are
+// conversation internals, not user-visible agent text.
 
-// internalUserMarkers are the content prefixes of persisted user-role
-// rows that carry agent-internal guidance rather than things the user
-// typed or said in a follow-up: steering and loop-detection nudges
-// (`[STEER] `, internal/agent/pipeline/steer.go and loopdetect.go),
-// checkpoint recovery guidance after a failed or budget-exhausted turn
-// (`SUPERVISOR: `, internal/agent/turn_checkpoint_loop.go), sub-agent
-// conflict reports (`CONFLICT: `,
-// internal/tools/conflict_tracker.go), and background sub-agent
-// results delivered as follow-up rows (`[BACKGROUND <role>]`,
-// cmd/yaah/wiring.go). Replay skips them like the other conversation
-// internals — none of them are streamed to the client during a live
-// run (they enter the model conversation, not the agent's output).
-var internalUserMarkers = []string{"[STEER] ", "SUPERVISOR: ", "CONFLICT: ", "[BACKGROUND"}
-
-func isInternalUserContent(content string) bool {
-	for _, marker := range internalUserMarkers {
-		if strings.HasPrefix(content, marker) {
-			return true
-		}
-	}
-	return false
-}
+// Agent-internal user rows are filtered by agentcontext.IsInternalUserContent,
+// the canonical predicate shared with the TUI's resume replay. They are
+// steering/loop-detection nudges (`[STEER] `), checkpoint recovery guidance
+// (`SUPERVISOR: `), sub-agent conflict reports (`CONFLICT: `), and background
+// results delivered as follow-up rows (`[BACKGROUND <role>]`). None of them
+// are streamed to a client during a live run — they enter the model
+// conversation, not the agent's output — so replay skips them too.
 
 // replayable folds one persisted conversation message into the ACP
 // update variant it replays as, with the text to stream. Empty text
@@ -252,12 +236,12 @@ func isInternalUserContent(content string) bool {
 func replayable(m types.Message) (updateKind, text string) {
 	switch m.Role {
 	case "user":
-		if m.Content == "" || isInternalUserContent(m.Content) {
+		if m.Content == "" || agentcontext.IsInternalUserContent(m.Content) {
 			return "", ""
 		}
 		return UpdateUserMessageChunk, m.Content
 	case "assistant":
-		if len(m.ToolCalls) > 0 && strings.HasPrefix(m.Content, syntheticAssistantText) {
+		if len(m.ToolCalls) > 0 && agentcontext.IsSyntheticToolCarrier(m.Content) {
 			return "", ""
 		}
 		if m.Content == "" {

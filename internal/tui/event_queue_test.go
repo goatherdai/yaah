@@ -85,6 +85,22 @@ func TestQueueUpdate_PreservesFIFOOrder(t *testing.T) {
 	}
 }
 
+// A refresh that cannot be scheduled must not leave refreshQueued set:
+// every later markDirty would be coalesced into a refresh that never runs.
+func TestRequestRefreshClearsQueuedFlagWhenQueueStops(t *testing.T) {
+	ui := New("test")
+	done := make(chan struct{})
+	close(done)
+	ui.bgDone = done
+	ui.uiEventCh = make(chan uiEvent) // no consumer; enqueue cannot succeed
+
+	ui.markDirty()
+
+	if ui.refreshQueued.Load() {
+		t.Fatal("refreshQueued stayed set after the event queue stopped")
+	}
+}
+
 func TestBackgroundLoops_StartStopLifecycle(t *testing.T) {
 	ui := New("test")
 	done := ui.startBackgroundLoops()

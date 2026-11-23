@@ -150,6 +150,14 @@ guidance and need an explicit id instead; ACP ignores `--resume`
 entirely — its sessions are named by the client's `session/new` and
 `session/load` requests.
 
+The TUI replays the restored conversation into its transcript on startup,
+using the same row-exclusion rules as ACP's `session/load` replay: system
+rows, tool-call carriers, agent-internal steer/supervisor/conflict/background
+rows, and ID-less calls are skipped. On top of that shared filter, the TUI
+keeps reasoning blocks and folds persisted tool results into tool blocks —
+neither is part of ACP's client replay. The pane opens on the prior
+conversation and the next prompt appends after it.
+
 Session data lives in `~/.yaah/state.db` (or `$YAAH_HOME/state.db`).
 Goatherd execution traces are always on and record the session context,
 every turn boundary, assistant content plus reasoning content/signature,

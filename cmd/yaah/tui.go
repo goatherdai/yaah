@@ -113,6 +113,12 @@ func runTUI(initialSpec string) error {
 
 	app := tui.New(version)
 
+	// A resumed session carries its transcript in the agent, not in the
+	// TUI's live event stream. Seed the conversation pane from the same
+	// History() ACP replays on session/load so resuming lands the user back
+	// in the conversation instead of an empty pane.
+	app.SetHistory(tuiHistoryFromMessages(sess.History()))
+
 	app.SetProvider(sess.ProviderName())
 	app.SetModel(sess.ModelName())
 	app.SetMode(sess.Mode())

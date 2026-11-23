@@ -268,6 +268,37 @@ func TestDurationStr_Second(t *testing.T) {
 	}
 }
 
+// Restored transcript rows have no persisted timing. SetDurationLabel
+// keeps them honest in both the collapsed and expanded views, and an empty
+// label restores the measured duration for live blocks.
+func TestSetDurationLabel(t *testing.T) {
+	th := colors.NewDarkTheme()
+	b := New("t1", "bash", `{"command":"ls"}`, &th)
+	b.Complete("ls completed", "file1")
+
+	collapsed := b.Render()
+	if strings.Contains(collapsed, "—") {
+		t.Fatalf("default collapsed render should show a measured duration, got %q", collapsed)
+	}
+
+	b.SetDurationLabel("—")
+	collapsed = b.Render()
+	if !strings.Contains(collapsed, "—") || strings.Contains(collapsed, "0ms") {
+		t.Errorf("collapsed render ignored the duration label: %q", collapsed)
+	}
+
+	b.Toggle()
+	expanded := b.Render()
+	if !strings.Contains(expanded, "Duration: —") {
+		t.Errorf("expanded render ignored the duration label: %q", expanded)
+	}
+
+	b.SetDurationLabel("")
+	if got := b.Render(); strings.Contains(got, "Duration: —") {
+		t.Errorf("empty label should restore the measured duration: %q", got)
+	}
+}
+
 func TestRenderCtx_Width(t *testing.T) {
 	th := colors.NewDarkTheme()
 	b := New("t1", "bash", `{"command":"ls"}`, &th)

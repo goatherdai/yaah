@@ -11,6 +11,10 @@ func (t *App) Run() error {
 	t.App.SetFocus(t.Input)
 	t.renderInfoPane()
 	t.renderTodoPane()
+	// A resumed session carries its persisted conversation in the agent,
+	// not in the view's event stream. Seed it before App.Run drains the
+	// queue so restored rows always precede live events.
+	t.bootstrapHistory()
 	// Seed a launcher prompt (yaah tui workflow run <spec>, piece C) through
 	// the same OnSubmit path a typed prompt uses, once the loops above are
 	// consuming. queueUpdateDraw routes onto the UI event loop, which blocks
