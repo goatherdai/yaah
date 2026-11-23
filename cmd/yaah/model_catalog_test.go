@@ -24,6 +24,30 @@ func testModelCatalog(discover func(context.Context) (modelSnapshot, bool)) *mod
 	}
 }
 
+// TestACPModelCatalogOptionsWaitsForDiscovery pins that the ACP adapter's
+// Options uses Load (wait for the full discovery) rather than Current (which
+// gives up after modelCatalogWait), so a session/new that lands during the
+// startup discovery window still gets the settled picker in its response.
+func TestACPModelCatalogOptionsWaitsForDiscovery(t *testing.T) {
+	catalog := &modelCatalog{
+		cfg:    &config.Config{},
+		logf:   func(string, ...any) {},
+		budget: 2 * time.Second,
+		retry:  modelCatalogRetry,
+		// wait is left zero so Current would fall back to modelCatalogWait
+		// (500ms); Load ignores wait entirely.
+		discoverFn: func(context.Context) (modelSnapshot, bool) {
+			time.Sleep(time.Second) // longer than modelCatalogWait
+			return modelSnapshot{IDs: []string{"deepseek/deepseek-flash"}}, true
+		},
+	}
+
+	opts := (&acpModelCatalog{catalog: catalog}).Options(context.Background())
+	if len(opts) != 1 || opts[0].Model != "deepseek-flash" {
+		t.Fatalf("Options = %v, want deepseek/deepseek-flash (Options must wait out discovery, not give up at modelCatalogWait)", opts)
+	}
+}
+
 // TestModelCatalogSharesOneDiscovery pins single-flight: concurrent callers wait
 // on one discovery attempt instead of triggering one each.
 func TestModelCatalogSharesOneDiscovery(t *testing.T) {
