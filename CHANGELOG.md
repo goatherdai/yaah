@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.206.5](https://github.com/goatherdai/yaah/compare/v0.206.4...v0.206.5) (2026-11-23)
+
+
+### Bug Fixes
+
+* **dispatch:** cover container and background lanes in guard-denial reporting ([#384](https://github.com/goatherdai/yaah/issues/384)) ([6316ca0](https://github.com/goatherdai/yaah/commit/6316ca082b8cfd92e82f569b9756600422179968))
+
 ## [0.206.4](https://github.com/goatherdai/yaah/compare/v0.206.3...v0.206.4) (2026-11-23)
 
 
