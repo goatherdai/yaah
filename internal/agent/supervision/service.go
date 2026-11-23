@@ -342,6 +342,13 @@ const shellGuardRuleName = "destructive_shell_guard"
 // which one refused.
 const shellAllowlistRuleName = "role_shell_allowlist"
 
+// ShellAllowlistRule names the rule a role-allowlist refusal is recorded
+// under. Exported so a caller that reports such a refusal — the sub-agent
+// runner's dispatch envelope, which tells the orchestrator what its child
+// was not allowed to do — cites the same rule name the supervision status
+// and the trace facts carry.
+const ShellAllowlistRule = shellAllowlistRuleName
+
 // scopeIDPrefix is how the scope manager keys a scope: "scope:" plus the
 // scope's trace owner. A deny recorded from a sub-agent loop knows only
 // the owner, so it needs the prefix to address the same scope the
@@ -521,6 +528,11 @@ func toolCommand(argsJSON string) string {
 	}
 	return args.Command
 }
+
+// ToolCommand is toolCommand for callers outside this package: a caller that
+// reports a refusal must name the command the guard matched, and it has only
+// the call's argument JSON to read it from.
+func ToolCommand(argsJSON string) string { return toolCommand(argsJSON) }
 
 // WithShellAllowlist narrows a guard check to one role's shell-command
 // allowlist. A sub-agent loop's owner ID is the trace session, not the

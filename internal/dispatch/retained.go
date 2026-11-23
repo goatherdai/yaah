@@ -989,9 +989,14 @@ func startRetainedRun(
 	var transcript []types.Message
 	var stop jobs.SubAgentStop
 	var confinement jobs.SubAgentConfinement
+	// The supervisor-guard refusals this body recorded (yaah-938), carried into
+	// the envelope's warnings below: the trace records them for an operator, but
+	// this envelope is what the orchestrator reads.
+	var denials []jobs.SubAgentDenial
 	runCtx := jobs.WithSubAgentTranscript(ctx, &transcript)
 	runCtx = jobs.WithSubAgentStop(runCtx, &stop)
 	runCtx = jobs.WithSubAgentConfinement(runCtx, &confinement)
+	runCtx = jobs.WithSubAgentDenials(runCtx, &denials)
 	var cancel context.CancelFunc
 	if timeout > 0 {
 		runCtx, cancel = context.WithTimeout(runCtx, timeout)
@@ -1009,6 +1014,12 @@ func startRetainedRun(
 		cancel()
 	}
 	env.StopReason = retainedStopReason(&stop, bodyErr, classifyRetainedBodyFailure(bodyErr, timeout, runErr, parentErr, budgetGoverns))
+	// The refusals this body recorded ride on the envelope the orchestrator
+	// settles (yaah-938): a sealed proposal whose child was refused part of what
+	// it attempted must say so, whether it sealed completely or as a partial.
+	for _, w := range denialWarnings(denials) {
+		env.AddWarning(w)
+	}
 
 	// The report lane (yaah-7yf) never seals: the deliverable is the
 	// result text. Surface any provisioning problem the proposal lane
@@ -1017,7 +1028,10 @@ func startRetainedRun(
 	// it — and hand the report straight back.
 	if report {
 		var notes []string
-		var warnings []string
+		// What the guard refused is one of the attempt's caveats: a report that
+		// could only gather part of what it was asked for must say so
+		// (yaah-938).
+		warnings := denialWarnings(denials)
 		if worldRes.Degraded {
 			notes = append(notes, "dispatch world degraded: "+worldRes.Reason)
 		}
@@ -1418,9 +1432,13 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	// The confinement sink: the runner reports the jail this body actually ran
 	// under, and the seal below cites it.
 	var confinement jobs.SubAgentConfinement
+	// The continuation's own guard refusals (yaah-938), carried into the
+	// envelope below like the original run's.
+	var denials []jobs.SubAgentDenial
 	runCtx := jobs.WithSubAgentTranscript(ctx, &transcript)
 	runCtx = jobs.WithSubAgentStop(runCtx, &stop)
 	runCtx = jobs.WithSubAgentConfinement(runCtx, &confinement)
+	runCtx = jobs.WithSubAgentDenials(runCtx, &denials)
 	var cancel context.CancelFunc
 	if p.timeout > 0 {
 		runCtx, cancel = context.WithTimeout(runCtx, p.timeout)
@@ -1496,6 +1514,11 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		Next:       proposalVerbs(),
 		World:      string(subagent.WorldWorktree),
 		StopReason: stopReason,
+	}
+	// The same refusals channel the original run's do (yaah-938): a continuation
+	// is a dispatch of its own, and its envelope is what the orchestrator reads.
+	for _, w := range denialWarnings(denials) {
+		env.AddWarning(w)
 	}
 	if output == nil {
 		// Sealing failed: discard the isolated scope rather than strand it,
