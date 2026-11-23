@@ -1,6 +1,6 @@
 # Running workflows from inside a session — Scope B plan (workflow tool + deterministic launcher)
 
-Status: **draft — proposed, not yet implemented** · 2026-11-22
+Status: **implemented (Scope B, PR #352)** · 2026-11-22
 
 This revises the Scope A follow-on (`docs/workflow-in-session.md` §8) around a
 direction change: instead of a detached, fire-and-forget run, the workflow
@@ -46,18 +46,22 @@ deterministically.
 
 ## 2. The three pieces
 
-1. **A — the `workflow_run` tool** (orchestrator belt).
+All three shipped in PR #352:
+
+1. **A — the `workflow_run` tool** (orchestrator belt), joined by the
+   `workflow_list` discovery companion from the default-location work (PR #357).
 2. **B — per-node progress** over the control channel.
 3. **C — the deterministic launcher** `yaah tui workflow run <spec>`.
 
-A is the pivot; B is the observability that makes it worth doing; C is the
+A was the pivot; B is the observability that makes it worth having; C is the
 deterministic door into A.
 
 ---
 
 ## 3. Piece A — the tool
 
-New `cmd/yaah/workflow_run_tool.go` (package `yaah`), mirroring `DelegateTool`
+`cmd/yaah/workflow_run_tool.go` (package `yaah`) adds the tool, mirroring
+`DelegateTool`
 (`internal/tools/delegate.go` — `Name`/`Description`/`Schema`/`Execute(ctx,
 args) (string, error)`), because the orchestrator already invokes `delegate`
 the same way and its observability is the precedent.
@@ -97,15 +101,16 @@ func (t *WorkflowRunTool) Execute(ctx context.Context, args string) (string, err
 }
 ```
 
-Changes:
+Wiring as shipped:
 
-- Register at wiring time via `Registry.Admit("workflow_run")` +
+- Registered at wiring time via `Registry.Admit("workflow_run")` +
   `Registry.Register(&WorkflowRunTool{})`, the same path MCP tools take
   (`cmd/yaah/wiring_mcp.go`). It is **not** a `func() Tool` entry in
   `internal/tools/tools.go` — that table cannot reach `runWorkflowRun`.
-- Add `"workflow_run"` to `defaultOrchestratorBelt`
-  (`cmd/yaah/orchestrator_belt.go`) and `prompts.ToolDescription("workflow_run")`.
-- Availability: orchestrator/primary agent only, not sub-agents — mirror how
+- `"workflow_run"` was added to `defaultOrchestratorBelt`
+  (`cmd/yaah/orchestrator_belt.go`), together with
+  `prompts.ToolDescription("workflow_run")`.
+- Availability: orchestrator/primary agent only, not sub-agents — mirroring how
   `delegate` is gated (the meta agent dispatches; a sub-agent must not be able
   to kick off a nested workflow).
 
@@ -136,9 +141,9 @@ executor.
 
 ## 5. Piece C — the launcher
 
-`tuiCmd` (`cmd/yaah/tui.go`) gains a `workflow run <spec>` subcommand (or a
-`--workflow <spec>` flag) carrying an initial spec into `runTUI`. After the
-session boots, inject the workflow. Two strategies:
+`tuiCmd` (`cmd/yaah/tui.go`) gained a `workflow run <spec>` subcommand carrying
+an initial spec into `runTUI`. After the session boots, the workflow is
+injected. The two strategies considered were:
 
 - **Prompt-seed (v1, recommend first).** Seed the first prompt
   "Run the workflow at `<spec>` using the workflow_run tool." Reuses the
@@ -152,6 +157,10 @@ session boots, inject the workflow. Two strategies:
 
 For the CLI form the intent is explicit, so v2 is the eventual target; v1 is
 the cheap first cut that proves the tool path end-to-end.
+
+**Shipped: v1 (prompt-seed).** `runTUI` calls `app.SetInitialPrompt(
+workflowSeedPrompt(spec))` (`cmd/yaah/tui.go`). The v2 deterministic
+pre-seed is still outstanding.
 
 ---
 

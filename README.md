@@ -215,6 +215,51 @@ Resolution rules, platform mechanisms, and the isolation-vs-egress matrix are
 in [configuration.md](docs/configuration.md#sub-agent-dispatch-lane-and-confinement)
 and [goatherd-parity.md](docs/goatherd-parity.md#dispatch-worlds).
 
+## Workflows
+
+A workflow is orchestration written down: a `yaah.workflow/v1` YAML or JSON
+document that names the dispatches, the role and prompt for each, the graph
+that orders them, the budgets that bound them, and the settlement verb that
+disposes each proposal. The document is the artifact — reviewed like code,
+diffed in a pull request, and re-runnable years later.
+
+`yaah workflow validate` checks a document without running it, across five
+rule families (structure, values, linearity, calls, authority-and-cost) and
+reports findings as `code path message`. `yaah workflow explain` prints the
+plan those same validators computed: the DAG, every role, world, grant, and
+network mode a node may touch, the worst-case dispatch count this host will
+honor, and each proposal's guaranteed disposition. Review the plan before
+spending a token.
+
+`yaah workflow run <spec>` executes it deterministically. `--state` commits
+node state per event, so `yaah workflow resume <run_id>` continues a crashed
+run without re-dispatching finished nodes or settling a proposal twice;
+`--replay <run_id>` walks the same graph with the recorded answers substituted
+and **no model called at all**; and `yaah workflow explain --from-trace` reports
+where a recorded run diverged from its document.
+
+The orchestrator can drive the same surface mid-conversation: the
+`workflow_run` and `workflow_list` tools sit on the default belt, the TUI
+offers `:workflow run` and `:workflow list` (a picker when no argument is
+given), and ACP exposes read-only `workflow/list` for a client's selector —
+execution always goes through the permissioned `workflow_run` tool. Bare names
+resolve against `--workflow-dir`, then `./workflows`, then
+`~/.yaah/workflows`.
+
+```bash
+yaah workflow explain workflows/security-audit.yaml --param target=internal/auth
+yaah workflow run workflows/security-audit.yaml --param target=internal/auth \
+  --state .yaah/workflow.db
+
+# Or hand the document to the orchestrator and let it run the tool
+yaah "Run examples/workflows/dependency-upgrade.yaml against modernc.org/sqlite."
+```
+
+Five ready specs ship in `workflows/` — `code-review`, `dev-issue`, `fix-bug`,
+`refactor`, `security-audit` — with two longer examples in
+`examples/workflows/`. Node kinds, the validation codes, durability and replay,
+and the security model are in [workflows.md](docs/workflows.md).
+
 ## Commands
 
 ```bash
@@ -229,6 +274,8 @@ yaah tui                          # terminal UI
 yaah web [--listen addr]          # browser UI
 yaah mcp serve [--listen addr]    # MCP tool server
 yaah acp serve                    # ACP server
+
+yaah workflow validate|explain|run|resume|list  # declarative orchestration specs
 
 yaah login|logout [provider]      # OAuth sign-in
 yaah config show|edit             # inspect or edit config
@@ -248,8 +295,9 @@ yaah version
 | Doc | Contents |
 |---|---|
 | [architecture.md](./docs/architecture.md) | Agent loop, middleware pipeline, tool dispatch, context management, streaming, persistence, traces |
-| [goatherd-parity.md](./docs/goatherd-parity.md) | Shepherd parity ledger: full scorecard, dispatch worlds, settlement, intentional divergences |
+| [goatherd-parity.md](./docs/goatherd-parity.md) | Goatherd parity ledger: full scorecard, dispatch worlds, settlement, intentional divergences |
 | [acp.md](./docs/acp.md) | Agent Client Protocol server, methods, and editor integration |
+| [workflows.md](./docs/workflows.md) | Workflow documents: node kinds, validation codes, durability and replay, security model |
 | [storage.md](./docs/storage.md) | `state.db` / `trace.db` ownership, intentional overlap, fidelity limits, retention |
 | [sub-agents.md](./docs/sub-agents.md) | Roles, budgets, escalation, quality gates, retained proposals, custom roles |
 | [configuration.md](./docs/configuration.md) | Full `config.yaml` reference: providers, agents, sub-agents, confinement, workspace, supervision, hooks, observability |

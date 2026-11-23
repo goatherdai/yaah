@@ -1,6 +1,6 @@
 # yaah Workflow DSL — Detailed Plan
 
-> **Status:** accepted — implemented as `yaah-0u0v` (P1 complete, P2 in progress; see the epic bead `yaah-0u0v`)
+> **Status:** accepted — **P1–P2 complete; P3 partial**: `propose`, `render`, and an approval-gated `workflow_run` are outstanding. Tracked as epic bead `yaah-1558` (formerly `yaah-0u0v`).
 > **Date:** 2026-11-11 (design) · 2026-11-14 (tracked in-repo)
 > **Scope:** a declarative orchestration layer over yaah's existing dispatch,
 > proposal, and settlement primitives.
@@ -301,7 +301,14 @@ Common fields on every node: `id` (unique), `kind`, `needs` (list of node ids),
 | `aggregate` | combine values | `inputs`, `strategy` (`concat`/`summarize`/`json_merge`), `body` (for `summarize`) |
 | `call` | invoke a named subworkflow | `workflow`, `params`, `max_depth` |
 | `emit` | write a named output | `value`, `path` (optional artifact) |
-| `human` | pause for approval (P2) | `prompt`, `timeout_seconds`, `on_timeout` |
+| `human` | **declined** — schema-only; the executor refuses it (see the note below) | `prompt`, `on_timeout` |
+
+> **`human` is declined, not delivered.** The kind is declared in the schema
+> so a document can express the intent and the validator can reason about it,
+> but `classifyKind` refuses it (`kindRefuse`, `ReasonNotImplemented`, in
+> `internal/workflow/exec/kinds.go`) because a human response is an approval
+> door the scheduler core does not have. There is no approval door in v1, so
+> no `human` node executes — including for `on_conflict: escalate` (see §5.6).
 
 A `fanout` or `loop` body may be a single node or a list of nodes with unique
 local ids. Inside the body, earlier local ids are in scope; outside, reference
@@ -395,7 +402,11 @@ Rules:
    worktree proposals). These map directly to the existing `proposal` tool.
 3. `on_conflict` is `stop | skip | escalate`. `stop` halts the workflow with a
    machine-readable conflict; `skip` leaves the proposal open for a later
-   `settle`; `escalate` routes to a `human` or judge node.
+   `settle`; `escalate` **fails the node today**. A human response is an
+   approval door the scheduler core does not have, so the conflict is
+   surfaced as that node's failure reason, naming what is missing, rather
+   than routed to a `human` or judge node (`onSettlementAsked` in
+   `internal/workflow/exec/settle.go`).
 4. Every proposal must end with exactly one disposition on every reachable
    path. A proposal selected into `proposals` but dropped by `where` must be
    handled by a subsequent `settle` with `action: release`/`discard`.
@@ -716,13 +727,12 @@ over code.
 ```
 internal/workflow/
 ├── spec/        types, JSON schema, strict decoder, version migration
-├── validate/    static rules WF001–WF036
+├── validate/    static rules WF001–WF037
 ├── ir/          resolved graph, selectors, template binding
 ├── exec/        scheduler, node handlers, budget accounting, resume state
-├── bind/        adapters to DelegateTool, ProposalTool, WaitFor, Jobs
 └── trace/       workflow trace records
 cmd/yaah/
-└── workflow.go  validate | explain | run | resume | propose | render
+└── workflow.go  validate | explain | run | resume | list
 ```
 
 Keep the executor host-side. It uses the same tools the orchestrator uses; it
@@ -786,7 +796,7 @@ reproducible from `spec_hash` + params + recorded agent outputs.
 | `delegate` | node execution; roles, lane, provider/model, budgets |
 | retained lane + `proposal` | proposal creation and settlement |
 | `background` + `subagent_jobs` | long fan-outs without blocking a model turn |
-| `wait_for`/`watch` | optional `human` and external-signal nodes (P2) |
+| `wait_for`/`watch` | external-signal nodes (P2); a `human` node would need an approval door, which is declined |
 | role files (`.agents/roles/*.md`) | role resolution and per-role limits |
 | `agents.subagent.*` config | concurrency, mode, world, grants, egress defaults |
 | trace store | audit, replay, `explain --from-trace` |
@@ -880,9 +890,10 @@ by demo value.
 - `join: any | quorum` with cancellation tests; `select` policy (`judge`,
   `first_success`, `smallest_diff`).
 - Workflow-level `on_abort` (`halt | release_all | discard_all`).
-- `gate` (deterministic assert + judge role), `human` approval, `call`
-  subworkflows with depth limits.
-- Full WF026–WF036 static analysis, including linearity on all paths.
+- `gate` (deterministic assert + judge role), `call` subworkflows with depth
+  limits. (`human` was dropped from this list: it is schema-only and refused
+  by the executor — see the note in §5.3.)
+- Full WF026–WF037 static analysis, including linearity on all paths.
 - Resume/replay (`--replay`), trace-backed `explain --from-trace`.
 - Security test suite: oversized specs, role escalation, grant widening, cost
   bombs, path traversal in `call`, prompt-size bombs.
@@ -907,7 +918,9 @@ by demo value.
 - `yaah workflow propose "<intent>"` — an orchestrator dispatch that emits a
   spec, validated against the schema with a bounded repair loop (max 3).
 - `workflow_run` tool (opt-in) so the orchestrator can execute a spec it
-  authored, gated by approval policy.
+  authored, gated by approval policy. **Shipped without the gate**: the tool
+  exists and is always-on in the orchestrator belt (Scope B, PR #352); the
+  opt-in/approval half is the outstanding work.
 - `yaah workflow render` — Mermaid/HTML graph from the IR (read-only).
 - Metrics: invalid-spec rate, repair attempts, spec-vs-actual trace diff.
 
@@ -962,7 +975,7 @@ that lands green with its tests.
 | --- | --- | --- | --- |
 | **P0** | 7 | spec + schema + hash; IR + selectors/templates; validator structure; validator values; validator proposal linearity; validator authority/cost; `explain` skeleton | `validate` + `explain` on the goldens |
 | **P1** | 8 | scheduler core; delegate/emit; proposal/settle; fan-out; loop/branch/aggregate; SQLite resume; trace records; bench e2e | one `orch-*` task runs from a spec |
-| **P2** | 9 | any/quorum + cancellation; `select`; `gate`; `human`; `call`; `on_abort`; replay/idempotency; security suite; five bench tasks + docs | five `orch-*` tasks pass |
+| **P2** | 9 | any/quorum + cancellation; `select`; `gate`; `call`; `on_abort`; replay/idempotency; security suite; five bench tasks + docs (`human` declined — schema-only, refused by the executor) | five `orch-*` tasks pass |
 | **P3** | 3 | `workflow propose` + repair loop; `workflow_run` + approval; `render` + gallery/metrics | a model-authored spec runs |
 
 **Total:** ~27 PRs for P0–P3, plus the PR 0 refactor; ~15 for the MVP
@@ -1005,7 +1018,7 @@ the existing bench arms, and never CI gates.
 | `orch-settle-discard` | `settle.discard`, `on_abort: discard_all` |
 | `orch-guard` | `gate` (judge), `on_failure` |
 | `orch-quality-gate` | `gate` + `branch` + `retry` |
-| `orch-escalation` | `branch`, `on_failure: continue`, `human` (P2) |
+| `orch-escalation` | `delegate` (honest refusal) + `emit`; the escalation is the deliverable, not a node kind — `human` is declined |
 | `orch-recovery` | resume state, `settle` after restart |
 | `orch-confinement` | per-node `grants`, `network`, `world` |
 | `orch-compact` | `delegate` + compaction (not a DSL concern) |
@@ -1065,7 +1078,8 @@ is the whole suite being expressible. The third is five tasks passing.
    for parallel `apply`, infer otherwise.
 5. **Human nodes.** Use the existing `question` tool or a dedicated `human`
    node with `wait_for`? Recommendation: dedicated node, backed by `question`,
-   so the trace is uniform.
+   so the trace is uniform. *Resolved 2026-11: declined — the kind is
+   schema-only and refused by the executor, because there is no approval door.*
 6. **Subworkflow registry.** File-path `call` (`./sub.yaml`) is convenient but
    a path-traversal risk. Recommendation: named registry + explicit
    `--workflow-root`, with path containment checks.

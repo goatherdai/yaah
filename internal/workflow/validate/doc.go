@@ -155,10 +155,4 @@
 // (every reachable grant at its widest access, every broker host, every
 // artifact path, sorted and deduplicated so two runs over one graph agree
 // byte for byte) and the worst-case cost.
-//
-// One more family is planned for this package: the proposal-linearity rules
-// (WF020–WF029). It gets its own aggregate next to Structural, Values,
-// Authority, and Cost and its own rows in this table: the code set is small
-// and part of the document contract, so it stays somewhere a human can read
-// all of it.
 package validate
