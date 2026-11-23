@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.205.0](https://github.com/goatherdai/yaah/compare/v0.204.2...v0.205.0) (2026-11-23)
+
+
+### Features
+
+* **tui:** render conversation history on session resume ([#373](https://github.com/goatherdai/yaah/issues/373)) ([54eeecf](https://github.com/goatherdai/yaah/commit/54eeecf6742af701b59a9c3a2ceba1473ebb2c5f))
+
 ## [0.204.2](https://github.com/goatherdai/yaah/compare/v0.204.1...v0.204.2) (2026-11-23)
 
 
