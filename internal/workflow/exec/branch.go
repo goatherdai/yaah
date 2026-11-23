@@ -133,7 +133,7 @@ func routedLabel(selected string) string {
 // WAIT, not an empty value, so the cycle falls through and the run does whatever
 // else it can.
 func (r *Run) branchStepOnce() (bool, error) {
-	for _, p := range r.ready {
+	for _, p := range r.queue.ready {
 		n := r.byPath[p]
 		if n == nil || n.Kind != ir.KindBranch {
 			continue
@@ -239,7 +239,7 @@ func (r *Run) onBranchRouted(e BranchRoutedEvent) error {
 	}
 	st.Selected = selected
 	if selected == "" {
-		r.warnOnce("branch-nomatch:"+n.Path, n.Path+
+		r.trace.warnOnce("branch-nomatch:"+n.Path, n.Path+
 			": the routed value matched no case and no default is declared; no arm runs on this path")
 	}
 	st.Result = routedLabel(selected)

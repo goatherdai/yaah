@@ -72,28 +72,28 @@ import (
 // recordTrace projects one event and appends its records to the run's trace. It
 // is called from commit, after the event's log line is written, so
 // Record.EventSeq and the log's sequence number are the same number.
-func (r *Run) recordTrace(ev Event) {
-	for _, rec := range r.traceRecords(ev) {
-		rec.Seq = len(r.records) + 1
-		rec.EventSeq = r.seq
+func (l *traceLedger) recordTrace(ev Event, seq int, v traceView) {
+	for _, rec := range l.traceRecords(v, ev) {
+		rec.Seq = len(l.records) + 1
+		rec.EventSeq = seq
 		if rec.RunID == "" {
-			rec.RunID = r.runID
+			rec.RunID = v.runID
 		}
 		if rec.SpecHash == "" {
-			rec.SpecHash = r.specHash
+			rec.SpecHash = v.specHash
 		}
-		r.records = append(r.records, rec)
+		l.records = append(l.records, rec)
 	}
 }
 
 // traceRecords is the projection proper: a pure function of the event and the
 // graph facts the run already holds.
-func (r *Run) traceRecords(ev Event) []trace.Record {
+func (l *traceLedger) traceRecords(v traceView, ev Event) []trace.Record {
 	switch e := ev.(type) {
 	case RunStartedEvent:
 		return []trace.Record{{
 			Kind:   trace.KindRunStarted,
-			RunID:  r.traceRunID(e.RunID),
+			RunID:  l.traceRunID(v, e.RunID),
 			Status: trace.StatusStarted,
 		}}
 	case RunResumedEvent:
@@ -103,41 +103,41 @@ func (r *Run) traceRecords(ev Event) []trace.Record {
 		// nobody documented.
 		return []trace.Record{{
 			Kind:   trace.KindRunStarted,
-			RunID:  r.traceRunID(e.RunID),
+			RunID:  l.traceRunID(v, e.RunID),
 			Status: trace.StatusResumed,
 		}}
 	case NodeReadyEvent:
-		return []trace.Record{r.nodeRecord(trace.KindNodeStarted, e.NodePath, trace.StatusStarted)}
+		return []trace.Record{l.nodeRecord(v, trace.KindNodeStarted, e.NodePath, trace.StatusStarted)}
 	case DispatchStartedEvent:
 		if e.Attempt == nil {
 			return nil
 		}
-		rec := r.nodeRecord(trace.KindDispatch, e.Attempt.NodePath, trace.StatusStarted)
+		rec := l.nodeRecord(v, trace.KindDispatch, e.Attempt.NodePath, trace.StatusStarted)
 		rec.Attempt = e.Attempt.Number
 		rec.DispatchID = e.Attempt.DispatchID
-		rec.Lane = r.laneOf(e.Attempt)
+		rec.Lane = l.laneOf(v, e.Attempt)
 		return []trace.Record{rec}
 	case AttemptCompletedEvent:
-		return r.attemptRecords(e)
+		return l.attemptRecords(v, e)
 	case AttemptTimedOutEvent:
-		return []trace.Record{r.timeoutRecord(e)}
+		return []trace.Record{l.timeoutRecord(v, e)}
 	case NodeSucceededEvent:
-		rec := r.nodeRecord(trace.KindNodeFinished, e.NodePath, trace.StatusSucceeded)
-		rec.OutputDigest = r.outputDigest(e.NodePath)
-		rec = r.markCallChild(e.NodePath, rec)
+		rec := l.nodeRecord(v, trace.KindNodeFinished, e.NodePath, trace.StatusSucceeded)
+		rec.OutputDigest = l.outputDigest(v, e.NodePath)
+		rec = l.markCallChild(v, e.NodePath, rec)
 		return []trace.Record{rec}
 	case NodeFailedEvent:
-		rec := r.nodeRecord(trace.KindNodeFinished, e.NodePath, trace.StatusFailed)
+		rec := l.nodeRecord(v, trace.KindNodeFinished, e.NodePath, trace.StatusFailed)
 		rec.Reason = e.Reason
-		rec.OutputDigest = r.outputDigest(e.NodePath)
-		rec = r.markCallChild(e.NodePath, rec)
+		rec.OutputDigest = l.outputDigest(v, e.NodePath)
+		rec = l.markCallChild(v, e.NodePath, rec)
 		return []trace.Record{rec}
 	case NodeSkippedEvent:
-		rec := r.nodeRecord(trace.KindNodeFinished, e.NodePath, trace.StatusSkipped)
+		rec := l.nodeRecord(v, trace.KindNodeFinished, e.NodePath, trace.StatusSkipped)
 		rec.Reason = e.Reason
 		return []trace.Record{rec}
 	case NodeCancelledEvent:
-		rec := r.nodeRecord(trace.KindNodeFinished, e.NodePath, trace.StatusCancelled)
+		rec := l.nodeRecord(v, trace.KindNodeFinished, e.NodePath, trace.StatusCancelled)
 		rec.Reason = e.Reason
 		rec.DispatchID = e.DispatchID
 		if e.CancelErr != "" {
@@ -147,15 +147,15 @@ func (r *Run) traceRecords(ev Event) []trace.Record {
 			// node's state.
 			rec.Reason = rec.Reason + " (cancel failed: " + e.CancelErr + ")"
 		}
-		rec.OutputDigest = r.outputDigest(e.NodePath)
+		rec.OutputDigest = l.outputDigest(v, e.NodePath)
 		return []trace.Record{rec}
 	case SettlementAskedEvent:
-		rec := r.nodeRecord(trace.KindSettle, e.NodePath, trace.StatusAsked)
+		rec := l.nodeRecord(v, trace.KindSettle, e.NodePath, trace.StatusAsked)
 		rec.ProposalID = e.ProposalID
 		rec.Action = e.Action
 		return []trace.Record{rec}
 	case ProposalSettledEvent:
-		rec := r.nodeRecord(trace.KindSettle, e.NodePath, e.Settled.Status)
+		rec := l.nodeRecord(v, trace.KindSettle, e.NodePath, e.Settled.Status)
 		rec.ProposalID = e.Settled.ProposalID
 		rec.Action = e.Settled.Action
 		rec.Reason = settledReason(e)
@@ -206,7 +206,7 @@ func (r *Run) traceRecords(ev Event) []trace.Record {
 
 // attemptRecords projects one completion: the dispatch's own record, plus the
 // proposal record when the attempt sealed a handle.
-func (r *Run) attemptRecords(e AttemptCompletedEvent) []trace.Record {
+func (l *traceLedger) attemptRecords(v traceView, e AttemptCompletedEvent) []trace.Record {
 	c := e.Completion
 	status := c.Status
 	if status == "" {
@@ -216,10 +216,10 @@ func (r *Run) attemptRecords(e AttemptCompletedEvent) []trace.Record {
 		// for any proposal it tried to seal alike.
 		status = trace.StatusRuntimeError
 	}
-	rec := r.nodeRecord(trace.KindDispatch, e.NodePath, status)
+	rec := l.nodeRecord(v, trace.KindDispatch, e.NodePath, status)
 	rec.Attempt = e.Attempt
 	rec.DispatchID = e.DispatchID
-	rec.Lane = r.laneOfCompletion(e.NodePath, c.Lane)
+	rec.Lane = l.laneOfCompletion(v, e.NodePath, c.Lane)
 	rec.Reason = firstSet(e.RuntimeError, c.StopReason, c.Error)
 	rec.Result = c.Result
 	rec.OutputDigest = trace.Digest(c.Result)
@@ -238,7 +238,7 @@ func (r *Run) attemptRecords(e AttemptCompletedEvent) []trace.Record {
 	}
 	out := []trace.Record{rec}
 	if c.ProposalID != "" {
-		p := r.nodeRecord(trace.KindProposal, e.NodePath, status)
+		p := l.nodeRecord(v, trace.KindProposal, e.NodePath, status)
 		p.Attempt = e.Attempt
 		p.DispatchID = e.DispatchID
 		p.Lane = rec.Lane
@@ -260,8 +260,8 @@ func (r *Run) attemptRecords(e AttemptCompletedEvent) []trace.Record {
 // answers a dispatch from exactly these fields (Status, Reason, Retryable), so a
 // timed-out attempt replays as the same failure — retryable or not — it was
 // folded as.
-func (r *Run) timeoutRecord(e AttemptTimedOutEvent) trace.Record {
-	rec := r.nodeRecord(trace.KindDispatch, e.NodePath, StatusError)
+func (l *traceLedger) timeoutRecord(v traceView, e AttemptTimedOutEvent) trace.Record {
+	rec := l.nodeRecord(v, trace.KindDispatch, e.NodePath, StatusError)
 	rec.Attempt = e.Attempt
 	rec.DispatchID = e.DispatchID
 	rec.Reason = StopReasonTimeout
@@ -274,14 +274,14 @@ func (r *Run) timeoutRecord(e AttemptTimedOutEvent) trace.Record {
 
 // nodeRecord builds a record about one node, filling the identity facts the
 // graph and the instance table already hold.
-func (r *Run) nodeRecord(kind trace.Kind, path, status string) trace.Record {
+func (l *traceLedger) nodeRecord(v traceView, kind trace.Kind, path, status string) trace.Record {
 	rec := trace.Record{Kind: kind, NodePath: path, Status: status}
-	if n := r.byPath[path]; n != nil {
+	if n := v.byPath[path]; n != nil {
 		rec.NodeID = n.ID
 		rec.NodeKind = string(n.Kind)
 		rec.Lane = string(n.Lane)
 	}
-	if inst := r.inst.instances[path]; inst != nil {
+	if inst := v.instances[path]; inst != nil {
 		rec.ScopeID = inst.owner
 	}
 	return rec
@@ -293,11 +293,11 @@ func (r *Run) nodeRecord(kind trace.Kind, path, status string) trace.Record {
 // scheme. It reads CallRunID, which callStep records when the door answers —
 // before the terminal event the record projects — so this still observes no
 // lifecycle state the fold of THAT event is about to change.
-func (r *Run) markCallChild(path string, rec trace.Record) trace.Record {
-	if n := r.byPath[path]; n == nil || n.Kind != ir.KindCall {
+func (l *traceLedger) markCallChild(v traceView, path string, rec trace.Record) trace.Record {
+	if n := v.byPath[path]; n == nil || n.Kind != ir.KindCall {
 		return rec
 	}
-	if st := r.state[path]; st != nil {
+	if st := v.state[path]; st != nil {
 		rec.ChildRunID = st.CallRunID
 	}
 	return rec
@@ -305,22 +305,22 @@ func (r *Run) markCallChild(path string, rec trace.Record) trace.Record {
 
 // traceRunID prefers the id the event names, because a run_started may carry the
 // id the caller minted, and falls back to the run's own.
-func (r *Run) traceRunID(fromEvent string) string {
+func (l *traceLedger) traceRunID(v traceView, fromEvent string) string {
 	if fromEvent != "" {
 		return fromEvent
 	}
-	return r.runID
+	return v.runID
 }
 
 // laneOf echoes the attempt's declared lane, falling back to the graph's.
-func (r *Run) laneOf(a *Attempt) string {
+func (l *traceLedger) laneOf(v traceView, a *Attempt) string {
 	if a == nil {
 		return ""
 	}
 	if a.Lane != "" {
 		return a.Lane
 	}
-	if n := r.byPath[a.NodePath]; n != nil {
+	if n := v.byPath[a.NodePath]; n != nil {
 		return string(n.Lane)
 	}
 	return ""
@@ -329,11 +329,11 @@ func (r *Run) laneOf(a *Attempt) string {
 // laneOfCompletion reads the lane from the completion, then the graph: a lane
 // that reported its own lane is quoted, and one that stayed silent states what
 // the document declared.
-func (r *Run) laneOfCompletion(path, lane string) string {
+func (l *traceLedger) laneOfCompletion(v traceView, path, lane string) string {
 	if lane != "" {
 		return lane
 	}
-	if n := r.byPath[path]; n != nil {
+	if n := v.byPath[path]; n != nil {
 		return string(n.Lane)
 	}
 	return ""
@@ -343,8 +343,8 @@ func (r *Run) laneOfCompletion(path, lane string) string {
 // attempt's recorded result when it has one, and otherwise the recorded output
 // bindings joined in declaration order (an emit or a settle records a value
 // without dispatching anything).
-func (r *Run) outputDigest(path string) string {
-	st := r.state[path]
+func (l *traceLedger) outputDigest(v traceView, path string) string {
+	st := v.state[path]
 	if st == nil {
 		return ""
 	}
@@ -386,4 +386,17 @@ func firstSet(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// traceViewOf is the view one record is projected from: the graph, the state,
+// the instance relation, and the run identity a record defaults to. Every field
+// is read-only here, which is what keeps the projection off the reducer's state.
+func traceViewOf(r *Run) traceView {
+	return traceView{
+		byPath:    r.byPath,
+		state:     r.state,
+		instances: r.inst.instances,
+		runID:     r.runID,
+		specHash:  r.specHash,
+	}
 }

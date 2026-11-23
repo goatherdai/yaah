@@ -26,10 +26,6 @@ type Run struct {
 	// compared at Resume, by the caller that already resolved a graph.
 	specHash string
 	specPath string
-	// persisted counts the event log lines the Store has already recorded. It
-	// is the high-water mark that keeps a checkpoint from re-writing the whole
-	// log on every event.
-	persisted int
 	// ctx is the context the driver was entered with, used only for store
 	// writes made from inside Apply. A store write races nothing and outlives no
 	// run, but it does need a context, and Apply — the reducer's one mutator —
@@ -49,7 +45,10 @@ type Run struct {
 	// inside it: an arm may be both a routing target and a dependency.
 	inst instanceLedger
 
-	ready   []string // node paths in canonical order; the launch order
+	// queue is the launch queue (see readyLedger): node paths in canonical
+	// order, which makes the launch order a function of the document rather
+	// than of the order events arrived in.
+	queue   readyLedger
 	current map[string]*Attempt
 	backoff map[string]time.Duration
 
@@ -60,26 +59,25 @@ type Run struct {
 	// refused by the close itself.
 	proposals settlementLedger
 
-	// warned keys the run warnings that must be stated once per graph.
-	warned map[string]bool
+	// join owns the join decisions over the state a fan-out's items and winners
+	// live in (see joinLedger): what is residue, what a non-winning item owes,
+	// and the write-ahead record of that ask.
+	join joinLedger
 
 	// outstanding is the driver's queue of started, uncommitted attempts in
 	// dispatch order. It is door bookkeeping, not lifecycle state: no
 	// scheduler decision reads it except "is there anything to wait for".
 	outstanding []*Attempt
 
-	events   []string
-	warnings []string
-	// records is the run's trace projection (yaah-0u0v.17): one typed record
-	// per lifecycle fact, appended from commit beside the log line it renders.
-	// recordsPersisted is the high-water mark the Store has already recorded, so
-	// a checkpoint appends only what is new — the same discipline the event log
-	// follows, because both are projections of the one event sequence.
-	records          []trace.Record
-	recordsPersisted int
-	seq              int
-	started          bool
-	finished         bool
+	// trace is the run's written record (see traceLedger): the canonical event
+	// log, the once-only warnings, and the typed trace projection (yaah-0u0v.17)
+	// appended from commit beside the log line it renders. The three are kept
+	// together because they must never disagree, and none of them is read by a
+	// scheduler decision.
+	trace    traceLedger
+	seq      int
+	started  bool
+	finished bool
 	// resumed reports that the run was rebuilt from a checkpoint, which may
 	// happen once per Run (yaah-0u0v.16).
 	resumed bool
@@ -128,7 +126,7 @@ func New(g *ir.Graph, rt Runtime, cfg Config) (*Run, error) {
 		current:    map[string]*Attempt{},
 		backoff:    map[string]time.Duration{},
 		proposals:  newSettlementLedger(),
-		warned:     map[string]bool{},
+		trace:      newTraceLedger(),
 		status:     RunRunning,
 	}
 	for i, n := range g.Steps {
@@ -194,7 +192,7 @@ func New(g *ir.Graph, rt Runtime, cfg Config) (*Run, error) {
 	// infer from a node that ran anyway.
 	for _, p := range r.paths {
 		if n := r.byPath[p]; n.When != nil && cfg.Guard == nil {
-			r.warnings = append(r.warnings, fmt.Sprintf(
+			r.trace.warnings = append(r.trace.warnings, fmt.Sprintf(
 				"%s declares a when guard but the run has no Guard: scheduled as if it passed", p))
 		}
 	}
@@ -211,21 +209,6 @@ func effectivePolicy(p ir.FailurePolicy) ir.FailurePolicy {
 		return ir.OnFailureAbort
 	}
 	return p
-}
-
-// warnOnce appends a run warning the first time a fact is observed and never
-// again. Warnings are not part of the event log, so this cannot move a byte of
-// the deterministic sequence; it exists so a declaration the run honored only
-// partly is stated once instead of on every cycle that consults it.
-func (r *Run) warnOnce(key, msg string) {
-	if r.warned == nil {
-		r.warned = map[string]bool{}
-	}
-	if r.warned[key] {
-		return
-	}
-	r.warned[key] = true
-	r.warnings = append(r.warnings, msg)
 }
 
 // attemptCeiling reads a node's retry block. An absent block, an absent
@@ -322,17 +305,17 @@ func (r *Run) commit(ev Event, external bool) error {
 		r.finished = true
 		r.finishedAt = r.rt.Now()
 		r.seq++
-		r.events = append(r.events, describe(r.seq, ev))
-		r.recordTrace(ev)
+		r.trace.events = append(r.trace.events, describe(r.seq, ev))
+		r.trace.recordTrace(ev, r.seq, traceViewOf(r))
 		r.emitProgress(ev)
 		return nil
 	}
 	r.seq++
-	r.events = append(r.events, describe(r.seq, ev))
+	r.trace.events = append(r.trace.events, describe(r.seq, ev))
 	// The trace projection runs here, on the same event, immediately after the
 	// log line: one sequence, two renderings. Nothing below can make the run's
 	// trace disagree with its log.
-	r.recordTrace(ev)
+	r.trace.recordTrace(ev, r.seq, traceViewOf(r))
 
 	if err := r.fold(ev); err != nil {
 		return err
@@ -454,7 +437,7 @@ func (r *Run) onNodeReady(e NodeReadyEvent) error {
 		r.retire(e.NodePath)
 	}
 	st.State = StateReady
-	r.insertReady(e.NodePath)
+	r.queue.insertReady(e.NodePath)
 	return r.settle(r.byPath[e.NodePath])
 }
 
@@ -584,7 +567,7 @@ func (r *Run) onDispatchStarted(e DispatchStartedEvent) error {
 		a.StartedAt = r.rt.Now()
 	}
 	st.State = StateRunning
-	r.dropReady(a.NodePath)
+	r.queue.dropReady(a.NodePath)
 	st.Attempts = append(st.Attempts, a)
 	r.current[a.NodePath] = a
 	delete(r.backoff, a.NodePath)
@@ -781,7 +764,7 @@ func (r *Run) onTerminal(path string, to State, reason string, ev Event) error {
 		return fmt.Errorf("workflow/exec: node %s is already %s", path, st.State)
 	}
 	r.retire(path)
-	r.dropReady(path)
+	r.queue.dropReady(path)
 	r.proposals.releaseClaims(r.state[path], path)
 	st.State = to
 	st.Reason = reason
@@ -813,7 +796,7 @@ func (r *Run) onNodeCancelled(e NodeCancelledEvent) error {
 		a.Cancelled = true
 	}
 	r.retire(e.NodePath)
-	r.dropReady(e.NodePath)
+	r.queue.dropReady(e.NodePath)
 	r.proposals.releaseClaims(r.state[e.NodePath], e.NodePath)
 	st.State = StateCancelled
 	st.Reason = e.Reason
@@ -999,30 +982,13 @@ func (r *Run) finishAttempt(a *Attempt, e AttemptCompletedEvent) {
 	}
 }
 
-func (r *Run) insertReady(path string) {
-	i := sort.SearchStrings(r.ready, path)
-	if i < len(r.ready) && r.ready[i] == path {
-		return
-	}
-	r.ready = append(r.ready, "")
-	copy(r.ready[i+1:], r.ready[i:])
-	r.ready[i] = path
-}
-
-func (r *Run) dropReady(path string) {
-	i := sort.SearchStrings(r.ready, path)
-	if i < len(r.ready) && r.ready[i] == path {
-		r.ready = append(r.ready[:i], r.ready[i+1:]...)
-	}
-}
-
 // cancelOpen terminates every node that has not, in canonical order, when the
 // run closes. The reason is carried onto each node so a trace can tell a node
 // the author skipped from a node the run never got to. Fan-out instances are in
 // the scan: an instance left pending would otherwise outlive the run in the
 // result with no disposition at all.
 func (r *Run) cancelOpen(reason string) error {
-	for _, p := range r.allPaths() {
+	for _, p := range r.inst.allPaths(r.paths) {
 		st := r.state[p]
 		if st.State.Terminal() {
 			continue
@@ -1047,9 +1013,9 @@ func (r *Run) Result() Result {
 		Reason:       r.reason,
 		Dispatches:   r.dispatches,
 		PeakInFlight: r.peakInFlight,
-		Events:       append([]string(nil), r.events...),
-		Records:      append([]trace.Record(nil), r.records...),
-		Warnings:     append([]string(nil), r.warnings...),
+		Events:       append([]string(nil), r.trace.events...),
+		Records:      append([]trace.Record(nil), r.trace.records...),
+		Warnings:     append([]string(nil), r.trace.warnings...),
 	}
 	if !r.startedAt.IsZero() {
 		end := r.finishedAt
@@ -1058,7 +1024,7 @@ func (r *Run) Result() Result {
 		}
 		out.Elapsed = end.Sub(r.startedAt)
 	}
-	for _, p := range r.allPaths() {
+	for _, p := range r.inst.allPaths(r.paths) {
 		st := *r.state[p]
 		st.Attempts = append([]*Attempt(nil), r.state[p].Attempts...)
 		st.Outputs = append([]NodeOutput(nil), r.state[p].Outputs...)
@@ -1085,7 +1051,7 @@ func (r *Run) Node(path string) (NodeState, bool) {
 }
 
 // Events returns the canonical log so far.
-func (r *Run) Events() []string { return append([]string(nil), r.events...) }
+func (r *Run) Events() []string { return append([]string(nil), r.trace.events...) }
 
 // Status reports the run's disposition, terminal or not.
 func (r *Run) Status() RunStatus { return r.status }

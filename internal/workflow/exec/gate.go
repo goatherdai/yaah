@@ -131,7 +131,7 @@ func gateAssert(n *ir.Node) bool {
 // split costs nothing in determinism and keeps the reducer the one place state
 // changes.
 func (r *Run) gateStepOnce() (bool, error) {
-	for _, p := range r.ready {
+	for _, p := range r.queue.ready {
 		n := r.byPath[p]
 		if !gateAssert(n) {
 			continue

@@ -43,7 +43,7 @@ func (r *Run) resolveHandles(n *ir.Node) (refs []ProposalRef, deferred bool, ref
 	}
 	sortRefs(refs, n.Order)
 	if n.Order == ir.OrderSmallestDiffFirst && len(refs) > 1 {
-		r.warnOnce("settle-order:"+n.Path, fmt.Sprintf(
+		r.trace.warnOnce("settle-order:"+n.Path, fmt.Sprintf(
 			"%s: order: smallest_diff_first settled in canonical proposal order — the scheduler holds no diff-size fact to order on", n.Path))
 	}
 	return refs, false, ""

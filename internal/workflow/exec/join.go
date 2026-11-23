@@ -207,7 +207,7 @@ func (r *Run) closeFanoutJoin(n *ir.Node, st *NodeState, winners []int) error {
 		Name:     fanoutBindingName(n),
 		Value:    st.Result,
 	})
-	r.warnOnce("fanout-join:"+n.Path, fmt.Sprintf(
+	r.trace.warnOnce("fanout-join:"+n.Path, fmt.Sprintf(
 		"%s: join %s satisfied by item(s) %s of %d; the remaining item(s) are drained or cancelled and never change the collected value",
 		n.Path, joinLabel(n), joinIndices(winners), len(st.Items)))
 	return r.derive(NodeSucceededEvent{NodePath: n.Path, Outputs: outputNames(st)})
@@ -240,14 +240,14 @@ func containsInt(idx []int, i int) bool {
 // Everything under such a container is residue: the join is decided, so an item
 // that has not terminated is work nobody will collect, and the container's own
 // outcome is the run-level fact rather than the item's.
-func (r *Run) enclosingCancelJoin(path string) (container string, item int, ok bool) {
+func (l *joinLedger) enclosingCancelJoin(v joinView, path string) (container string, item int, ok bool) {
 	for {
-		in := r.inst.instances[path]
+		in := v.instances[path]
 		if in == nil {
 			return "", 0, false
 		}
-		n := r.byPath[in.owner]
-		st := r.state[in.owner]
+		n := v.byPath[in.owner]
+		st := v.state[in.owner]
 		if n != nil && n.Kind == ir.KindFanout && cancelJoin(n) && st != nil && st.State.Terminal() {
 			return in.owner, in.item, true
 		}
@@ -259,8 +259,8 @@ func (r *Run) enclosingCancelJoin(path string) (container string, item int, ok b
 // Such an item's outcome is not a run-level fact — the container's is — which is
 // what keeps a failed item under join: any from reporting the whole run failed,
 // and a cancelled loser from reporting the whole run cancelled.
-func (r *Run) inJoinResidue(path string) bool {
-	_, _, ok := r.enclosingCancelJoin(path)
+func (l *joinLedger) inJoinResidue(v joinView, path string) bool {
+	_, _, ok := l.enclosingCancelJoin(v, path)
 	return ok
 }
 
@@ -270,12 +270,12 @@ func (r *Run) inJoinResidue(path string) bool {
 // of it in the same cycle is the leak this step exists to prevent.
 func (r *Run) clearOrphanItems() (bool, error) {
 	cleared := false
-	for _, p := range r.allPaths() {
+	for _, p := range r.inst.allPaths(r.paths) {
 		st := r.state[p]
 		if st == nil || st.State.Terminal() || r.inst.instances[p] == nil {
 			continue
 		}
-		if _, _, ok := r.enclosingCancelJoin(p); !ok {
+		if _, _, ok := r.join.enclosingCancelJoin(joinViewOf(r), p); !ok {
 			continue
 		}
 		if err := r.clearOrphanItem(p); err != nil {
@@ -338,20 +338,20 @@ func (r *Run) clearOrphanItem(path string) error {
 // declaration — a settle node's apply, or the run-level refusal that says the
 // author never declared one. Discarding it automatically would throw away exactly
 // the work the join selected.
-func (r *Run) pendingDiscard() (nodePath string, ref ProposalRef, ok bool) {
-	for _, id := range r.proposals.openProposals() {
-		owner := r.proposals.open[id]
-		if r.inst.instances[owner] == nil {
+func (l *joinLedger) pendingDiscard(v joinView) (nodePath string, ref ProposalRef, ok bool) {
+	for _, id := range v.proposals.openProposals() {
+		owner := v.proposals.open[id]
+		if v.instances[owner] == nil {
 			continue
 		}
-		container, item, under := r.enclosingCancelJoin(owner)
+		container, item, under := l.enclosingCancelJoin(v, owner)
 		if !under {
 			continue
 		}
-		if _, claimed := r.proposals.claims[id]; claimed {
+		if _, claimed := v.proposals.claims[id]; claimed {
 			continue
 		}
-		st := r.state[container]
+		st := v.state[container]
 		if st == nil || containsInt(st.Winners, item) || alreadyDiscarded(st, id) {
 			continue
 		}
@@ -378,7 +378,7 @@ func alreadyDiscarded(st *NodeState, id string) bool {
 // Runtime.Settle is asked for the discard verb, then the disposition is folded.
 // It is settleStep's shape for the case the graph declared no settle node for.
 func (r *Run) discardStepOnce(ctx context.Context) (bool, error) {
-	path, ref, ok := r.pendingDiscard()
+	path, ref, ok := r.join.pendingDiscard(joinViewOf(r))
 	if !ok {
 		return false, nil
 	}
@@ -421,7 +421,7 @@ func (r *Run) discardStepOnce(ctx context.Context) (bool, error) {
 // configured the ask is durable BEFORE the world effect can happen, so a resumed
 // run can tell "asked, outcome unknown" from "never asked" and refuses to ask a
 // second time (see Resume).
-func (r *Run) onJoinDiscardAsked(path string, st *NodeState, e SettlementAskedEvent) error {
+func (l *joinLedger) onJoinDiscardAsked(path string, st *NodeState, e SettlementAskedEvent) error {
 	if st.Asked != "" {
 		return fmt.Errorf("workflow/exec: settlement_asked for %s while proposal %s is still unanswered",
 			path, st.Asked)
@@ -452,7 +452,7 @@ func (r *Run) onJoinDiscardSettled(path string, st *NodeState, e ProposalSettled
 		failure = e.Refused
 	}
 	if failure != "" {
-		r.warnOnce("join-discard-door:"+path+":"+s.ProposalID, fmt.Sprintf(
+		r.trace.warnOnce("join-discard-door:"+path+":"+s.ProposalID, fmt.Sprintf(
 			"%s: discarding proposal %s sealed by a non-winning item failed: %s; it stays open and the run will not report success over it",
 			path, s.ProposalID, flatten(failure)))
 		return nil
@@ -462,7 +462,7 @@ func (r *Run) onJoinDiscardSettled(path string, st *NodeState, e ProposalSettled
 		delete(r.proposals.open, s.ProposalID)
 		return nil
 	}
-	r.warnOnce("join-discard-open:"+path+":"+s.ProposalID, fmt.Sprintf(
+	r.trace.warnOnce("join-discard-open:"+path+":"+s.ProposalID, fmt.Sprintf(
 		"%s: discarding proposal %s sealed by a non-winning item reported status=%s%s; it stays open and the run will not report success over it",
 		path, s.ProposalID, orDash(s.Status), conflictSuffix(s)))
 	return nil
@@ -475,4 +475,16 @@ func conflictSuffix(s Settled) string {
 		return ""
 	}
 	return " paths=" + strings.Join(s.Conflicts, ",")
+}
+
+// joinViewOf is the view one join reading is answered from: the graph, the node
+// states, the instance relation an item's owner comes from, and the proposal
+// ledger a discard is derived from.
+func joinViewOf(r *Run) joinView {
+	return joinView{
+		byPath:    r.byPath,
+		state:     r.state,
+		instances: r.inst.instances,
+		proposals: &r.proposals,
+	}
 }

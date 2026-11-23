@@ -392,7 +392,7 @@ func (r *Run) slotFree() bool {
 // start the same node first, and an item throttled by its fan-out's nested cap
 // is skipped for the next startable node rather than blocking the run.
 func (r *Run) nextStartable() (string, bool) {
-	for _, p := range r.ready {
+	for _, p := range r.queue.ready {
 		if !dispatched(r.byPath[p]) {
 			continue
 		}
@@ -553,18 +553,18 @@ func (r *Run) disposition() RunStatus {
 	if r.stopping {
 		return r.status
 	}
-	for _, p := range r.allPaths() {
+	for _, p := range r.inst.allPaths(r.paths) {
 		// An item of a decided join is not a run-level fact: the container answered
 		// for the join, and whether this item delivered is recorded on its own item
 		// record (yaah-0u0v.19). Without this, a failed item under join: any — the
 		// normal shape of "try three, take the first that works" — would report the
 		// whole run failed.
-		if r.state[p].State == StateFailed && !r.inJoinResidue(p) {
+		if r.state[p].State == StateFailed && !r.join.inJoinResidue(joinViewOf(r), p) {
 			return RunFailed
 		}
 	}
-	for _, p := range r.allPaths() {
-		if r.state[p].State == StateCancelled && !r.inJoinResidue(p) {
+	for _, p := range r.inst.allPaths(r.paths) {
+		if r.state[p].State == StateCancelled && !r.join.inJoinResidue(joinViewOf(r), p) {
 			return RunCancelled
 		}
 	}
@@ -575,7 +575,7 @@ func (r *Run) dispositionReason() string {
 	if r.stopping {
 		return r.reason
 	}
-	for _, p := range r.allPaths() {
+	for _, p := range r.inst.allPaths(r.paths) {
 		if r.state[p].State == StateFailed {
 			return r.exposedFailureReason(p)
 		}
@@ -600,33 +600,12 @@ func (r *Run) exposedFailureReason(path string) string {
 // unresolved counts nodes that never reached a terminal state.
 func (r *Run) unresolved() int {
 	var n int
-	for _, p := range r.allPaths() {
+	for _, p := range r.inst.allPaths(r.paths) {
 		if !r.state[p].State.Terminal() {
 			n++
 		}
 	}
 	return n
-}
-
-// allPaths returns every node path this run holds in result order: a top-level
-// node in canonical order, each followed by the instances its fan-out items
-// created (and, recursively, theirs). It is the one iteration order every
-// whole-run scan uses — the close, the disposition, the scope, and the result —
-// so a graph yields one order everywhere and no scan can quietly miss an
-// instance.
-func (r *Run) allPaths() []string {
-	out := make([]string, 0, len(r.paths)+len(r.inst.instances))
-	var emit func(path string)
-	emit = func(path string) {
-		out = append(out, path)
-		for _, ip := range r.inst.of[path] {
-			emit(ip)
-		}
-	}
-	for _, p := range r.paths {
-		emit(p)
-	}
-	return out
 }
 
 // snapshot builds the immutable run-state view one attempt is dispatched
@@ -640,7 +619,7 @@ func (r *Run) snapshot(path string, attempt int) ir.Scope {
 		collect: map[string]any{},
 		ids:     map[string]string{},
 	}
-	for _, p := range r.allPaths() {
+	for _, p := range r.inst.allPaths(r.paths) {
 		st := r.state[p]
 		n := r.byPath[p]
 		if n == nil || st.State != StateSucceeded {
