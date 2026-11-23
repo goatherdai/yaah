@@ -508,6 +508,14 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			turnCk = NewGoatherdTurnCheckpointer(pipeline.ScopeSourceOf(opts.scopeManager), subScope.ID(), subScope.Sandbox())
 		}
 
+		// The guard refusals THIS run records, reported after the loop so the
+		// dispatch envelope can carry them (yaah-938). Both deny paths are
+		// wrapped here, per run: the check and the recorder are created once at
+		// wiring and shared with the parent loop, so wrapping them at the
+		// service would attribute the parent's refusals to this child.
+		denials := newDenialLog()
+		guardCheck, guardDenyRec := denials.wrap(opts.guardCheck, opts.guardDenyRec)
+
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
 			Permissions:            rolePermissions,
 			ProviderName:           subProviderName,
@@ -538,9 +546,9 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			TraceCWD:               traceCWD,
 			RetainedContext:        traceContext,
 			SteerCh:                steerCh,
-			DestructiveGuard:       opts.guardCheck,
+			DestructiveGuard:       guardCheck,
 			ShellGuardAllow:        guardAllow,
-			ShellGuardDenyRec:      opts.guardDenyRec,
+			ShellGuardDenyRec:      guardDenyRec,
 
 			TurnCheckpointer:      turnCk,
 			TurnCheckpointEnabled: turnCk != nil,
@@ -563,6 +571,11 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			HaltedBySupervisor:       haltedBySupervisor.Load(),
 			FinishReason:             subLoop.State.LastFinishReason,
 		})
+		// Hand the run's guard refusals to the dispatch lane's sink: the trace
+		// already records them for an operator, but the orchestrator only sees
+		// what the envelope carries (yaah-938). WithoutCancel keeps the write
+		// alive when a timeout ended the run.
+		tools.CaptureSubAgentDenials(context.WithoutCancel(ctx), denials.list())
 		recordSubAgentUsage(context.WithoutCancel(ctx), opts.traceStore, subTraceID, opts.parentSession, string(role), subModel, params.Lane, subLoop.OwnUsage())
 		// Record the jail the body actually ran under, not just the one the
 		// previous fact resolved: a backend can pass its availability check and

@@ -331,6 +331,48 @@ func CaptureSubAgentStop(ctx context.Context, stop SubAgentStop) {
 	}
 }
 
+// SubAgentDenial is one supervisor-guard refusal a sub-agent run hit: the tool
+// whose call was refused, the shell command it carried (empty for a call with
+// no command), the reason the model was given, and the rule that refused it.
+//
+// It exists so a dispatch envelope can tell the orchestrator what its child was
+// not allowed to do (yaah-938). The trace half — the guard's deny facts and the
+// supervision status firings — is the operator's record of the same refusal; a
+// model that only sees the child's report would read a task as unqualified when
+// part of what the child attempted was refused.
+type SubAgentDenial struct {
+	// Tool is the tool name whose call the guard refused.
+	Tool string
+	// Command is the shell command the call carried, when it carried one.
+	Command string
+	// Reason is the refusal reason the model was given in the synthesized
+	// tool result, so the envelope cites the same cause.
+	Reason string
+	// Rule names the rule that refused the call. It is empty on the global
+	// destructive guard's path, whose refusal needs no role rule to explain.
+	Rule string
+}
+
+// subAgentDenialsKey stores a *[]SubAgentDenial the runner writes after its
+// loop returns, one entry per distinct refusal. A dispatch body installs it
+// before invoking the runner.
+type subAgentDenialsKey struct{}
+
+// WithSubAgentDenials stores ptr in ctx so the runner can report the
+// supervisor-guard refusals its run recorded. Only safe when the caller reads
+// *ptr after joining the runner.
+func WithSubAgentDenials(ctx context.Context, ptr *[]SubAgentDenial) context.Context {
+	return context.WithValue(ctx, subAgentDenialsKey{}, ptr)
+}
+
+// CaptureSubAgentDenials writes denials through the sink stored in ctx, if
+// present.
+func CaptureSubAgentDenials(ctx context.Context, denials []SubAgentDenial) {
+	if ptr, ok := ctx.Value(subAgentDenialsKey{}).(*[]SubAgentDenial); ok && ptr != nil {
+		*ptr = denials
+	}
+}
+
 // SubAgentConfinement is the confinement a sub-agent run actually had: the jail
 // the runner resolved, whether it was established, and whether it survived the
 // run. It exists so a caller outside the runner can cite the enforcement a run

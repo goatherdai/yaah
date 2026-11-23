@@ -84,6 +84,23 @@ func CaptureSubAgentStop(ctx context.Context, stop SubAgentStop) {
 	jobs.CaptureSubAgentStop(ctx, stop)
 }
 
+// SubAgentDenial is one supervisor-guard refusal a run recorded (aliased from
+// jobs), so the dispatch envelope can report what the child was not allowed to
+// do instead of leaving it in the trace alone.
+type SubAgentDenial = jobs.SubAgentDenial
+
+// WithSubAgentDenials installs the per-run sink the runner reports its
+// supervisor-guard refusals through.
+func WithSubAgentDenials(ctx context.Context, ptr *[]SubAgentDenial) context.Context {
+	return jobs.WithSubAgentDenials(ctx, ptr)
+}
+
+// CaptureSubAgentDenials reports the run's guard refusals through the sink in
+// ctx, if one was installed.
+func CaptureSubAgentDenials(ctx context.Context, denials []SubAgentDenial) {
+	jobs.CaptureSubAgentDenials(ctx, denials)
+}
+
 // SubAgentConfinement is the confinement one run actually had (aliased from
 // jobs), so the runner can report the jail it established without importing the
 // dispatch lane's vocabulary.

@@ -306,10 +306,16 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 
 		runCtx := ctx
 		NotifySubAgentReady(runCtx)
+		// The supervisor-guard refusals this attempt's body records (yaah-938):
+		// a shared-lane child runs the same guard as a retained one, and the
+		// orchestrator reads this envelope rather than the trace.
+		var denials []jobs.SubAgentDenial
+		runCtx = jobs.WithSubAgentDenials(runCtx, &denials)
 		result, err := runner(runCtx, req.Prompt, params)
 		out := ClassifyRunnerResult(result, err, role, timeout, runCtx).
 			withMeta(meta.after(time.Since(attemptStarted)))
 		out.FailureClass = failedAttemptClass(parent, RetainedStageNone, out, err)
+		out.Warnings = append(out.Warnings, denialWarnings(denials)...)
 		return out
 	}
 
