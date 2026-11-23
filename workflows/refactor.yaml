@@ -1,0 +1,62 @@
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: refactor
+  version: 1.0.0
+spec:
+  params:
+    target:
+      type: string
+      required: true
+    goal:
+      type: string
+      required: true
+  defaults:
+    lane: proposal
+    network: deny_all
+    grants:
+      - path: cmd
+        access: readwrite
+      - path: internal
+        access: readwrite
+  budgets:
+    max_dispatches: 4
+    max_wall_clock_seconds: 1800
+    max_concurrent_dispatches: 1
+  steps:
+    - id: refactor
+      kind: delegate
+      role: developer
+      output: proposal
+      prompt: |
+        Refactor {{ params.target }} to {{ params.goal }}. Behavior must not
+        change. Return a retained proposal and keep the change minimal and
+        reviewable; only touch paths under cmd/ and internal/.
+    - id: verify
+      kind: delegate
+      role: golang-tester
+      needs: [refactor]
+      lane: report
+      timeout_seconds: 600
+      output: Verdict
+      prompt: |
+        Run the test suite against the refactor proposal and confirm behavior
+        is unchanged.
+        Diff: {{ steps.refactor.output.diff }}
+        Return JSON only: {"verdict":"pass"|"fail","reasons":[]}.
+    - id: land
+      kind: settle
+      needs: [verify]
+      proposals: { from: steps.refactor.output, as_list: true }
+      where: { from: steps.verify.output, field: verdict, equals: pass }
+      action: apply
+      policy: three_way
+      on_conflict: escalate
+      on_empty: fail
+    - id: report
+      kind: emit
+      needs: [land]
+      value: |
+        Refactor of {{ params.target }} landed {{ steps.land.output.settled }}
+        proposal(s) after the tests passed.
+      path: artifacts/refactor-report.md

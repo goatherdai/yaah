@@ -1,0 +1,39 @@
+apiVersion: yaah.workflow/v1
+kind: Workflow
+metadata:
+  name: code-review
+  version: 1.0.0
+spec:
+  params:
+    target:
+      type: string
+      required: true
+    focus:
+      type: string
+      default: correctness, maintainability, and security
+  defaults:
+    lane: report
+    network: deny_all
+  budgets:
+    max_dispatches: 1
+    max_wall_clock_seconds: 900
+    max_concurrent_dispatches: 1
+  steps:
+    - id: review
+      kind: delegate
+      role: code-reviewer
+      output: Findings
+      prompt: |
+        Review this target and report actionable findings with evidence. Do
+        not modify any files; this is read-only.
+        Target: {{ params.target }}
+        Focus areas: {{ params.focus }}
+        Return JSON only:
+        {"verdict":"pass"|"fail","findings":[{"path":"...","severity":"info"|"warn"|"error","note":"..."}]}
+    - id: report
+      kind: emit
+      needs: [review]
+      value: |
+        Code review of {{ params.target }}:
+        {{ steps.review.output }}
+      path: artifacts/code-review.md
