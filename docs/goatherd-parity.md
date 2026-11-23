@@ -296,10 +296,11 @@ seals; a proposal seals a `GitDelta` manifest before teardown.
 unchanged captures return the previous state verbatim, so the kernel's
 digest-stability contract holds without a per-capture content diff. The
 `sandbox/croft` adapter deliberately does **not** carry croft's
-`ContentDigest`: a capture's digest must include `Revision`, and settlement
-compares the host basis separately, so the field would not buy cross-timeline
-content equality here. The underlying croft option remains available to a host
-that wants it; yaah does not read it.
+`ContentDigest`: producing it costs a full-tree daemon diff on every capture,
+and the kernel's `Digest` already includes `Revision`, so `select` compares
+timeline positions, not bare content. The underlying croft option remains
+available to a host that wants cross-timeline content equality; yaah does not
+read it.
 
 yaah's settlement path does not use a croft state across backends. In a host
 session the parent root is a **git** sandbox while the dispatch world is croft,
