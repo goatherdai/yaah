@@ -948,6 +948,13 @@ func startRetainedRun(
 		env.Warning = "dispatch world degraded: " + worldRes.Reason
 	}
 	if scopeID == "" {
+		// A report that could not get a disposable worktree world still runs in
+		// the session container — the world that preserves the report's
+		// authority — rather than returning an empty error envelope (yaah-apjo).
+		// Its result is mutable, so the retry policy treats it as final.
+		if report && sessionContainerFallbackAllowed(rt, subParams.Role) {
+			return sessionContainerFallback(base, rt, prompt, subParams, remaining, worldRes.Requested, provErr.Error())
+		}
 		// Nothing ran and nothing was sealed: report, register nothing. The
 		// world was never provisioned, so this is the one retryable failure the
 		// proposal lane has — and it carries no error value to say so.

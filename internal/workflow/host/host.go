@@ -170,6 +170,14 @@ func (rt *Runtime) Start(ctx context.Context, d exec.Dispatch) (exec.Handle, err
 		}
 		req.Retained = rt.Retained
 	}
+	if lane == dispatch.LaneReport && rt.Retained != nil {
+		// Reports honor the configured dispatch-boundary retry policy, which
+		// lives on the retained runtime (yaah-apjo). Attaching it lets a
+		// workflow report fall back to the retained world ladder instead of
+		// entering Run with no runtime and silently taking the one-attempt
+		// policy.
+		req.Retained = rt.Retained
+	}
 
 	runCtx, runCancel := context.WithCancel(ctx)
 	cancel := runCancel
