@@ -194,8 +194,12 @@ func Validate(cfg *Config) error {
 			cfg.Agent.SubAgent.World))
 	}
 	errs = append(errs, validateGrantSet("agents.subagent.grants", cfg.Agent.SubAgent.Grants)...)
+	errs = append(errs, validateRetry("agents.subagent.retry", cfg.Agent.SubAgent.Retry)...)
 	for role, rc := range cfg.Agent.SubAgent.Roles {
 		errs = append(errs, validateGrantSet("agents.subagent.roles."+role+".grants", rc.Grants)...)
+		if rc.Retry != nil {
+			errs = append(errs, validateRetry("agents.subagent.roles."+role+".retry", *rc.Retry)...)
+		}
 		switch strings.ToLower(strings.TrimSpace(rc.World)) {
 		case "", "auto", "worktree", "container":
 		default:
@@ -411,6 +415,31 @@ func validateGrantSet(key string, grants []GrantConfig) []string {
 			}
 		}
 		seen = append(seen, norm{path: clean, idx: i})
+	}
+	return errs
+}
+
+// validateRetry checks one dispatch-retry stanza (yaah-dgkh). A retry policy
+// that cannot be honored is refused at load rather than discovered as a
+// dispatch that quietly never retried: a negative attempt count is a typo, and
+// a negative wait is meaningless. 0 attempts is legal and means off — the same
+// as 1 — because the decision doc's config shape spells it that way.
+//
+// The failure classes in `only` are NOT validated here: the taxonomy belongs to
+// the dispatch core (internal/dispatch), which filters an unknown class out —
+// a typo makes the policy narrower, never wider, so it cannot turn into an
+// unintended retry.
+func validateRetry(key string, r RetryConfig) []string {
+	var errs []string
+	if r.MaxAttempts < 0 {
+		errs = append(errs, fmt.Sprintf(
+			"%s.max_attempts %d must not be negative (0 and 1 both disable retry)", key, r.MaxAttempts))
+	}
+	if r.BackoffSecs < 0 {
+		errs = append(errs, fmt.Sprintf("%s.backoff_secs must not be negative", key))
+	}
+	if r.MaxElapsedSeconds < 0 {
+		errs = append(errs, fmt.Sprintf("%s.max_elapsed_seconds must not be negative", key))
 	}
 	return errs
 }

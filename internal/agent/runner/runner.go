@@ -245,6 +245,17 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 				}
 				return nil
 			},
+			// The dispatch-boundary retry policy (yaah-dgkh): the global
+			// stanza, unless the role declares its own — an override replaces
+			// the whole policy rather than merging into it, so a role can
+			// switch retry off under a global `max_attempts: 3`.
+			Retry: opts.SubCfg.Retry,
+			RetryForRole: func(role string) (config.RetryConfig, bool) {
+				if rc, ok := opts.SubCfg.Roles[role]; ok && rc.Retry != nil {
+					return *rc.Retry, true
+				}
+				return config.RetryConfig{}, false
+			},
 			// A per-dispatch container world is offerable only where the
 			// composition root wired its setup; the ladder then decides per
 			// lane what may actually use it (yaah-ihfh.3).

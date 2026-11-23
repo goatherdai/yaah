@@ -1378,6 +1378,12 @@ func wireBackgroundJobs(st *loopInfraStage, tr *toolRegistryStage) {
 	// or the session closes.
 	bgDone := st.backgroundJobs.Done()
 	st.backgroundJobs.Deliver = func(job jobs.BackgroundJobStatus, result string, err error) {
+		// A background dispatch's attempt is recorded when its job ends, not
+		// when the accept is returned (yaah-dgkh): the accept is not an
+		// attempt, and the foreground retry loop never sees this one. The fact
+		// lands on the session's retained root scope, from the same completion
+		// envelope the orchestrator receives.
+		st.taskTool.Retained.RecordBackgroundAttempt(context.Background(), job, result, err)
 		// One completion shape for every lane (yaah-was9.1): the background
 		// result is delivered as the same envelope the foreground lanes
 		// return, so the orchestrator never has to parse a prefixed-prose

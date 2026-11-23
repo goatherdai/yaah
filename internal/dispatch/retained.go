@@ -116,6 +116,13 @@ type RetainedRuntime struct {
 	Grants        []config.GrantConfig
 	GrantsForRole func(role string) []config.GrantConfig
 
+	// Retry is the configured dispatch-boundary retry policy (yaah-dgkh); the
+	// zero value is one attempt, i.e. no retry. RetryForRole supplies a per-role
+	// override — ok reports that the role declares one, because an override is
+	// the whole policy for that role rather than a field-by-field merge.
+	Retry        config.RetryConfig
+	RetryForRole func(role string) (config.RetryConfig, bool)
+
 	// ContainerWorlds reports whether this session can attempt a per-dispatch
 	// container world (yaah-ihfh.3). It is true only in a host session whose
 	// config names a container image; a session that offers no container world
@@ -249,6 +256,23 @@ type proposalEnvelope struct {
 	// Recovery says whether re-dispatching can make progress and what to do
 	// next. It is derived from stop_reason, never from prose.
 	Recovery *ResultRecovery `json:"recovery,omitempty"`
+	// FailureClass is the dispatch-level classification of how this attempt
+	// failed (yaah-i5k8): one of preflight_transient, provider_transient,
+	// timeout, stuck, content, configuration, cancelled, or sealed. It is
+	// absent when the attempt did not fail, and two readers must not confuse
+	// the two: absence means "no failure", never "unclassified failure".
+	FailureClass string `json:"failure_class,omitempty"`
+	// Attempts is how many attempts this envelope reports, always >= 1. A
+	// dispatch that was retried at the boundary reports the total
+	// (yaah-dgkh); every dispatch today reports 1.
+	Attempts int `json:"attempts,omitempty"`
+	// Retried reports that this envelope covers more than one attempt. It is
+	// derived from Attempts and is present only when true, so a
+	// single-attempt dispatch carries Attempts 1 and no Retried.
+	Retried bool `json:"retried,omitempty"`
+	// AttemptIDs names the attempts this envelope covers, in order. Absent
+	// when the lane minted no id to name one with.
+	AttemptIDs []string `json:"attempt_ids,omitempty"`
 }
 
 // proposalVerbs is the settlement vocabulary advertised to the orchestrator,
@@ -597,12 +621,20 @@ func sessionContainerFallback(
 	rt RetainedRuntime,
 	prompt string,
 	subParams jobs.SubAgentParams,
-	timeout time.Duration,
+	budget time.Duration,
 	requested subagent.WorldKind,
 	reason string,
 ) (retainedRunResult, error) {
 	if requested == "" {
 		requested = subagent.WorldAuto
+	}
+	// The session container is the fallback world: the attempt runs in it, not
+	// in a world of its own, and that is a fact the retry policy needs whether
+	// the body succeeds or fails (yaah-dgkh review).
+	fallback := func(r retainedRunResult) retainedRunResult {
+		r.SessionFallback = true
+		r.Stage = RetainedStageBody
+		return r
 	}
 	recordWorldFact(ctx, rt.ScopeManager, rt.RootScopeID, subagent.WorldResolution{
 		Requested: requested,
@@ -619,9 +651,9 @@ func sessionContainerFallback(
 		Reason:    reason,
 	})
 	runCtx := ctx
-	if timeout > 0 {
+	if budget = remainingAllowance(ctx, budget); budget > 0 {
 		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(ctx, timeout)
+		runCtx, cancel = context.WithTimeout(ctx, budget)
 		defer cancel()
 	}
 	// The world this dispatch runs in is the session container itself, and
@@ -630,9 +662,9 @@ func sessionContainerFallback(
 	NotifySubAgentReady(runCtx)
 	result, err := rt.Runner(runCtx, prompt, subParams)
 	if err != nil {
-		return retainedRunResult{}, err
+		return fallback(retainedRunResult{}), err
 	}
-	return retainedRunResult{Report: retainedNote(result, "dispatch world degraded: "+reason)}, nil
+	return fallback(retainedRunResult{Report: retainedNote(result, "dispatch world degraded: "+reason)}), nil
 }
 
 // retainedRunResult is the typed result of one retained dispatch. Exactly one
@@ -641,6 +673,24 @@ func sessionContainerFallback(
 type retainedRunResult struct {
 	Report   string
 	Proposal *proposalEnvelope
+
+	// Stage records how far the start got before it failed (yaah-dgkh review),
+	// so the dispatch boundary can tell a retryable provisioning failure from a
+	// permanent refusal and from a failure after the body ran. Empty on success.
+	Stage RetainedFailureStage
+
+	// SessionFallback reports that the attempt ran in the session container —
+	// the predecessor world a degraded report dispatch steps down to — instead
+	// of a world of its own, including when its body then failed. That world is
+	// mutable and outlives the attempt, so a re-run cannot start from the same
+	// place (yaah-dgkh review).
+	SessionFallback bool
+
+	// Warnings are the attempt's own caveats (a teardown that left a worktree
+	// on disk). The retry loop carries them forward, because a report dispatch
+	// registers no proposal for the orchestrator to recover the scratch
+	// through later (yaah-dgkh review).
+	Warnings []string
 }
 
 // String renders the result in the model-facing shape for callers that still
@@ -661,7 +711,26 @@ func (r retainedRunResult) String() string {
 // skipped: the result is the sub-agent's report text, the world is torn down
 // before returning, and no proposal is registered — a report-role dispatch
 // carries no delta to settle.
-func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, subParams jobs.SubAgentParams, timeout time.Duration, report bool) (retainedRunResult, error) {
+func startRetainedRun(
+	ctx context.Context,
+	base context.Context,
+	rt RetainedRuntime,
+	prompt string,
+	subParams jobs.SubAgentParams,
+	timeout time.Duration,
+	remaining time.Duration,
+	report bool,
+) (out retainedRunResult, err error) {
+	// stage records how far the start got before it failed, so a failed attempt
+	// is classified by what it actually did rather than by the shape of its
+	// error (yaah-dgkh review). It starts at the refusal it is until a world is
+	// being provisioned, and the body and seal steps raise it further.
+	stage := RetainedStageRefused
+	defer func() {
+		if out.Stage == "" {
+			out.Stage = stage
+		}
+	}()
 	if rt.Runner == nil {
 		return retainedRunResult{}, fmt.Errorf("delegate: sub-agent runner not configured")
 	}
@@ -722,7 +791,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			}
 			// The session container is the predecessor world in the ladder;
 			// a report seals nothing, so it can run there unretained.
-			return sessionContainerFallback(ctx, rt, prompt, subParams, timeout, requestedKind, werr.Error())
+			return sessionContainerFallback(base, rt, prompt, subParams, remaining, requestedKind, werr.Error())
 		}
 		return retainedRunResult{}, fmt.Errorf("delegate: %w", werr)
 	}
@@ -745,6 +814,11 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// before the container is destroyed: the manifest is the proposal, so no
 	// live world (and no kernel output) has to survive settlement.
 	if worldRes.Resolved == subagent.WorldContainer {
+		// Past this point a world is being built: a failure here left at most a
+		// partially provisioned world behind, so it is retryable provisioning —
+		// except for the declaration gates, which are refusals no re-run can
+		// fix and say so at their own return.
+		stage = RetainedStageProvisioning
 		var basis kerneltrace.WorkspaceState
 		var basisDigest string
 		if !report && !containerSession {
@@ -777,13 +851,17 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		if aerr != nil {
 			// The declaration could not be compiled into a plan its monitors
 			// cover: refuse before the world exists, so no unenforceable
-			// posture is ever provisioned (Stage 2 fail-closed gate).
-			return retainedRunResult{}, fmt.Errorf("delegate: %w", aerr)
+			// posture is ever provisioned (Stage 2 fail-closed gate). A refusal
+			// is permanent — re-running the same dispatch cannot compile it.
+			return retainedRunResult{Stage: RetainedStageRefused}, fmt.Errorf("delegate: %w", aerr)
 		}
 		ss, seedBasis, seedDigest, perr := openDispatchWorld(ctx, rt, authority)
 		if perr == nil {
 			// The dispatch world exists; the child starts inside it, so the
-			// stuck-child deadline may start counting (yaah-95ri.2).
+			// stuck-child deadline may start counting (yaah-95ri.2). The body is
+			// the stage from here on, so no container-lane failure after this
+			// point reads as a preflight one (yaah-dgkh review).
+			stage = RetainedStageBody
 			NotifySubAgentReady(ctx)
 			if report {
 				return runDispatchContainer(ctx, rt, parent, prompt, subParams, timeout, worldRes, authority, ss)
@@ -807,7 +885,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			if !sessionContainerFallbackAllowed(rt, subParams.Role) {
 				return retainedRunResult{}, fmt.Errorf("delegate: sibling container unavailable, and the session container cannot preserve the dispatch authority: %w", perr)
 			}
-			return sessionContainerFallback(ctx, rt, prompt, subParams, timeout, worldRes.Requested, worldRes.Reason)
+			return sessionContainerFallback(base, rt, prompt, subParams, remaining, worldRes.Requested, worldRes.Reason)
 		}
 		if worldRes.Resolved == subagent.WorldWorktree && !worktreeFallbackAllowed(rt, subParams.Role, report) {
 			return retainedRunResult{}, fmt.Errorf("delegate: container world unavailable, and the worktree cannot preserve the dispatch authority: %w", perr)
@@ -825,7 +903,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// run had rather than the one its config asked for; with no run yet there is
 	// nothing to establish, so the gate validates the declared posture.
 	if _, digestErr := compileWorktreePlan(rt, subParams.Role, nil); digestErr != nil {
-		return retainedRunResult{}, fmt.Errorf("delegate: %w", digestErr)
+		return retainedRunResult{Stage: RetainedStageRefused}, fmt.Errorf("delegate: %w", digestErr)
 	}
 
 	// The basis: the parent's workspace at dispatch, or — for retained-result
@@ -840,10 +918,14 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	if subParams.SeedFrom != "" {
 		fs, serr := resolveThreadSeed(rt, subParams.SeedFrom, subParams.SeedMode, subParams.Role)
 		if serr != nil {
-			return retainedRunResult{}, fmt.Errorf("delegate: %w", serr)
+			return retainedRunResult{Stage: RetainedStageRefused}, fmt.Errorf("delegate: %w", serr)
 		}
 		forkSeed, seedMessages = fs, fs.messages
 	} else {
+		// The basis is the first provisioning work the worktree lane does: from
+		// here a failure leaves nothing to retry against less than a partially
+		// created world.
+		stage = RetainedStageProvisioning
 		state, cerr := parent.CaptureWorkspace(ctx)
 		if cerr != nil {
 			return retainedRunResult{}, fmt.Errorf("delegate: capture basis: %w", cerr)
@@ -866,10 +948,19 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		env.Warning = "dispatch world degraded: " + worldRes.Reason
 	}
 	if scopeID == "" {
-		// Nothing ran and nothing was sealed: report, register nothing.
+		// A report that could not get a disposable worktree world still runs in
+		// the session container — the world that preserves the report's
+		// authority — rather than returning an empty error envelope (yaah-apjo).
+		// Its result is mutable, so the retry policy treats it as final.
+		if report && sessionContainerFallbackAllowed(rt, subParams.Role) {
+			return sessionContainerFallback(base, rt, prompt, subParams, remaining, worldRes.Requested, provErr.Error())
+		}
+		// Nothing ran and nothing was sealed: report, register nothing. The
+		// world was never provisioned, so this is the one retryable failure the
+		// proposal lane has — and it carries no error value to say so.
 		env.Status = "error"
 		env.Error = provErr.Error()
-		return retainedRunResult{Proposal: &env}, nil
+		return retainedRunResult{Proposal: &env, Stage: RetainedStageProvisioning}, nil
 	}
 	recordWorldFact(ctx, mgr, scopeID, worldRes)
 
@@ -882,12 +973,15 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		prompt = withWorkspaceNotice(wt, prompt)
 	}
 
-	// The dispatch budget is a wall-clock limit on the whole run. Track which
-	// deadline governed the run context so a parent deadline (or a provider's
-	// own per-request timeout) is not misreported as role-budget exhaustion.
+	// The dispatch budget is a wall-clock limit on the whole run, provisioning
+	// included: a world that took most of the budget must not hand the body a
+	// fresh copy of it (yaah-dgkh review). Track which deadline governed the run
+	// context so a parent deadline (or a provider's own per-request timeout) is
+	// not misreported as role-budget exhaustion.
+	timeout = remainingAllowance(ctx, timeout)
 	budgetDeadline := time.Now().Add(timeout)
 	parentDeadline, parentHasDeadline := ctx.Deadline()
-	budgetGoverns := timeout > 0 && (!parentHasDeadline || parentDeadline.After(budgetDeadline))
+	budgetGoverns := timeout > 0 && (!parentHasDeadline || !parentDeadline.Before(budgetDeadline))
 
 	// Capture the sub-agent's final conversation so a continuation can resume
 	// from its context instead of restarting cold, and the confinement it ran
@@ -904,7 +998,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	}
 	// The worktree world exists and the child is about to start in it:
 	// provisioning time is over, so the stuck-child deadline may start
-	// counting from here (yaah-95ri.2).
+	// counting from here (yaah-95ri.2). The body is the stage from here on, so
+	// a failure inside it is never read as a preflight one.
+	stage = RetainedStageBody
 	NotifySubAgentReady(runCtx)
 	result, bodyErr := runRetainedBody(runCtx, rt, prompt, sp)
 	runErr := runCtx.Err()
@@ -921,6 +1017,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// it — and hand the report straight back.
 	if report {
 		var notes []string
+		var warnings []string
 		if worldRes.Degraded {
 			notes = append(notes, "dispatch world degraded: "+worldRes.Reason)
 		}
@@ -944,6 +1041,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			return true, parent.Discard(scope)
 		}); note != "" {
 			notes = append(notes, note)
+			warnings = append(warnings, note)
 		}
 		caveat := strings.Join(notes, "\n\n")
 		if bodyErr != nil {
@@ -951,9 +1049,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 			// legitimately contain "note: " lines, so re-parsing the result to
 			// find the caveat would misattribute one of them. The caller folds
 			// both halves back together with the right bounds.
-			return retainedRunResult{Report: result}, &RetainedRunError{cause: bodyErr, note: caveat}
+			return retainedRunResult{Report: result, Warnings: warnings}, &RetainedRunError{cause: bodyErr, note: caveat}
 		}
-		return retainedRunResult{Report: retainedNote(result, caveat)}, nil
+		return retainedRunResult{Report: retainedNote(result, caveat), Warnings: warnings}, nil
 	}
 
 	// Scrub the confinement scratch before sealing: the env redirect keeps the
@@ -989,7 +1087,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// than sealed away.
 	planDigest, digestErr := resolveWorktreePlanDigest(rt, subParams.Role, &confinement)
 	if digestErr != nil {
-		return retainedRunResult{}, fmt.Errorf("delegate: %w", digestErr)
+		// The body ran: this is sealing work, so it is never a preflight
+		// failure however transient its cause looks (yaah-dgkh review).
+		return retainedRunResult{Stage: RetainedStageSeal}, fmt.Errorf("delegate: %w", digestErr)
 	}
 	seal := mgr.Seal
 	if rt.sealOutput != nil {
@@ -1608,6 +1708,30 @@ const noteBudget = 4096
 
 // NoteBudget is the exported face of noteBudget for the tools layer.
 const NoteBudget = noteBudget
+
+// remainingAllowance shortens a phase's allowance to what is left of the
+// caller's own deadline, so provisioning and the body share one absolute budget
+// instead of each getting a fresh copy of it (yaah-dgkh review). A caller with
+// no deadline keeps the allowance unchanged, and a spent budget yields a tiny
+// positive allowance so the body fails as a deadline rather than running
+// unbounded — a non-positive timeout means "no timeout" everywhere else here.
+func remainingAllowance(ctx context.Context, allowance time.Duration) time.Duration {
+	if allowance <= 0 {
+		return allowance
+	}
+	dl, ok := ctx.Deadline()
+	if !ok {
+		return allowance
+	}
+	left := time.Until(dl)
+	if left >= allowance {
+		return allowance
+	}
+	if left <= 0 {
+		return time.Nanosecond
+	}
+	return left
+}
 
 // foldRetainedPartial projects a failed operation's partial result into an
 // error text. Both halves are bounded, because the loop delivers error text

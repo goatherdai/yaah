@@ -103,10 +103,16 @@ agents:
 	if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte(cfg), 0o644); err != nil {
 		t.Fatalf("writing the config: %v", err)
 	}
+	// The production seam stores the retained runtime it composes in the
+	// process-scoped var the run command reads. Clear it so a later test that
+	// swaps the seam does not inherit a retained runtime whose runner still
+	// points at this test's 127.0.0.1 model provider (yaah-apjo).
+	prevRetained := workflowRetainedRuntime.Load()
 	r, cleanup, err := newStandaloneWorkflowRunner("", os.Stderr)
 	if err != nil {
 		t.Fatalf("compose the standalone runner: %v", err)
 	}
+	t.Cleanup(func() { workflowRetainedRuntime.Store(prevRetained) })
 	if r == nil {
 		t.Fatal("composed a nil runner")
 	}

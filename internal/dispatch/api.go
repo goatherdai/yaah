@@ -99,6 +99,39 @@ type DispatchResult struct {
 	// observe (lane, world, model, duration). Envelope() stamps it onto the
 	// one result shape every lane returns (yaah-was9.1).
 	Meta EnvelopeMeta
+
+	// FailureClass is the dispatch-level classification of how the attempt
+	// failed, for a lane that knows more than the envelope's stop_reason says
+	// (yaah-i5k8). Envelope() derives one when this is empty.
+	FailureClass string
+
+	// Attempt is the 1-based attempt number this result is, and AttemptIDs is
+	// every attempt id the dispatch has produced so far, in order (yaah-dgkh).
+	// Both are stamped by the retry loop; a dispatch that never entered it
+	// leaves them zero, and Envelope() then derives the single attempt as
+	// before.
+	Attempt    int
+	AttemptIDs []string
+
+	// RetryAllowed is the retry loop's verdict for this attempt: whether the
+	// policy permitted a next attempt at the point this one ended — lane,
+	// allowlist, attempt cap, cancellation, remaining budget and the world the
+	// attempt ran in all included (yaah-dgkh). It is what the attempt fact
+	// records, so the evidence and the loop can never disagree; a dispatch the
+	// loop never ran leaves it false, which is also true, because nothing will
+	// follow it.
+	RetryAllowed bool
+
+	// MutableWorld reports that the attempt ran in a world a retry cannot
+	// reset — the session container a degraded report dispatch falls back to,
+	// which outlives the attempt and keeps whatever it wrote. Such an attempt
+	// is never re-run (yaah-dgkh).
+	MutableWorld bool
+
+	// Warnings carries the attempt's own caveats (a teardown that stranded a
+	// worktree). The loop carries them forward across attempts, so a successful
+	// retry cannot hide what a failed attempt left behind (yaah-dgkh).
+	Warnings []string
 }
 
 // Run executes one sub-agent dispatch through the runtime's only scheduler and
@@ -184,7 +217,7 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 			rt := *req.Retained
 			report := lane == LaneReport
 			runner = func(ctx context.Context, prompt string, sp jobs.SubAgentParams) (string, error) {
-				res, err := startRetainedRun(ctx, rt, prompt, sp, req.Timeout, report)
+				res, err := startRetainedRun(ctx, ctx, rt, prompt, sp, req.Timeout, req.Timeout, report)
 				return res.String(), err
 			}
 		}
@@ -212,45 +245,83 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 	ctx = jobs.WithSubAgentWorldTap(ctx, func(w SubAgentWorld) { meta.World = w.Resolved })
 	started := time.Now()
 
-	if req.Retained != nil {
-		switch lane {
-		case LaneReport:
-			res, err := startRetainedRun(ctx, *req.Retained, req.Prompt, params, req.Timeout, true)
-			return ClassifyRunnerResult(res.Report, err, role, req.Timeout, ctx).
-				withMeta(meta.after(time.Since(started))), nil
-		case LaneShared:
-			// A shared-lane role cannot mutate the tree; isolation buys
-			// nothing, so fall through to the direct runner.
-		default:
-			res, err := startRetainedRun(ctx, *req.Retained, req.Prompt, params, req.Timeout, false)
-			if err != nil {
-				// A retained start that fails (no root scope, refused input,
-				// provisioning) must still return the one envelope: route it
-				// through the classifier so the caller renders status=error
-				// with dispatch_id/role/lane/recovery instead of a bare Go
-				// error (yaah-was9.1).
-				return ClassifyRunnerResult("", err, role, req.Timeout, ctx).
-					withMeta(meta.after(time.Since(started))), nil
-			}
-			return DispatchResult{
-				Status:   DispatchProposal,
-				Role:     role,
-				Timeout:  req.Timeout,
-				Proposal: res.Proposal,
-			}.withMeta(meta.after(time.Since(started))), nil
+	// One attempt's lane work, extracted so the retry loop can run it again
+	// without a second copy of any lane's body (yaah-dgkh). timeout is this
+	// attempt's slice of the dispatch budget: the whole of it when the policy
+	// permits only one attempt, its share of the remainder otherwise.
+	attempt := func(parent context.Context, timeout, remaining time.Duration, _ int) DispatchResult {
+		attemptStarted := time.Now()
+		// The budget is an absolute deadline across provisioning and the body,
+		// not a per-phase allowance: the retained lane provisions a world before
+		// the child's own timeout starts, so a dispatch that spent its budget
+		// getting one would otherwise overshoot the deadline the caller set
+		// (yaah-dgkh review).
+		ctx := parent
+		if timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(parent, attemptStarted.Add(timeout))
+			defer cancel()
 		}
+		if req.Retained != nil {
+			switch lane {
+			case LaneReport:
+				res, err := startRetainedRun(ctx, parent, *req.Retained, req.Prompt, params, timeout, remaining, true)
+				out := ClassifyRunnerResult(res.Report, err, role, timeout, ctx).
+					withMeta(meta.after(time.Since(attemptStarted)))
+				out.FailureClass = failedAttemptClass(parent, res.Stage, out, err)
+				out.MutableWorld = res.SessionFallback
+				out.Warnings = res.Warnings
+				return out
+			case LaneShared:
+				// A shared-lane role cannot mutate the tree; isolation buys
+				// nothing, so fall through to the direct runner.
+			default:
+				res, err := startRetainedRun(ctx, parent, *req.Retained, req.Prompt, params, timeout, remaining, false)
+				if err != nil {
+					// A retained start that fails (no root scope, refused input,
+					// provisioning) must still return the one envelope: route it
+					// through the classifier so the caller renders status=error
+					// with dispatch_id/role/lane/recovery instead of a bare Go
+					// error (yaah-was9.1).
+					out := ClassifyRunnerResult("", err, role, timeout, ctx).
+						withMeta(meta.after(time.Since(attemptStarted)))
+					out.FailureClass = failedAttemptClass(parent, res.Stage, out, err)
+					out.Warnings = res.Warnings
+					return out
+				}
+				out := DispatchResult{
+					Status:   DispatchProposal,
+					Role:     role,
+					Timeout:  timeout,
+					Proposal: res.Proposal,
+				}.withMeta(meta.after(time.Since(attemptStarted)))
+				// A sealed error envelope is the one failure the proposal lane
+				// reports without an error value (a provisioning failure that
+				// left nothing to settle), so the stage is read from the result.
+				out.FailureClass = failedAttemptClass(parent, res.Stage, out, nil)
+				out.Warnings = res.Warnings
+				return out
+			}
+		}
+
+		runCtx := ctx
+		NotifySubAgentReady(runCtx)
+		result, err := runner(runCtx, req.Prompt, params)
+		out := ClassifyRunnerResult(result, err, role, timeout, runCtx).
+			withMeta(meta.after(time.Since(attemptStarted)))
+		out.FailureClass = failedAttemptClass(parent, RetainedStageNone, out, err)
+		return out
 	}
 
-	runCtx := ctx
+	// The total timeout is the budget for the whole retry sequence, not per
+	// attempt: attempt 1 gets it whole and every retry gets the remainder
+	// (yaah-dgkh). With no retry configured this is one attempt under exactly
+	// the deadline it had before the loop existed.
+	var deadline time.Time
 	if req.Timeout > 0 {
-		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(ctx, req.Timeout)
-		defer cancel()
+		deadline = started.Add(req.Timeout)
 	}
-	NotifySubAgentReady(runCtx)
-	result, err := runner(runCtx, req.Prompt, params)
-	return ClassifyRunnerResult(result, err, role, req.Timeout, runCtx).
-		withMeta(meta.after(time.Since(started))), nil
+	return runAttempts(ctx, req, lane, deadline, retryPolicyFor(req.Retained, role), attempt), nil
 }
 
 // ClassifyRunnerResult maps a runner outcome to the typed dispatch result. A

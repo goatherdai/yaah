@@ -211,6 +211,11 @@ func standaloneRetained(cfg *config.Config, ws *workspaceStage, run jobs.TaskRun
 		WorktreeRoot: cfg.Agent.Default.RetainedWorktreeRoot,
 		Proposals:    dispatch.NewProposalRegistry(),
 	}
+	// The dispatch-boundary retry policy (yaah-dgkh): a workflow dispatch
+	// retries under the same policy a session turn does, so the global stanza
+	// and the per-role override are wired here exactly as the session's
+	// composition wires them (runner.NewDelegateTool).
+	rt.SetRetryPolicy(cfg.Agent.SubAgent)
 	rt.EnsureInFlight()
 	cleanup := func() {
 		pipeline.CloseGoatherdInfrastructure(traceStore, traceBus)

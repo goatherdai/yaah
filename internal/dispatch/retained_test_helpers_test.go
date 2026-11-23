@@ -183,7 +183,7 @@ func sessionTestConfig() config.WorkspaceConfig {
 // adapters for the typed core. Production code calls startRetainedRun and
 // Settle directly; these preserve the historical test call shape.
 func StartRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, subParams SubAgentParams, timeout time.Duration, report bool) (string, error) {
-	res, err := startRetainedRun(ctx, rt, prompt, subParams, timeout, report)
+	res, err := startRetainedRun(ctx, ctx, rt, prompt, subParams, timeout, timeout, report)
 	return res.String(), err
 }
 
