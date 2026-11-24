@@ -473,41 +473,85 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// so the supervisor tool's inject and halt reach this loop
 		// instead of only recording trace facts. The loop runs under a
 		// context derived from the dispatch's, so cancelling it stops
-		// the run without touching the caller's context. The deferred
-		// unregister is panic safety only; the explicit unregister
-		// right after Run returns is the real cut, so the entry never
-		// outlives the loop through post-run enrichment.
+		// the run without touching the caller's context. The bridge —
+		// steer channel, quiesce/Done, registration — is created ONCE
+		// for the whole run sequence and torn down once at its end (the
+		// explicit cut after the sequence, which closes Done before it
+		// removes the registration — review finding #4). The deferred
+		// teardown is panic safety only.
 		var steerCh chan string
 		var haltedBySupervisor atomic.Bool
+		var quiesce chan struct{}
+		var bridgeScopeID string
+		var runGen uint64
+		var registerBridge func() context.Context
+		bridgeLive := false
 		if subScope != nil && opts.runs != nil {
-			steerCh = make(chan string, supervision.SteerBuffer)
-			quiesce := make(chan struct{})
-			haltCtx, cancelRun := context.WithCancel(ctx)
-			opts.runs.Register(subScope.ID(), supervision.Run{
-				SteerCh: steerCh,
-				Cancel: func() {
-					haltedBySupervisor.Store(true)
-					cancelRun()
-				},
-				// Closed the moment the loop returns: the supervisor's
-				// bounded quiesce wait before kernel-side sandbox
-				// teardown selects on this.
-				Done: quiesce,
-				// Snapshot metadata (yaah-1050.1.1): who is running, in
-				// which workspace, since when. Advisory only — the
-				// supervisor's `snapshot` action reads it and nothing else
-				// does. Workdir is the dispatch's resolved workdir: the
-				// isolated lanes set it to the sub-agent's own worktree,
-				// and a shared-lane dispatch leaves it empty because it
-				// runs in the session workspace the supervisor already
-				// knows.
-				Role:      string(role),
-				Workdir:   params.Workdir,
-				StartedAt: time.Now(),
-			})
-			defer opts.runs.Unregister(subScope.ID())
-			defer close(quiesce)
-			ctx = haltCtx
+			// The sequence's root context: every generation's cancellable
+			// run context derives from THIS, captured before the first
+			// one replaces it, so a redirect successor inherits a live
+			// context — WithCancel, never WithoutCancel (finding #8) —
+			// and still answers to halt, deadline, and interrupts.
+			baseCtx := ctx
+			// Quiesce is a property of the SEQUENCE (finding #2): one
+			// channel for every generation, created here and closed ONCE
+			// at the end of the sequence while the last registration is
+			// still live. Nothing ever proceeds past it on a timeout.
+			quiesce = make(chan struct{})
+			bridgeScopeID = subScope.ID()
+			// registerBridge opens a fresh generation on the SAME scope:
+			// a fresh steering channel (finding #6 — the previous
+			// generation's buffered guidance must not leak into the
+			// successor), a fresh cancellable run context, and a
+			// registration whose Cancel stops THIS generation. It returns
+			// the run context of the generation it registered.
+			registerBridge = func() context.Context {
+				ch := make(chan string, supervision.SteerBuffer)
+				steerCh = ch
+				runCtx, cancelRun := context.WithCancel(baseCtx)
+				opts.runs.Register(bridgeScopeID, supervision.Run{
+					SteerCh: ch,
+					Cancel: func() {
+						haltedBySupervisor.Store(true)
+						cancelRun()
+					},
+					// Closed once at the end of the run sequence, while
+					// the registration is still live (review finding #4):
+					// the supervisor's bounded quiesce wait before
+					// kernel-side sandbox teardown selects on this.
+					Done: quiesce,
+					// Snapshot metadata (yaah-1050.1.1): who is running, in
+					// which workspace, since when. Advisory only — the
+					// supervisor's `snapshot` action reads it and nothing else
+					// does. Workdir is the dispatch's resolved workdir: the
+					// isolated lanes set it to the sub-agent's own worktree,
+					// and a shared-lane dispatch leaves it empty because it
+					// runs in the session workspace the supervisor already
+					// knows.
+					Role:      string(role),
+					Workdir:   params.Workdir,
+					StartedAt: time.Now(),
+				})
+				// Register stamps a fresh generation on this incarnation;
+				// capture it now so the end-of-sequence teardown removes
+				// exactly this run's registration (yaah-8gxg.1's
+				// generation-swap model) and can never touch a successor's.
+				runGen, _ = opts.runs.Generation(bridgeScopeID)
+				return runCtx
+			}
+			ctx = registerBridge()
+			bridgeLive = true
+			defer func() {
+				// Panic safety net only, mirroring the end-of-sequence
+				// order (Done first, then the removal). The real
+				// teardown is the explicit cut after the run sequence
+				// below; on the happy path bridgeLive is already false
+				// and this never fires.
+				if bridgeLive {
+					close(quiesce)
+					opts.runs.Unregister(bridgeScopeID)
+				}
+			}()
 		}
 
 		// Per-turn checkpointing is enabled per role (subagent.roles.<name>.
@@ -527,148 +571,216 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		denials := newDenialLog()
 		guardCheck, guardDenyRec := denials.wrap(opts.guardCheck, opts.guardDenyRec)
 
-		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
-			Permissions:            rolePermissions,
-			ProviderName:           subProviderName,
-			Temperature:            profile.Temperature,
-			TopP:                   profile.TopP,
-			MaxLoopCycles:          maxIter,
-			MaxToolTurns:           maxTurns,
-			BudgetIterationsSource: b.IterationsSource.String(),
-			BudgetTurnsSource:      b.TurnsSource.String(),
-			MaxRetries:             opts.defaults.MaxRetries,
-			RetryBackoffSecs:       opts.defaults.RetryBackoffSecs,
-			MaxToolConcurrency:     opts.defaults.MaxToolConcurrency,
-			EvidenceGuardNudge:     opts.defaults.EvidenceGuardNudge,
-			EvidenceGuardHalt:      opts.defaults.EvidenceGuardHalt,
-			JSONMode:               jsonMode,
-			SeedMessages:           params.SeedMessages,
-			ToolResultMaxLines:     opts.defaults.ToolResultMaxLines,
-			ToolResultMaxBytes:     opts.defaults.ToolResultMaxBytes,
-			ToolSpillDir:           opts.toolSpillDir,
-			PruneProtectTokens:     opts.defaults.PruneProtectTokens,
-			PruneMinReclaim:        opts.defaults.PruneMinReclaim,
-			PruneMinTurns:          opts.defaults.PruneMinTurns,
-			ContextWindow:          effectiveCW,
-			OtelEnabled:            opts.OtelEnabled,
-			OtelVerbose:            opts.OtelVerbose,
-			SessionID:              subTraceID,
-			TraceStore:             opts.traceStore,
-			TraceCWD:               traceCWD,
-			RetainedContext:        traceContext,
-			SteerCh:                steerCh,
-			DestructiveGuard:       guardCheck,
-			ShellGuardAllow:        guardAllow,
-			ShellGuardDenyRec:      guardDenyRec,
+		// Inner per-run segment: builds ONE loop on the shared bridge,
+		// runs it, and performs that run's complete post-run accounting
+		// gauntlet — transcript/stop/denials capture, usage and
+		// confinement facts, the integrity gates, output budgeting, and
+		// span attributes. The outer sequence below calls it exactly
+		// once today; it is the seam yaah-8gxg.3 re-enters on the SAME
+		// scope and steerCh after a live redirect.
+		runOnce := func(ctx context.Context, prompt string) (string, error) {
+			subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
+				Permissions:            rolePermissions,
+				ProviderName:           subProviderName,
+				Temperature:            profile.Temperature,
+				TopP:                   profile.TopP,
+				MaxLoopCycles:          maxIter,
+				MaxToolTurns:           maxTurns,
+				BudgetIterationsSource: b.IterationsSource.String(),
+				BudgetTurnsSource:      b.TurnsSource.String(),
+				MaxRetries:             opts.defaults.MaxRetries,
+				RetryBackoffSecs:       opts.defaults.RetryBackoffSecs,
+				MaxToolConcurrency:     opts.defaults.MaxToolConcurrency,
+				EvidenceGuardNudge:     opts.defaults.EvidenceGuardNudge,
+				EvidenceGuardHalt:      opts.defaults.EvidenceGuardHalt,
+				JSONMode:               jsonMode,
+				SeedMessages:           params.SeedMessages,
+				ToolResultMaxLines:     opts.defaults.ToolResultMaxLines,
+				ToolResultMaxBytes:     opts.defaults.ToolResultMaxBytes,
+				ToolSpillDir:           opts.toolSpillDir,
+				PruneProtectTokens:     opts.defaults.PruneProtectTokens,
+				PruneMinReclaim:        opts.defaults.PruneMinReclaim,
+				PruneMinTurns:          opts.defaults.PruneMinTurns,
+				ContextWindow:          effectiveCW,
+				OtelEnabled:            opts.OtelEnabled,
+				OtelVerbose:            opts.OtelVerbose,
+				SessionID:              subTraceID,
+				TraceStore:             opts.traceStore,
+				TraceCWD:               traceCWD,
+				RetainedContext:        traceContext,
+				SteerCh:                steerCh,
+				DestructiveGuard:       guardCheck,
+				ShellGuardAllow:        guardAllow,
+				ShellGuardDenyRec:      guardDenyRec,
 
-			TurnCheckpointer:      turnCk,
-			TurnCheckpointEnabled: turnCk != nil,
-			TurnCheckpointMax:     opts.defaults.TurnCheckpointMax,
-			MaxTurnRestores:       opts.defaults.MaxTurnRestores,
-		})
+				TurnCheckpointer:      turnCk,
+				TurnCheckpointEnabled: turnCk != nil,
+				TurnCheckpointMax:     opts.defaults.TurnCheckpointMax,
+				MaxTurnRestores:       opts.defaults.MaxTurnRestores,
+			})
 
-		result, runErr := subLoop.Run(ctx, prompt)
-		// Capture the final conversation so a turn-exhausted dispatch can be
-		// continued from its context instead of restarted cold. WithoutCancel
-		// keeps the write alive when a timeout ended the run.
-		tools.CaptureSubAgentTranscript(context.WithoutCancel(ctx), subLoop.State.Messages)
-		var maxIterErr agent.MaxIterationsError
-		iterExhausted := errors.As(runErr, &maxIterErr)
-		tools.CaptureSubAgentStop(context.WithoutCancel(ctx), tools.SubAgentStop{
-			// The loop sets TurnBudgetExhausted on the hard iteration stop too;
-			// only the soft tool-turn cap means tools were stripped.
-			TurnBudgetExhausted:      subLoop.State.TurnBudgetExhausted && !iterExhausted,
-			IterationBudgetExhausted: iterExhausted,
-			HaltedBySupervisor:       haltedBySupervisor.Load(),
-			FinishReason:             subLoop.State.LastFinishReason,
-		})
-		// Hand the run's guard refusals to the dispatch lane's sink: the trace
-		// already records them for an operator, but the orchestrator only sees
-		// what the envelope carries (yaah-938). WithoutCancel keeps the write
-		// alive when a timeout ended the run.
-		tools.CaptureSubAgentDenials(context.WithoutCancel(ctx), denials.list())
-		recordSubAgentUsage(context.WithoutCancel(ctx), opts.traceStore, subTraceID, opts.parentSession, string(role), subModel, params.Lane, subLoop.OwnUsage())
-		// Record the jail the body actually ran under, not just the one the
-		// previous fact resolved: a backend can pass its availability check and
-		// still fail to establish containment at exec time.
-		recordConfinementDegradedFact(context.WithoutCancel(ctx), subScope, subConf)
-		// Hand that same post-run truth to the dispatch lane's sink: the
-		// proposal a worktree run seals cites the enforcement the run had, and
-		// the dispatch cannot see this record any other way.
-		tools.CaptureSubAgentConfinement(context.WithoutCancel(ctx), subConf.report())
+			result, runErr := subLoop.Run(ctx, prompt)
+			// Capture the final conversation so a turn-exhausted dispatch can be
+			// continued from its context instead of restarted cold. WithoutCancel
+			// keeps the write alive when a timeout ended the run.
+			tools.CaptureSubAgentTranscript(context.WithoutCancel(ctx), subLoop.State.Messages)
+			var maxIterErr agent.MaxIterationsError
+			iterExhausted := errors.As(runErr, &maxIterErr)
+			tools.CaptureSubAgentStop(context.WithoutCancel(ctx), tools.SubAgentStop{
+				// The loop sets TurnBudgetExhausted on the hard iteration stop too;
+				// only the soft tool-turn cap means tools were stripped.
+				TurnBudgetExhausted:      subLoop.State.TurnBudgetExhausted && !iterExhausted,
+				IterationBudgetExhausted: iterExhausted,
+				HaltedBySupervisor:       haltedBySupervisor.Load(),
+				FinishReason:             subLoop.State.LastFinishReason,
+			})
+			// Hand the run's guard refusals to the dispatch lane's sink: the trace
+			// already records them for an operator, but the orchestrator only sees
+			// what the envelope carries (yaah-938). WithoutCancel keeps the write
+			// alive when a timeout ended the run.
+			tools.CaptureSubAgentDenials(context.WithoutCancel(ctx), denials.list())
+			recordSubAgentUsage(context.WithoutCancel(ctx), opts.traceStore, subTraceID, opts.parentSession, string(role), subModel, params.Lane, subLoop.OwnUsage())
+			// Record the jail the body actually ran under, not just the one the
+			// previous fact resolved: a backend can pass its availability check and
+			// still fail to establish containment at exec time.
+			recordConfinementDegradedFact(context.WithoutCancel(ctx), subScope, subConf)
+			// Hand that same post-run truth to the dispatch lane's sink: the
+			// proposal a worktree run seals cites the enforcement the run had, and
+			// the dispatch cannot see this record any other way.
+			tools.CaptureSubAgentConfinement(context.WithoutCancel(ctx), subConf.report())
 
-		// The run is over: cut the bridge now, not at closure return —
-		// trace enrichment and output budgeting below must not sit inside
-		// a window where inject or halt claims delivery to a dead loop.
-		if subScope != nil && opts.runs != nil {
-			opts.runs.Unregister(subScope.ID())
+			// The bridge cut is deliberately NOT here: review finding #4
+			// requires Done to close while the registration is still live,
+			// so the teardown is the outer sequence's end-of-sequence cut
+			// (close(quiesce) then UnregisterGeneration), never a
+			// mid-gauntlet Unregister that left a Done waiter finding
+			// ErrNoRun.
+
+			// A supervisor halt is a deliberate stop, not a failure to
+			// retry: report it as such instead of surfacing the raw
+			// context-canceled noise from the cancelled run.
+			if haltedBySupervisor.Load() && runErr != nil {
+				runErr = fmt.Errorf("sub-agent %s halted by supervisor", role)
+			}
+
+			// Whitespace-only output is a silent failure (observed when a
+			// forced final turn degenerates after tools are stripped). Turn
+			// it into an explicit error so the orchestrator can retry with
+			// a narrower task instead of seeing an empty result.
+			if runErr == nil && strings.TrimSpace(result) == "" {
+				runErr = fmt.Errorf("sub-agent %s produced no output — its final turn returned empty content (likely hit its turn cap mid-task; consider raising max_turns)", role)
+			}
+
+			// Markup-only output is a silent pseudo-success (issue #314):
+			// the model emitted a tool call in a nonstandard text dialect,
+			// the call never executed, and the raw markup became the report.
+			// Turn it into an explicit error so the orchestrator never
+			// accepts an unexecuted tool call as a completed task.
+			if runErr == nil && llm.LooksLikeUnexecutedToolCalls(result) {
+				runErr = fmt.Errorf("sub-agent %s returned unexecuted tool-call markup as its final report — the model emitted a tool call in a nonstandard text dialect that was never executed; treat this dispatch as failed (consider raising max_turns or reducing the role's toolset)", role)
+			}
+
+			// A zero-tool role cannot have executed anything, so a command
+			// transcript with output evidence in its final report is
+			// fabricated (issue #329 — the same pseudo-success class without
+			// the markup). Scoped to tool-less dispatches: a role with a
+			// shell quoting a transcript it really produced is legitimate.
+			if runErr == nil && len(profile.Tools) == 0 && llm.LooksLikeFabricatedTranscript(result) {
+				runErr = fmt.Errorf("sub-agent %s has no tools but returned a command transcript with invented output — the report is fabricated, nothing was executed; treat this dispatch as failed", role)
+			}
+
+			// Enrich errors with the sub-agent's trace so the orchestrator
+			// can see exactly which tool calls led to the failure. Tracing is
+			// integral, so the store config always resolves; only the profile
+			// lookup decides whether there is anything to append.
+			if runErr != nil {
+				if profile := subagentTraceProfile(ctx, opts.defaults.TraceStoreConfig(), subTraceID); profile != "" {
+					runErr = fmt.Errorf("%w\n\nSubagent trace:\n%s", runErr, profile)
+				}
+			}
+
+			if outLimit > 0 && len(result) > outLimit {
+				result = safeTruncateBytes(result, outLimit)
+				result += "\n...[sub-agent output capped at " + formatBytes(outLimit) + "]"
+			}
+
+			// Summary budgeting: if the result exceeds 25% of the sub-agent's
+			// context window, trim it to prevent sub-agent output from consuming
+			// the parent's entire context headroom.
+			if effectiveCW > 0 && len(result) > effectiveCW/4 {
+				budget := effectiveCW / 4
+				result = safeTruncateBytes(result, budget)
+				result += "\n...[sub-agent output trimmed to context budget " + formatBytes(budget) + "]"
+			}
+
+			tools.AddSubAgentUsage(ctx, subLoop.State.TotalTokens)
+
+			if span := trace.SpanFromContext(ctx); span.IsRecording() {
+				span.SetAttributes(
+					attribute.Int("subagent.prompt_tokens", subLoop.State.TotalTokens.PromptTokens),
+					attribute.Int("subagent.completion_tokens", subLoop.State.TotalTokens.CompletionTokens),
+					attribute.String("subagent.model", subModel),
+				)
+			}
+
+			return result, runErr
 		}
 
-		// A supervisor halt is a deliberate stop, not a failure to
-		// retry: report it as such instead of surfacing the raw
-		// context-canceled noise from the cancelled run.
-		if haltedBySupervisor.Load() && runErr != nil {
-			runErr = fmt.Errorf("sub-agent %s halted by supervisor", role)
-		}
-
-		// Whitespace-only output is a silent failure (observed when a
-		// forced final turn degenerates after tools are stripped). Turn
-		// it into an explicit error so the orchestrator can retry with
-		// a narrower task instead of seeing an empty result.
-		if runErr == nil && strings.TrimSpace(result) == "" {
-			runErr = fmt.Errorf("sub-agent %s produced no output — its final turn returned empty content (likely hit its turn cap mid-task; consider raising max_turns)", role)
-		}
-
-		// Markup-only output is a silent pseudo-success (issue #314):
-		// the model emitted a tool call in a nonstandard text dialect,
-		// the call never executed, and the raw markup became the report.
-		// Turn it into an explicit error so the orchestrator never
-		// accepts an unexecuted tool call as a completed task.
-		if runErr == nil && llm.LooksLikeUnexecutedToolCalls(result) {
-			runErr = fmt.Errorf("sub-agent %s returned unexecuted tool-call markup as its final report — the model emitted a tool call in a nonstandard text dialect that was never executed; treat this dispatch as failed (consider raising max_turns or reducing the role's toolset)", role)
-		}
-
-		// A zero-tool role cannot have executed anything, so a command
-		// transcript with output evidence in its final report is
-		// fabricated (issue #329 — the same pseudo-success class without
-		// the markup). Scoped to tool-less dispatches: a role with a
-		// shell quoting a transcript it really produced is legitimate.
-		if runErr == nil && len(profile.Tools) == 0 && llm.LooksLikeFabricatedTranscript(result) {
-			runErr = fmt.Errorf("sub-agent %s has no tools but returned a command transcript with invented output — the report is fabricated, nothing was executed; treat this dispatch as failed", role)
-		}
-
-		// Enrich errors with the sub-agent's trace so the orchestrator
-		// can see exactly which tool calls led to the failure. Tracing is
-		// integral, so the store config always resolves; only the profile
-		// lookup decides whether there is anything to append.
-		if runErr != nil {
-			if profile := subagentTraceProfile(ctx, opts.defaults.TraceStoreConfig(), subTraceID); profile != "" {
-				runErr = fmt.Errorf("%w\n\nSubagent trace:\n%s", runErr, profile)
+		// Outer sequence: a dispatch runs one loop per generation of its
+		// bridge. Each iteration performs the inner run's complete
+		// gauntlet, then checks for a claimed live redirect (yaah-8gxg.4):
+		// when the supervisor claimed this generation, consume its
+		// guidance, open a fresh generation on the SAME scope, and loop
+		// back into runOnce. Only an unclaimed return ends the sequence,
+		// and the one result the envelope carries is the FINAL run's
+		// (finding #1) — a cancelled predecessor's report never leaks out.
+		var result string
+		var runErr error
+		for {
+			result, runErr = runOnce(ctx, prompt)
+			if !bridgeLive {
+				break
+			}
+			req, adopted := opts.runs.ConsumeRedirect(bridgeScopeID, runGen)
+			if !adopted {
+				break
+			}
+			// The cancelled run's return is the redirect's confirmed
+			// handoff signal (finding #2): adoption happens only after
+			// the current run has actually returned — never on a
+			// quiesce timeout with the old Done still open.
+			//
+			// The successor gets a fresh steerCh (the old generation's
+			// buffered guidance is drained away, finding #6) and a fresh
+			// registration, so snapshot/inject/halt reach the new loop,
+			// under a fresh cancellable context derived from baseCtx
+			// (finding #8). The cancel that ended the previous run was
+			// the redirect's, not a halt of this successor: reset the
+			// flag so the successor's accounting reports its own truth,
+			// and clear the predecessor's guard denials for the same
+			// reason. The guidance becomes the successor's FIRST user
+			// message — an empty deposit re-runs the original prompt
+			// rather than starting a promptless loop.
+			for len(steerCh) > 0 {
+				<-steerCh
+			}
+			haltedBySupervisor.Store(false)
+			denials.denials = nil
+			ctx = registerBridge()
+			if req.Guidance != "" {
+				prompt = req.Guidance
 			}
 		}
 
-		if outLimit > 0 && len(result) > outLimit {
-			result = safeTruncateBytes(result, outLimit)
-			result += "\n...[sub-agent output capped at " + formatBytes(outLimit) + "]"
-		}
-
-		// Summary budgeting: if the result exceeds 25% of the sub-agent's
-		// context window, trim it to prevent sub-agent output from consuming
-		// the parent's entire context headroom.
-		if effectiveCW > 0 && len(result) > effectiveCW/4 {
-			budget := effectiveCW / 4
-			result = safeTruncateBytes(result, budget)
-			result += "\n...[sub-agent output trimmed to context budget " + formatBytes(budget) + "]"
-		}
-
-		tools.AddSubAgentUsage(ctx, subLoop.State.TotalTokens)
-
-		if span := trace.SpanFromContext(ctx); span.IsRecording() {
-			span.SetAttributes(
-				attribute.Int("subagent.prompt_tokens", subLoop.State.TotalTokens.PromptTokens),
-				attribute.Int("subagent.completion_tokens", subLoop.State.TotalTokens.CompletionTokens),
-				attribute.String("subagent.model", subModel),
-			)
+		// End-of-sequence bridge teardown, in the order review finding
+		// #4 requires: Done closes while the registration is still
+		// live, so a redirect waiter that observes Done can still find
+		// the run — then the generation-guarded removal, so this run's
+		// teardown can never remove a successor's registration.
+		if bridgeLive {
+			close(quiesce)
+			opts.runs.UnregisterGeneration(bridgeScopeID, runGen)
+			bridgeLive = false
 		}
 
 		return result, runErr

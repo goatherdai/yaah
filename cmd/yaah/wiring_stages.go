@@ -1464,7 +1464,7 @@ func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 			snapSrc = &supervision.Snapshotter{Runs: st.runs, Store: st.traceStore}
 		}
 
-		// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/status/snapshot).
+		// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/redirect/status/snapshot).
 		tr.reg.Register(&tools.SupervisorTool{
 			TraceDir:     cfg.Agent.Default.TracePath(),
 			RootScopeID:  st.rootScopeID,
