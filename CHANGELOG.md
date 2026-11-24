@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.209.0](https://github.com/goatherdai/yaah/compare/v0.208.0...v0.209.0) (2026-11-24)
+
+
+### Features
+
+* supervision live-redirect/revert, dispatch seal fix, dep bump, beads init, and in-session mcp tool (yaah-8gxg, yaah-1050.1.3, yaah-981, yaah-skzs) ([#398](https://github.com/goatherdai/yaah/issues/398)) ([2414598](https://github.com/goatherdai/yaah/commit/241459843fad6e1d302dbea40b9e7c3303b663aa))
+
 ## [0.208.0](https://github.com/goatherdai/yaah/compare/v0.207.2...v0.208.0) (2026-11-24)
 
 
