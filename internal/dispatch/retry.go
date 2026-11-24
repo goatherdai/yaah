@@ -52,6 +52,7 @@ var failureClasses = []string{
 	FailureClassConfiguration,
 	FailureClassCancelled,
 	FailureClassSealed,
+	FailureClassSealFailed,
 }
 
 // newRetryPolicy resolves a configured stanza into the policy the loop reads.

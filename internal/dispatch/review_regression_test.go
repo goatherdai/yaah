@@ -39,7 +39,7 @@ func TestFailedAttemptClass(t *testing.T) {
 		t.Errorf("body = %q, want empty (never a preflight failure)", got)
 	}
 	if got := failedAttemptClass(context.Background(), RetainedStageSeal, DispatchResult{}, nil); got != "" {
-		t.Errorf("seal = %q, want empty (never a preflight failure)", got)
+		t.Errorf("seal = %q, want empty (no artifact to classify yet)", got)
 	}
 
 	// #4: an unclassified failed dispatch classifies by its cause, not as transient.

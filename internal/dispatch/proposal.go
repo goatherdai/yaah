@@ -53,7 +53,7 @@ func (*ProposalTool) Schema() json.RawMessage {
 		"properties": {
 			"action": {
 				"type": "string",
-				"enum": ["list", "show", "select", "apply", "release", "discard", "continue", "fork"],
+				"enum": ["list", "show", "select", "apply", "release", "discard", "continue", "fork", "recover"],
 				"description": "list: show open proposals, their parent drift, and typed content-aware conflicts; show: one proposal's diff, files, changes, and conflicts; select: fast-forward onto the dispatch basis — fails closed if the basis moved since the dispatch; apply: apply path-disjoint onto a moved tree (a worktree proposal merges three-way, a container proposal writes whole-path post-images), refused on a parent edit to a proposal-owned path since the dispatch, with a machine-readable conflict (details in the tool docs); release: export the delta to a retention path (and tear a worktree down; a container world already ended at seal); discard: throw the proposal away; continue: re-run a turn-exhausted worktree proposal with extra_turns more turns, seeded from its captured conversation and sealed workspace, and seal the result as a new superseding proposal; fork: the same re-run but leaves the original open for comparison"
 			},
 			"proposal_id": {
@@ -127,13 +127,20 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		if err != nil {
 			return "", err
 		}
+		status := "proposal"
+		if p.failedSeal != nil {
+			status = p.status
+		}
 		env := proposalEnvelope{
-			Status:     "proposal",
+			Status:     status,
 			ProposalID: p.id,
 			Result:     p.result,
 			Error:      p.runErr,
 			StopReason: p.stopReason,
 			Next:       nextVerbsFor(p),
+		}
+		if p.failedSeal != nil {
+			env.World = p.world
 		}
 		if p.delta != nil {
 			// A container proposal's world is gone; the manifest is the
@@ -146,6 +153,15 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		}
 		env.Diff = clipDiff(p.reviewDiff())
 		env.Files = p.changedFiles()
+		if p.failedSeal != nil {
+			// Failed-seal entries are excluded from pairwise conflict
+			// analysis, so inspect their changes directly for show.
+			changes, cerr := p.proposalChanges(ctx)
+			env.Changes = changes
+			if cerr != nil {
+				env.ChangesError = cerr.Error()
+			}
+		}
 
 		// show carries the same typed conflict view as list, filtered to this
 		// proposal. It also records any newly observed conflict fact, so a
@@ -176,7 +192,7 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 			return "", err
 		}
 		return marshalProposalEnvelope(settlement.Envelope()), nil
-	case "continue", "fork":
+	case "continue", "fork", "recover":
 		if raw.ProposalID == "" {
 			return "", fmt.Errorf("proposal: proposal_id required for %s", raw.Action)
 		}
@@ -187,8 +203,25 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		if extraTurns <= 0 {
 			extraTurns = defaultContinueTurns
 		}
-		return ContinueRetainedRun(ctx, *t.Runtime, raw.ProposalID, extraTurns, raw.Prompt, raw.Action == "continue")
+		var p *retainedProposal
+		if t.Runtime.Proposals != nil {
+			p, _ = t.Runtime.Proposals.get(raw.ProposalID)
+		}
+		if raw.Action == "recover" && (p == nil || p.failedSeal == nil) {
+			return "", fmt.Errorf("proposal %s is not a failed-seal proposal; use continue or fork", raw.ProposalID)
+		}
+		if p != nil && p.failedSeal != nil && raw.Action == "fork" {
+			return "", fmt.Errorf("proposal %s is a failed-seal artifact; use recover, continue, or discard", raw.ProposalID)
+		}
+		consumeOriginal := raw.Action == "continue"
+		// A failed-seal artifact has no sealed fact to supersede and the
+		// runtime resolves it when a derived child seals, so both re-run verbs
+		// consume it. A non-consuming continue would vanish on restart.
+		if p != nil && p.failedSeal != nil {
+			consumeOriginal = true
+		}
+		return ContinueRetainedRun(ctx, *t.Runtime, raw.ProposalID, extraTurns, raw.Prompt, consumeOriginal)
 	default:
-		return "", fmt.Errorf("proposal: unknown action %q (list, show, select, apply, release, discard, continue, fork)", raw.Action)
+		return "", fmt.Errorf("proposal: unknown action %q (list, show, select, apply, release, discard, continue, fork, recover)", raw.Action)
 	}
 }

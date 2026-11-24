@@ -47,6 +47,10 @@ const (
 	// already sealed. A sealed partial is consume-once and reviewable, so the
 	// recovery is continue/fork the proposal, not a fresh dispatch.
 	FailureClassSealed = "sealed"
+	// FailureClassSealFailed: the body ran but sealing failed. The runtime
+	// kept a durable artifact with the worktree and conversation; recovery is
+	// the proposal's recover/discard verbs, never a fresh dispatch.
+	FailureClassSealFailed = "seal_failed"
 )
 
 // FailureInput is everything the dispatch core knows about how one attempt
@@ -211,6 +215,10 @@ func (s RetainedFailureStage) failureClass() string {
 	case RetainedStageRefused:
 		return FailureClassConfiguration
 	}
+	// RetainedStageSeal says only that finalization failed; it is set for
+	// plan-digest and transcript-write failures too, where no artifact exists.
+	// The seal_failed class is set explicitly by markSealFailedEnvelope when a
+	// typed SealError actually carries a handle.
 	return ""
 }
 
