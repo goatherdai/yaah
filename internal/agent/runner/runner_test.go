@@ -501,7 +501,7 @@ func TestRecordSubAgentUsage(t *testing.T) {
 	defer store.Close(context.Background())
 
 	owner := "sub-developer-sess-1"
-	recordSubAgentUsage(context.Background(), store, owner, "sess-parent", "developer", "deepseek-flash", "retained", types.Usage{
+	recordSubAgentUsage(context.Background(), store, owner, "sess-parent", "developer", "deepseek-flash", "retained", 1, types.Usage{
 		PromptTokens:       12000,
 		CompletionTokens:   800,
 		TotalTokens:        12800,

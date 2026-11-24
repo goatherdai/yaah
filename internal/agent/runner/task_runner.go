@@ -536,6 +536,11 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 				runCtx, cancelRun := context.WithCancel(baseCtx)
 				opts.runs.Register(bridgeScopeID, supervision.Run{
 					SteerCh: ch,
+					// Handoff is the redirect's plain stop (finding #4):
+					// CancelGeneration routes here, so a redirect handoff
+					// never reads as a supervisor halt. Cancel below is
+					// halt-only and deliberately marks the sequence.
+					Handoff: cancelRun,
 					Cancel: func() {
 						haltedBySupervisor.Store(true)
 						cancelRun()
@@ -648,6 +653,13 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			})
 
 			result, runErr := subLoop.Run(ctx, prompt)
+			// The loop has returned: nothing is executing inside the
+			// scope's sandbox anymore, so steering must stop claiming
+			// delivery — a buffered injection the returned loop will never
+			// drain is a false "delivered" (PR #398 review finding 10).
+			if bridgeLive {
+				opts.runs.MarkReturned(bridgeScopeID, runGen)
+			}
 			// Capture the final conversation so a turn-exhausted dispatch can be
 			// continued from its context instead of restarted cold. WithoutCancel
 			// keeps the write alive when a timeout ended the run.
@@ -667,7 +679,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			// what the envelope carries (yaah-938). WithoutCancel keeps the write
 			// alive when a timeout ended the run.
 			tools.CaptureSubAgentDenials(context.WithoutCancel(ctx), denials.list())
-			recordSubAgentUsage(context.WithoutCancel(ctx), opts.traceStore, subTraceID, opts.parentSession, string(role), subModel, params.Lane, subLoop.OwnUsage())
+			recordSubAgentUsage(context.WithoutCancel(ctx), opts.traceStore, subTraceID, opts.parentSession, string(role), subModel, params.Lane, runGen, subLoop.OwnUsage())
 			// Record the jail the body actually ran under, not just the one the
 			// previous fact resolved: a backend can pass its availability check and
 			// still fail to establish containment at exec time.
@@ -769,7 +781,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			if !bridgeLive {
 				break
 			}
-			req, adopted := opts.runs.ConsumeRedirect(bridgeScopeID, runGen)
+			req, adopted := opts.runs.ConsumeRedirectOrClose(bridgeScopeID, runGen)
 			if !adopted {
 				break
 			}
@@ -778,23 +790,35 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			// the current run has actually returned — never on a
 			// quiesce timeout with the old Done still open.
 			//
+			// A supervisor halt wins over a pending redirect: the halt
+			// landed while the cancelled generation was ending, so no
+			// successor may start — the sequence ends and the claim is
+			// dropped with it (PR #398 review finding: the flag was reset
+			// below instead, erasing a real halt and running a successor
+			// under it). Redirect stops no longer set the flag at all:
+			// they hand off through Run.Handoff, so the flag now means
+			// exactly "a supervisor halted this sequence".
+			if haltedBySupervisor.Load() {
+				break
+			}
 			// The successor gets a fresh steerCh (the old generation's
-			// buffered guidance is drained away, finding #6) and a fresh
+			// buffered guidance is drained away) and a fresh
 			// registration, so snapshot/inject/halt reach the new loop,
-			// under a fresh cancellable context derived from baseCtx
-			// (finding #8). The cancel that ended the previous run was
-			// the redirect's, not a halt of this successor: reset the
-			// flag so the successor's accounting reports its own truth,
-			// and clear the predecessor's guard denials for the same
-			// reason. The guidance becomes the successor's FIRST user
-			// message — an empty deposit re-runs the original prompt
-			// rather than starting a promptless loop.
+			// under a fresh cancellable context derived from baseCtx.
+			// The guidance becomes the successor's FIRST user message —
+			// an empty deposit re-runs the original prompt rather than
+			// starting a promptless loop.
 			for len(steerCh) > 0 {
 				<-steerCh
 			}
-			haltedBySupervisor.Store(false)
 			denials.denials = nil
 			ctx = registerBridge()
+			// The halt may have raced the adoption above (its cancel
+			// targeted the superseded generation): re-check once the
+			// fresh registration is live and end the sequence if so.
+			if haltedBySupervisor.Load() {
+				break
+			}
 			// Live revert (yaah-1050.1.3): roll the workspace back to the
 			// PREVIOUS generation's pre-run snapshot BEFORE the successor
 			// loop starts — the rollback that separates revert from plain
@@ -803,20 +827,43 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			// rolled-back workspace. A missing substrate or snapshot
 			// skips the rollback with a note: a revert must never fail
 			// the run it handsoff.
+			revertFailed := false
 			if req.Revert {
+				// Ownership of the workspace this rollback would touch
+				// (review finding #5): only an isolated worktree belongs
+				// to THIS dispatch. A container or shared-root sandbox is
+				// shared with other writers — a wholesale Apply would roll
+				// THEIR changes back too.
+				sandboxOwned := subScope != nil && subScope.Sandbox() != nil && subScope.Sandbox().Capabilities().Isolated
 				switch {
 				case subScope == nil || subScope.Sandbox() == nil:
 					slog.Warn("live revert: workspace rollback skipped — the sub-agent scope has no sandbox (isolated/container sessions have no per-sub-agent rollback substrate); the successor loop starts on the workspace as it is",
+						"scope", bridgeScopeID)
+				case !sandboxOwned:
+					// A shared sandbox is not ours to roll back: the
+					// snapshot covers the full tree and applying it would
+					// remove OTHER writers' changes made after capture
+					// (PR #398 review finding).
+					slog.Warn("live revert: workspace rollback skipped — this dispatch shares its sandbox with the root workspace and a full-tree rollback could remove other writers' changes; the successor loop starts on the workspace as it is",
 						"scope", bridgeScopeID)
 				case !preRunOK:
 					slog.Warn("live revert: workspace rollback skipped — no pre-run snapshot was captured for this run; the successor loop starts on the workspace as it is",
 						"scope", bridgeScopeID)
 				default:
 					if err := subScope.Sandbox().Apply(ctx, preRunState); err != nil {
-						slog.Warn("live revert: workspace rollback failed; the successor loop starts on the workspace as it is",
-							"scope", bridgeScopeID, "err", err)
+						// A failed Apply may already have reset part of
+						// the tree (the runtime resets before restore): a
+						// successor must not start "as if" rolled back
+						// against a partially reset workspace (review
+						// finding). Surface the failure and leave the
+						// workspace for explicit inspection.
+						runErr = fmt.Errorf("live revert failed; the workspace may be partially reset — inspect it before retrying: %w", err)
+						revertFailed = true
 					}
 				}
+			}
+			if revertFailed {
+				break
 			}
 			capturePreRun(ctx)
 			if req.Guidance != "" {

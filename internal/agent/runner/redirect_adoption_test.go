@@ -140,19 +140,19 @@ func TestTaskRunner_RedirectAdoptionRunsFreshLoopOnSameScope(t *testing.T) {
 		t.Fatalf("Inject into run 1: %v", err)
 	}
 
-	// The supervisor's redirect path: claim (CAS), deposit, cancel.
+	// The supervisor's redirect path: claim publishes the complete
+	// payload atomically (PR #398 review finding), then cancel.
 	gen1, ok := runs.Generation(scopeID)
 	if !ok {
 		t.Fatal("the live registration must report its generation")
 	}
-	if _, err := runs.Redirect(scopeID, gen1); err != nil {
+	if _, err := runs.Redirect(scopeID, gen1, supervisionapi.RedirectRequest{Guidance: guidance}); err != nil {
 		t.Fatalf("Redirect: %v", err)
 	}
-	if err := runs.DepositRedirect(scopeID, gen1, supervisionapi.RedirectRequest{Guidance: guidance}); err != nil {
-		t.Fatalf("DepositRedirect: %v", err)
-	}
-	if _, err := runs.Cancel(scopeID); err != nil {
-		t.Fatalf("Cancel: %v", err)
+	// The redirect's generation-checked stop runs through Handoff —
+	// plain cancellation, never the halt mark (finding #4).
+	if _, err := runs.CancelGeneration(scopeID, gen1); err != nil {
+		t.Fatalf("CancelGeneration: %v", err)
 	}
 
 	select {
