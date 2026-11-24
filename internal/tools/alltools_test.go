@@ -13,6 +13,7 @@ func allBuiltinTools() []Tool {
 		&BackgroundProcessTool{},
 		&DelegateTool{},
 		&ListSubAgentsTool{},
+		&MCPListTool{},
 		&MemoryAddTool{},
 		&MemoryDeleteTool{},
 		&MemoryPromoteTool{},

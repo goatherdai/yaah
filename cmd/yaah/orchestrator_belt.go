@@ -95,6 +95,7 @@ var defaultOrchestratorBelt = []string{
 	"grep",
 	"list_subagents",
 	"ls",
+	"mcp",                    // MCP server/tool inventory (yaah-skzs)
 	"memory_add",             // memory lane: readers/writers gate at registration
 	"memory_delete",          //
 	"memory_promote",         //

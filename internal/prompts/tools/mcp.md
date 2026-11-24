@@ -1,0 +1,1 @@
+Lists the MCP servers connected to this session and the tools each exposes. For every server it reports the name, transport, command or URL, connection status, any startup error, and the tool names in the <server>_<tool> form used on the session tool surface. The roster is live session state — unlike `yaah mcp list`, which knows only the configuration. No parameters required.

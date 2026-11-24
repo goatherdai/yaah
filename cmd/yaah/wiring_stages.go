@@ -563,6 +563,39 @@ func buildMCPSkills(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 		warnPersonaMCPOmissions(lc.persona.Persona.Name, lc.persona.Persona.Tools, st.mcpToolNames)
 	}
 
+	// mcp reports the connected servers and their tool inventories from
+	// inside the session (bead yaah-skzs): `yaah mcp list` sees only the
+	// configured servers, and the tool surface otherwise gives the model
+	// no way to ask what is actually connected. Read-only; the adapter
+	// here is the only place both tools and mcp types are visible, so
+	// internal/tools never imports internal/mcp. Works in isolated mode
+	// too — the servers run there, only their tools stay unregistered.
+	tr.reg.Register(&tools.MCPListTool{Lister: func() []tools.MCPServerStatus {
+		out := make([]tools.MCPServerStatus, 0, len(st.mcpClients))
+		for _, cl := range st.mcpClients {
+			info := cl.Info()
+			declared := cl.Tools()
+			names := make([]string, 0, len(declared))
+			for _, tl := range declared {
+				if tl.ServerName != "" {
+					names = append(names, tl.ServerName+"_"+tl.Name)
+				} else {
+					names = append(names, tl.Name)
+				}
+			}
+			out = append(out, tools.MCPServerStatus{
+				Name:      info.Name,
+				Transport: info.Transport,
+				Command:   info.Command,
+				URL:       info.URL,
+				Connected: info.Connected,
+				Tools:     names,
+				Error:     info.Error,
+			})
+		}
+		return out
+	}})
+
 	skillDirs := skillSearchPaths()
 	// Strict (the autonomous-write security scan) is opt-in and defaults off:
 	// it is meant to guard unattended consolidation writes, not human-directed
