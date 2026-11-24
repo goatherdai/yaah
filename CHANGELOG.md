@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.208.0](https://github.com/goatherdai/yaah/compare/v0.207.2...v0.208.0) (2026-11-24)
+
+
+### Features
+
+* **dispatch:** recover work when proposal sealing fails ([#396](https://github.com/goatherdai/yaah/issues/396)) ([efe9f53](https://github.com/goatherdai/yaah/commit/efe9f53848433df4bc8e73a7f3e450228eaa64ad))
+
 ## [Unreleased]
 
 ### Added
