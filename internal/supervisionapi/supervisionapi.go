@@ -17,7 +17,51 @@ var (
 	ErrSteerBusy = errors.New("the run's steering buffer is full; it is not consuming guidance")
 	// ErrNotHaltable means the run registered no cancellation.
 	ErrNotHaltable = errors.New("the run registered no cancellation; it is not haltable")
+	// ErrAlreadyClaimed reports a Redirect whose scope and generation are
+	// live but already claimed by an earlier Redirect for that same
+	// generation. It is deliberately distinct from ErrNoRun: ErrNoRun
+	// means the generation no longer names a live run (unregistered or
+	// superseded by a successor Register), while ErrAlreadyClaimed means
+	// this caller arrived second at a run that is still live — and must
+	// not launch a second replacement loop for it.
+	ErrAlreadyClaimed = errors.New("the run is already claimed for redirect")
+	// ErrRedirectNotClaimed reports a DepositRedirect at a live,
+	// generation-matching registration that carries no claim: guidance
+	// must never ride a slot the single-winner discipline did not open,
+	// so the deposit is refused rather than queued against a run nobody
+	// redirected.
+	ErrRedirectNotClaimed = errors.New("no redirect claim to deposit guidance onto")
 )
+
+// RedirectHandle is a successful Redirect claim: the scope and the
+// generation the claimer verified under the lock. It is inert data —
+// holding it steers, cancels, and unregisters nothing — but it is the
+// token the live-redirect handoff carries when it swaps loops: the
+// registration still bears this generation until a successor Register
+// supersedes it, so the handle records exactly which incarnation the
+// claimer won.
+type RedirectHandle struct {
+	ScopeID string
+	Gen     uint64
+}
+
+// RedirectRequest is a claimed live-redirect handoff's payload: the
+// guidance the supervisor deposited for the successor loop. The claim
+// itself is the registration's redirect-pending mark (set by Redirect,
+// single winner via ErrAlreadyClaimed); the request is what the parent
+// loop reads through ConsumeRedirect after the current run returns and
+// clears when it adopts the handoff.
+type RedirectRequest struct {
+	// Guidance is the successor loop's first user message, deposited
+	// verbatim by DepositRedirect after the claim.
+	Guidance string
+	// Revert marks a live revert (yaah-1050.1.3): when true, the
+	// adoption loop rolls the sub-agent's workspace back to the
+	// pre-run snapshot before starting the successor loop on the same
+	// scope. When false the handoff is a plain redirect — the
+	// workspace is left exactly as the cancelled run left it.
+	Revert bool
+}
 
 // Firing is one aggregated rule firing: one per rule, scope, and kind, so
 // the count is the aggregate and the map it is read from stays bounded.

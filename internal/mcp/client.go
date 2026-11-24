@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 )
 
@@ -383,28 +382,16 @@ func (c *Client) Info() ServerInfo {
 	info := ServerInfo{
 		Name:      c.name,
 		Transport: "stdio",
-		Command:   c.manifest.Command + " " + joinArgs(c.manifest.Args),
+		// Executable only, never argv: Info feeds the model-facing mcp
+		// tool and session traces, and resolved args routinely carry
+		// tokens (review finding 3).
+		Command:   c.manifest.Command,
 		ToolCount: toolCount,
 	}
 	if initialized && !closed && c.cmd != nil && c.cmd.Process != nil {
 		info.Connected = true
 	}
 	return info
-}
-
-func joinArgs(args []string) string {
-	s := ""
-	for i, a := range args {
-		if i > 0 {
-			s += " "
-		}
-		if strings.Contains(a, " ") {
-			s += "\"" + a + "\""
-		} else {
-			s += a
-		}
-	}
-	return s
 }
 
 // Close shuts down the MCP server process.

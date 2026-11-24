@@ -18,11 +18,22 @@ import (
 	"github.com/goatherdai/yaah/internal/types"
 )
 
-// sealFailedVerbs are the legal next verbs for a failed-seal proposal. Without
-// a captured conversation recovery cannot reseed it, so only discard is
-// advertised — promising recover would fail on the empty-transcript gate.
-func sealFailedVerbs(hasTranscript bool) []string {
-	if !hasTranscript {
+// failedSealHasWorkspaceSeed reports whether a handle carries a usable
+// workspace seed. ForkFromFailedSeal refuses a handle whose workspace state
+// is empty — which is exactly what a digest-failure handle looks like after
+// a restart, because the state values fact is deliberately never written on
+// a failed hard path — so recover/continue would fail on it.
+func failedSealHasWorkspaceSeed(h *goatherd.FailedSeal) bool {
+	return h != nil && h.Workspace.Backend != ""
+}
+
+// sealFailedVerbs are the legal next verbs for a failed-seal proposal.
+// Recovery needs both a captured conversation and a usable workspace seed:
+// without a conversation the reseed fails on the empty-transcript gate, and
+// without workspace state ForkFromFailedSeal refuses the fork. Only discard
+// is advertised when either is missing.
+func sealFailedVerbs(h *goatherd.FailedSeal) []string {
+	if h == nil || len(h.Transcript) == 0 || !failedSealHasWorkspaceSeed(h) {
 		return []string{"discard"}
 	}
 	// Both re-run verbs consume the artifact: the runtime resolves a source
@@ -34,15 +45,22 @@ func sealFailedVerbs(hasTranscript bool) []string {
 // markSealFailedEnvelope stamps the typed recovery contract onto a failed-seal
 // result at the lane, so callers that read the lane envelope directly (without
 // the dispatch core's finalize step) see the same classification.
-func markSealFailedEnvelope(env *proposalEnvelope, artifactID string, hasTranscript bool) {
+func markSealFailedEnvelope(env *proposalEnvelope, h *goatherd.FailedSeal) {
 	env.Status = EnvelopeStatusSealFailed
-	env.ProposalID = artifactID
-	env.Next = sealFailedVerbs(hasTranscript)
+	env.ProposalID = h.ArtifactID
+	env.Next = sealFailedVerbs(h)
 	env.FailureClass = FailureClassSealFailed
-	env.Recovery = &ResultRecovery{
-		Recommended: "inspect the failed-seal proposal with proposal show, then recover it or discard it explicitly; do not auto-redispatch",
+	if failedSealHasWorkspaceSeed(h) && len(h.Transcript) > 0 {
+		env.Recovery = &ResultRecovery{
+			Recommended: "inspect the failed-seal proposal with proposal show, then recover it or discard it explicitly; do not auto-redispatch",
+		}
+		env.Notes = trimResult("worktree and conversation retained for recovery; discard explicitly to abandon them")
+	} else {
+		env.Recovery = &ResultRecovery{
+			Recommended: "inspect the failed-seal proposal with proposal show; it cannot be recovered (no usable workspace seed or conversation), so discard it explicitly",
+		}
+		env.Notes = trimResult("worktree retained; the artifact has no usable workspace seed or conversation, so only discard is available")
 	}
-	env.Notes = trimResult("worktree and conversation retained for recovery; discard explicitly to abandon them")
 }
 
 func hasVerb(values []string, want string) bool {

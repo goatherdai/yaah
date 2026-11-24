@@ -290,7 +290,7 @@ func continuableVerbs() []string {
 // proposal's world ended at seal, so it settles only.
 func nextVerbsFor(p *retainedProposal) []string {
 	if p != nil && p.failedSeal != nil {
-		return sealFailedVerbs(len(p.transcript) > 0)
+		return sealFailedVerbs(p.failedSeal)
 	}
 	if p != nil && p.delta == nil && len(p.transcript) > 0 {
 		return continuableVerbs()
@@ -620,16 +620,20 @@ func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 	}
 	// Advertise the union of verbs the listed proposals actually accept, so
 	// `next` is a real eligibility list: a failed-seal entry contributes
-	// recover/continue, an ordinary worktree contributes continue/fork.
+	// recover/continue only when its handle can actually be reseeded, an
+	// ordinary worktree contributes continue/fork.
 	next := proposalVerbs()
-	hasFailedSeal := false
 	for _, analysis := range analyses {
 		p := analysis.proposal
 		if p == nil {
 			continue
 		}
 		if p.failedSeal != nil {
-			hasFailedSeal = true
+			for _, verb := range sealFailedVerbs(p.failedSeal) {
+				if !hasVerb(next, verb) {
+					next = append(next, verb)
+				}
+			}
 			continue
 		}
 		if p.delta == nil && len(p.transcript) > 0 {
@@ -638,11 +642,6 @@ func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 					next = append(next, verb)
 				}
 			}
-		}
-	}
-	for _, verb := range sealFailedVerbs(hasFailedSeal) {
-		if hasFailedSeal && !hasVerb(next, verb) {
-			next = append(next, verb)
 		}
 	}
 	env := proposalListEnvelope{Status: "open", Proposals: list, Conflicts: conflicts, Duplicates: duplicates, Next: next}
@@ -1251,7 +1250,7 @@ func startRetainedRun(
 			// The runtime kept the worktree and the transcript behind a
 			// durable artifact. Expose it as a failed-seal proposal instead
 			// of destroying the world.
-			markSealFailedEnvelope(&env, sealErrTyped.ArtifactID, len(sealErrTyped.Handle.Transcript) > 0)
+			markSealFailedEnvelope(&env, sealErrTyped.Handle)
 			if derr := registerFailedSealProposal(sealErrTyped.Handle, mgr, rt); derr != nil {
 				notes = append(notes, "failed-seal proposal: "+derr.Error())
 			}
@@ -1670,7 +1669,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		var sealErrTyped *goatherd.SealError
 		recoverable := errors.As(sealErr, &sealErrTyped) && sealErrTyped.ArtifactID != "" && sealErrTyped.Handle != nil
 		if recoverable {
-			markSealFailedEnvelope(&env, sealErrTyped.ArtifactID, len(sealErrTyped.Handle.Transcript) > 0)
+			markSealFailedEnvelope(&env, sealErrTyped.Handle)
 			if derr := registerFailedSealProposal(sealErrTyped.Handle, mgr, rt); derr != nil {
 				notes = append(notes, "failed-seal proposal: "+derr.Error())
 			}

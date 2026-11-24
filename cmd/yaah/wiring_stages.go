@@ -563,6 +563,55 @@ func buildMCPSkills(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 		warnPersonaMCPOmissions(lc.persona.Persona.Name, lc.persona.Persona.Tools, st.mcpToolNames)
 	}
 
+	// mcp reports the connected servers and their tool inventories from
+	// inside the session (bead yaah-skzs): `yaah mcp list` sees only the
+	// configured servers, and the tool surface otherwise gives the model
+	// no way to ask what is actually connected. Read-only; the adapter
+	// here is the only place both tools and mcp types are visible, so
+	// internal/tools never imports internal/mcp. Works in isolated mode
+	// too — the servers run there, only their tools stay unregistered.
+	tr.reg.Register(&tools.MCPListTool{Lister: func() []tools.MCPServerStatus {
+		// Roster from the startup infos, not the successful clients: a
+		// server that failed to start stays visible with its error
+		// (review finding 8). Tool names come from the live clients, but
+		// only names the registry actually exposes are listed as
+		// callable — a discovered name the session never registered
+		// (isolated mode) or withdrew later is counted as unregistered
+		// instead (findings 9, 12). Command carries the executable only:
+		// resolved arguments routinely hold tokens (finding 3).
+		byName := make(map[string]mcp.MCPClient, len(st.mcpClients))
+		for _, cl := range st.mcpClients {
+			byName[cl.Info().Name] = cl
+		}
+		out := make([]tools.MCPServerStatus, 0, len(st.mcpInfos))
+		for _, info := range st.mcpInfos {
+			entry := tools.MCPServerStatus{
+				Name:      info.Name,
+				Transport: info.Transport,
+				Command:   info.Command,
+				URL:       info.URL,
+				Connected: info.Connected,
+				Error:     info.Error,
+				Tools:     []string{},
+			}
+			if cl, ok := byName[info.Name]; ok {
+				for _, tl := range cl.Tools() {
+					name := tl.Name
+					if tl.ServerName != "" {
+						name = tl.ServerName + "_" + tl.Name
+					}
+					if tr.reg.Get(name) != nil {
+						entry.Tools = append(entry.Tools, name)
+					} else {
+						entry.UnregisteredToolCount++
+					}
+				}
+			}
+			out = append(out, entry)
+		}
+		return out
+	}})
+
 	skillDirs := skillSearchPaths()
 	// Strict (the autonomous-write security scan) is opt-in and defaults off:
 	// it is meant to guard unattended consolidation writes, not human-directed
@@ -1464,7 +1513,7 @@ func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 			snapSrc = &supervision.Snapshotter{Runs: st.runs, Store: st.traceStore}
 		}
 
-		// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/status/snapshot).
+		// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/redirect/status/snapshot).
 		tr.reg.Register(&tools.SupervisorTool{
 			TraceDir:     cfg.Agent.Default.TracePath(),
 			RootScopeID:  st.rootScopeID,
