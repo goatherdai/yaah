@@ -17,7 +17,7 @@ import (
 // The orchestrator's session totals fold child usage in, so state.db exposes
 // only the aggregate sub-agent share. This fact keeps the per-dispatch and
 // per-role split available to benchmark metrics and trace readers.
-func recordSubAgentUsage(ctx context.Context, store pipeline.TraceSink, sessionID, parentSession, role, model, lane string, usage types.Usage) {
+func recordSubAgentUsage(ctx context.Context, store pipeline.TraceSink, sessionID, parentSession, role, model, lane string, gen uint64, usage types.Usage) {
 	if pipeline.SinkIsNil(store) || sessionID == "" {
 		return
 	}
@@ -32,7 +32,12 @@ func recordSubAgentUsage(ctx context.Context, store pipeline.TraceSink, sessionI
 		"cached_prompt_tokens": usage.CacheTokens(),
 	}
 	_, err := store.Append(ctx, kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
-		AppendIntentID: sessionID + ":usage",
+		// The append intent must be distinct per generation: the kernel
+		// rejects a reused intent with changed content and silently
+		// replays the first receipt for identical content, so a redirect
+		// successor's usage would never persist (review finding 6). The
+		// trace owner stays the session — only the intent key is per-run.
+		AppendIntentID: fmt.Sprintf("%s:usage:g%d", sessionID, gen),
 		Groups: []kerneltrace.AppendGroup{{
 			TraceOwnerID: sessionID,
 			FactDrafts: []kerneltrace.RecordDraft{{
