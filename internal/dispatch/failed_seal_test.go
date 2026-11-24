@@ -97,7 +97,7 @@ func TestSealFailureWithArtifactIsRecoverable(t *testing.T) {
 		t.Fatalf("proposal = %+v, want a failed-seal handle with status", p)
 	}
 	if got := nextVerbsFor(p); len(got) != 3 || got[0] != "recover" {
-		t.Errorf("next verbs = %v, want %v", got, sealFailedVerbs(true))
+		t.Errorf("next verbs = %v, want %v", got, sealFailedVerbs(p.failedSeal))
 	}
 	if files := p.changedFiles(); len(files) != 1 || files[0] != "out.txt" {
 		t.Errorf("changed files = %v, want [out.txt] from the handle", files)
@@ -144,6 +144,46 @@ func TestFailedSealWithoutTranscriptAdvertisesOnlyDiscard(t *testing.T) {
 	}
 	if got := nextVerbsFor(p); len(got) != 1 || got[0] != "discard" {
 		t.Fatalf("next verbs = %v, want [discard]", got)
+	}
+}
+
+// TestFailedSealWithoutWorkspaceSeedAdvertisesOnlyDiscard pins the other half
+// of the honest verb contract: a handle with a captured conversation but no
+// usable workspace seed cannot seed a continuation — ForkFromFailedSeal
+// refuses a handle whose workspace state is empty, which is exactly what a
+// digest-failure handle looks like after a restart (the state values fact is
+// never written on a failed hard path) — so recover/continue must not be
+// advertised even though the transcript survived.
+func TestFailedSealWithoutWorkspaceSeedAdvertisesOnlyDiscard(t *testing.T) {
+	fx, _, rootID := newSessionFixtures(t)
+	mgr := fx.mgr
+	h := &goatherd.FailedSeal{
+		ArtifactID: "art:no-workspace:1",
+		ScopeID:    "scope:no-workspace",
+		OwnerID:    "no-workspace",
+		Metadata:   []byte(`{"id":"proposal:no-workspace","parent_scope_id":"` + rootID + `"}`),
+		Transcript: []byte(`[{"role":"user","content":"do the work"}]`),
+		Stage:      "digest_state",
+	}
+	reg := NewProposalRegistry()
+	if err := registerFailedSealProposal(h, mgr, RetainedRuntime{
+		RootScopeID: rootID,
+		Proposals:   reg,
+	}); err != nil {
+		t.Fatalf("register failed-seal proposal: %v", err)
+	}
+	p, err := reg.get(h.ArtifactID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := nextVerbsFor(p); len(got) != 1 || got[0] != "discard" {
+		t.Fatalf("next verbs = %v, want [discard]", got)
+	}
+	var env proposalEnvelope
+	env.Status = EnvelopeStatusSealFailed
+	markSealFailedEnvelope(&env, h)
+	if len(env.Next) != 1 || env.Next[0] != "discard" {
+		t.Fatalf("envelope next = %v, want [discard]", env.Next)
 	}
 }
 
