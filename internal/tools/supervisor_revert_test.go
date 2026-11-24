@@ -85,7 +85,7 @@ func TestSupervisorTool_RevertActsLikeRedirectWithRevertFlag(t *testing.T) {
 	if !ok {
 		t.Fatal("the claimed run must stay registered until its loop adopts the handoff")
 	}
-	req, consumed := runs.ConsumeRedirect(child.ID(), gen)
+	req, consumed := runs.ConsumeRedirectOrClose(child.ID(), gen)
 	if !consumed {
 		t.Fatal("ConsumeRedirect must return the claimed request")
 	}
