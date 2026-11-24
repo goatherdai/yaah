@@ -214,9 +214,11 @@ func (s RetainedFailureStage) failureClass() string {
 		return FailureClassPreflightTransient
 	case RetainedStageRefused:
 		return FailureClassConfiguration
-	case RetainedStageSeal:
-		return FailureClassSealFailed
 	}
+	// RetainedStageSeal says only that finalization failed; it is set for
+	// plan-digest and transcript-write failures too, where no artifact exists.
+	// The seal_failed class is set explicitly by markSealFailedEnvelope when a
+	// typed SealError actually carries a handle.
 	return ""
 }
 

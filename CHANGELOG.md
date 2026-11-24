@@ -4,7 +4,7 @@
 
 ### Added
 - **Failed-seal recovery**: a seal failure with a durable runtime artifact now surfaces as a `seal_failed` proposal instead of destroying the worktree. `proposal list` includes recovered handles; `recover`/`continue` reseed a fresh worktree from the artifact via `ForkFromFailedSeal`, and `discard` explicitly abandons it.
-- **Durable transcript**: worktree dispatches persist the conversation with `PersistAttemptTranscript` before sealing and cite it with `SealOptions.TranscriptID`, so failed seals and restarts keep the conversation.
+- **Durable transcript**: worktree dispatches persist the conversation with `PersistAttemptTranscript` before sealing and cite it with `SealOptions.TranscriptID`, so failed seals and restarts keep the conversation. An unencodable/oversized transcript is reported with `TranscriptOmitted` and only `discard` is advertised for the failed seal.
 
 ### Changed
 - Runtime dependency bumped to `goatherd-runtime v0.26.0`; parity ledger and docs updated.

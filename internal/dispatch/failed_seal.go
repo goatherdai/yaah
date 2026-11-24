@@ -7,6 +7,7 @@ package dispatch
 // recover or discard it explicitly.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -17,23 +18,40 @@ import (
 	"github.com/goatherdai/yaah/internal/types"
 )
 
-// sealFailedVerbs are the legal next verbs for a failed-seal proposal: the
-// work can be reseeded from its artifact, or explicitly abandoned. Settlement
-// verbs are not legal — there is no sealed output to settle.
-func sealFailedVerbs() []string { return []string{"recover", "continue", "discard"} }
+// sealFailedVerbs are the legal next verbs for a failed-seal proposal. Without
+// a captured conversation recovery cannot reseed it, so only discard is
+// advertised — promising recover would fail on the empty-transcript gate.
+func sealFailedVerbs(hasTranscript bool) []string {
+	if !hasTranscript {
+		return []string{"discard"}
+	}
+	// Both re-run verbs consume the artifact: the runtime resolves a source
+	// artifact when a child citing it seals, so a non-consuming "continue"
+	// would silently disappear on the next restart.
+	return []string{"recover", "continue", "discard"}
+}
 
 // markSealFailedEnvelope stamps the typed recovery contract onto a failed-seal
 // result at the lane, so callers that read the lane envelope directly (without
 // the dispatch core's finalize step) see the same classification.
-func markSealFailedEnvelope(env *proposalEnvelope, artifactID string) {
+func markSealFailedEnvelope(env *proposalEnvelope, artifactID string, hasTranscript bool) {
 	env.Status = EnvelopeStatusSealFailed
 	env.ProposalID = artifactID
-	env.Next = sealFailedVerbs()
+	env.Next = sealFailedVerbs(hasTranscript)
 	env.FailureClass = FailureClassSealFailed
 	env.Recovery = &ResultRecovery{
-		Recommended: "inspect the failed-seal proposal with proposal show, then recover it (or discard it explicitly); do not auto-redispatch",
+		Recommended: "inspect the failed-seal proposal with proposal show, then recover it or discard it explicitly; do not auto-redispatch",
 	}
 	env.Notes = trimResult("worktree and conversation retained for recovery; discard explicitly to abandon them")
+}
+
+func hasVerb(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 // newFailedSealProposal turns a runtime handle into an open proposal. The
@@ -99,6 +117,39 @@ func registerFailedSealProposal(h *goatherd.FailedSeal, mgr *goatherd.ScopeManag
 	return nil
 }
 
+// clearFailedSealArtifact disposes of a recoverable handle and its world. The
+// runtime removes the handle automatically when a child citing it seals, so a
+// "not found" result means the artifact was already resolved, not a failure.
+// The registry entry is removed only after disposal succeeds, so a failed
+// teardown leaves the handle inspectable and retryable.
+func clearFailedSealArtifact(ctx context.Context, mgr *goatherd.ScopeManager, reg *ProposalRegistry, p *retainedProposal) error {
+	if p == nil || p.failedSeal == nil {
+		return nil
+	}
+	h := p.failedSeal
+	if mgr != nil {
+		if _, stillOpen := mgr.FailedSeal(h.ID); stillOpen {
+			if err := mgr.DiscardFailedSeal(ctx, h.ID); err != nil {
+				return fmt.Errorf("discard failed-seal artifact %s: %w", h.ID, err)
+			}
+		}
+		// The runtime's discard deliberately leaves the sandbox untouched.
+		// The host owns the worktree, so a consumed or discarded artifact
+		// must tear its scope down too.
+		if scope, ok := mgr.Get(h.ScopeID); ok {
+			if parent, ok := mgr.Get(p.parentID); ok {
+				if err := parent.Discard(scope); err != nil {
+					return fmt.Errorf("discard failed-seal worktree %s: %w", h.ScopeID, err)
+				}
+			}
+		}
+	}
+	if reg != nil {
+		reg.remove(p.id)
+	}
+	return nil
+}
+
 // loadFailedSealProposals rehydrates handles after a restart. Handles whose
 // transcript failed verification or whose worktree drifted are skipped: the
 // runtime refuses to fork them, so surfacing them as recoverable would be a
@@ -110,14 +161,18 @@ func loadFailedSealProposals(reg *ProposalRegistry, mgr *goatherd.ScopeManager, 
 			warnings = append(warnings, fmt.Sprintf("failed-seal artifact %s is not recoverable (stale=%v, transcript_invalid=%v)", h.ArtifactID, h.Stale, h.TranscriptInvalid))
 			continue
 		}
-		if rt.SessionID != "" {
-			var meta retainedProposalMeta
-			if len(h.Metadata) > 0 {
-				_ = json.Unmarshal(h.Metadata, &meta)
-			}
-			if meta.SessionID != "" && meta.SessionID != rt.SessionID {
-				continue
-			}
+		var meta retainedProposalMeta
+		if len(h.Metadata) > 0 {
+			_ = json.Unmarshal(h.Metadata, &meta)
+		}
+		// Ownership must be established before importing a handle from the
+		// trace: a session mismatch, or an unknown session paired with a
+		// different root scope, means this is another session's work.
+		if rt.SessionID != "" && meta.SessionID != "" && meta.SessionID != rt.SessionID {
+			continue
+		}
+		if rt.RootScopeID != "" && meta.SessionID == "" && meta.ParentScopeID != rt.RootScopeID {
+			continue
 		}
 		if reg == nil {
 			continue
@@ -127,6 +182,11 @@ func loadFailedSealProposals(reg *ProposalRegistry, mgr *goatherd.ScopeManager, 
 			warnings = append(warnings, err.Error())
 			slog.Warn("proposal rehydrate: failed-seal handle", "err", err)
 			continue
+		}
+		// Rehydrated proposals belong to this session's root, not to the
+		// parent id baked into a trace from an earlier session.
+		if rt.RootScopeID != "" {
+			p.parentID = rt.RootScopeID
 		}
 		reg.add(p)
 	}

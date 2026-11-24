@@ -41,7 +41,7 @@ func TestSealFailureWithArtifactIsRecoverable(t *testing.T) {
 			if err != nil {
 				t.Fatalf("marshal failed-seal metadata: %v", err)
 			}
-			transcriptData, err := json.Marshal([]json.RawMessage{})
+			transcriptData, err := json.Marshal([]types.Message{{Role: "user", Content: "do the work"}})
 			if err != nil {
 				t.Fatalf("marshal failed-seal transcript: %v", err)
 			}
@@ -97,7 +97,7 @@ func TestSealFailureWithArtifactIsRecoverable(t *testing.T) {
 		t.Fatalf("proposal = %+v, want a failed-seal handle with status", p)
 	}
 	if got := nextVerbsFor(p); len(got) != 3 || got[0] != "recover" {
-		t.Errorf("next verbs = %v, want %v", got, sealFailedVerbs())
+		t.Errorf("next verbs = %v, want %v", got, sealFailedVerbs(true))
 	}
 	if files := p.changedFiles(); len(files) != 1 || files[0] != "out.txt" {
 		t.Errorf("changed files = %v, want [out.txt] from the handle", files)
@@ -114,6 +114,36 @@ func TestSealFailureWithArtifactIsRecoverable(t *testing.T) {
 	}
 	if ids := rt.Proposals.PendingScopeIDs(); len(ids) != 1 || ids[0] != p.scopeID {
 		t.Errorf("pending scopes = %v, want the retained scope to be spared", ids)
+	}
+}
+
+// TestFailedSealWithoutTranscriptAdvertisesOnlyDiscard pins the honest verb
+// contract: a failed seal whose conversation was too large or unencodable
+// cannot be reseeded, so recover/continue must not be advertised.
+func TestFailedSealWithoutTranscriptAdvertisesOnlyDiscard(t *testing.T) {
+	fx, _, rootID := newSessionFixtures(t)
+	mgr := fx.mgr
+	h := &goatherd.FailedSeal{
+		ArtifactID: "art:no-transcript:1",
+		ScopeID:    "scope:no-transcript",
+		OwnerID:    "no-transcript",
+		Metadata:   []byte(`{"id":"proposal:no-transcript","parent_scope_id":"` + rootID + `"}`),
+		Transcript: []byte("[]"),
+		Stage:      "sealed_append",
+	}
+	reg := NewProposalRegistry()
+	if err := registerFailedSealProposal(h, mgr, RetainedRuntime{
+		RootScopeID: rootID,
+		Proposals:   reg,
+	}); err != nil {
+		t.Fatalf("register failed-seal proposal: %v", err)
+	}
+	p, err := reg.get(h.ArtifactID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := nextVerbsFor(p); len(got) != 1 || got[0] != "discard" {
+		t.Fatalf("next verbs = %v, want [discard]", got)
 	}
 }
 

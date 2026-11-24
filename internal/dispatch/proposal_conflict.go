@@ -262,6 +262,51 @@ func (p *retainedProposal) proposalChanges(ctx context.Context) ([]proposalChang
 		}
 		return changes, nil
 
+	case p.failedSeal != nil:
+		// The handle carries the change list and baseline; post-images come
+		// from the retained worktree with the same bounded inspection a
+		// sealed worktree proposal uses.
+		changes := make([]proposalChange, 0, len(p.failedSeal.Changes))
+		var inspectErrs []string
+		baseline := ""
+		if digest, err := p.failedSeal.Baseline.Digest(); err == nil {
+			baseline = digest
+		}
+		inspectWS := (Workspace)(nil)
+		if p.workdir != "" {
+			pv := NewPathValidator(p.workdir, false, nil)
+			pv.WorkDir = pv.WorkspaceRoot
+			inspectWS = newLocalWorkspace(pv)
+		}
+		for _, c := range p.failedSeal.Changes {
+			rel, err := safeDeltaPath(normalizeProposalPath(c.Path))
+			if err != nil {
+				inspectErrs = append(inspectErrs, err.Error())
+				continue
+			}
+			change := proposalChange{
+				ProposalID: p.id,
+				Path:       rel,
+				Kind:       normalizeProposalKind(c.Kind),
+				BaseDigest: baseline,
+			}
+			if change.Kind != "delete" && inspectWS != nil {
+				mode, digest, err := worktreePostImage(ctx, inspectWS, rel)
+				if err != nil {
+					inspectErrs = append(inspectErrs, fmt.Sprintf("%s: %v", rel, err))
+				} else {
+					change.Mode = mode
+					change.Digest = digest
+				}
+			}
+			changes = append(changes, change)
+		}
+		sortProposalChanges(changes)
+		if len(inspectErrs) > 0 {
+			return changes, fmt.Errorf("proposal %s: inspect post-images: %s", p.id, strings.Join(inspectErrs, "; "))
+		}
+		return changes, nil
+
 	default:
 		return nil, fmt.Errorf("proposal %s has no sealed changes", p.id)
 	}
@@ -578,6 +623,11 @@ func (r *ProposalRegistry) analyzeProposals(ctx context.Context) []proposalAnaly
 	out := make([]proposalAnalysis, 0, len(ps))
 	driftCache := make(map[string][]string)
 	for _, p := range ps {
+		// A failed-seal artifact has no sealed output to settle or apply, so
+		// pairwise conflict/duplicate analysis does not apply to it.
+		if p.failedSeal != nil {
+			continue
+		}
 		analysis := proposalAnalysis{proposal: p}
 		analysis.changes, analysis.changesErr = p.proposalChanges(ctx)
 		key := p.basisKey()
@@ -903,6 +953,10 @@ func (p *retainedProposal) basisKey() string {
 		if digest, err := p.output.Baseline().Digest(); err == nil {
 			return prefix + digest
 		}
+	case p.failedSeal != nil:
+		if digest, err := p.failedSeal.Baseline.Digest(); err == nil {
+			return prefix + digest
+		}
 	}
 	return ""
 }
@@ -965,6 +1019,26 @@ func (p *retainedProposal) parentDrift(ctx context.Context) ([]string, error) {
 			return nil, fmt.Errorf("proposal %s: %w", p.id, err)
 		}
 		paths = normalized
+	case p.failedSeal != nil:
+		baseline := p.failedSeal.Baseline
+		if baseline.Backend == "" {
+			return nil, fmt.Errorf("proposal %s has no recorded dispatch basis", p.id)
+		}
+		if p.mgr == nil || p.parentID == "" {
+			return nil, fmt.Errorf("proposal %s: the parent scope is no longer available", p.id)
+		}
+		parent, ok := p.mgr.Get(p.parentID)
+		if !ok || parent.Sandbox() == nil {
+			return nil, fmt.Errorf("proposal %s: the parent scope is no longer available", p.id)
+		}
+		_, files, err := parent.Sandbox().Diff(ctx, baseline, 0)
+		if err != nil {
+			return nil, fmt.Errorf("proposal %s: diff parent against dispatch basis: %w", p.id, err)
+		}
+		paths, err = normalizeHostDiffPaths(parent.Sandbox().Backend(), files)
+		if err != nil {
+			return nil, fmt.Errorf("proposal %s: %w", p.id, err)
+		}
 	default:
 		return nil, fmt.Errorf("proposal %s has no sealed changes", p.id)
 	}

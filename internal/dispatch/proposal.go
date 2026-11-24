@@ -153,6 +153,15 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		}
 		env.Diff = clipDiff(p.reviewDiff())
 		env.Files = p.changedFiles()
+		if p.failedSeal != nil {
+			// Failed-seal entries are excluded from pairwise conflict
+			// analysis, so inspect their changes directly for show.
+			changes, cerr := p.proposalChanges(ctx)
+			env.Changes = changes
+			if cerr != nil {
+				env.ChangesError = cerr.Error()
+			}
+		}
 
 		// show carries the same typed conflict view as list, filtered to this
 		// proposal. It also records any newly observed conflict fact, so a
@@ -194,13 +203,22 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		if extraTurns <= 0 {
 			extraTurns = defaultContinueTurns
 		}
-		consumeOriginal := raw.Action == "continue"
-		// A failed-seal proposal has no sealed fact to supersede: "recover"
-		// reseeds and consumes the artifact, while "continue" keeps it open.
+		var p *retainedProposal
 		if t.Runtime.Proposals != nil {
-			if p, err := t.Runtime.Proposals.get(raw.ProposalID); err == nil && p.failedSeal != nil {
-				consumeOriginal = raw.Action == "recover"
-			}
+			p, _ = t.Runtime.Proposals.get(raw.ProposalID)
+		}
+		if raw.Action == "recover" && (p == nil || p.failedSeal == nil) {
+			return "", fmt.Errorf("proposal %s is not a failed-seal proposal; use continue or fork", raw.ProposalID)
+		}
+		if p != nil && p.failedSeal != nil && raw.Action == "fork" {
+			return "", fmt.Errorf("proposal %s is a failed-seal artifact; use recover, continue, or discard", raw.ProposalID)
+		}
+		consumeOriginal := raw.Action == "continue"
+		// A failed-seal artifact has no sealed fact to supersede and the
+		// runtime resolves it when a derived child seals, so both re-run verbs
+		// consume it. A non-consuming continue would vanish on restart.
+		if p != nil && p.failedSeal != nil {
+			consumeOriginal = true
 		}
 		return ContinueRetainedRun(ctx, *t.Runtime, raw.ProposalID, extraTurns, raw.Prompt, consumeOriginal)
 	default:

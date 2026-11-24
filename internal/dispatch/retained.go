@@ -290,7 +290,7 @@ func continuableVerbs() []string {
 // proposal's world ended at seal, so it settles only.
 func nextVerbsFor(p *retainedProposal) []string {
 	if p != nil && p.failedSeal != nil {
-		return sealFailedVerbs()
+		return sealFailedVerbs(len(p.transcript) > 0)
 	}
 	if p != nil && p.delta == nil && len(p.transcript) > 0 {
 		return continuableVerbs()
@@ -510,7 +510,11 @@ func (r *ProposalRegistry) all() []*retainedProposal {
 type proposalSummary struct {
 	ProposalID string   `json:"proposal_id"`
 	Files      []string `json:"files"`
-	Target     string   `json:"target,omitempty"`
+	// Status is "seal_failed" for a recoverable artifact, empty for an open
+	// proposal. Next lists the verbs this specific entry accepts.
+	Status string   `json:"status,omitempty"`
+	Next   []string `json:"next,omitempty"`
+	Target string   `json:"target,omitempty"`
 	// ParentDrift lists paths the parent changed since this proposal's dispatch
 	// basis. Those paths are legal for select only when the whole basis still
 	// matches; apply refuses if they intersect the proposal's own Files.
@@ -591,6 +595,8 @@ func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 		summary := proposalSummary{
 			ProposalID: p.id,
 			Files:      files,
+			Status:     p.status,
+			Next:       nextVerbsFor(p),
 			Target:     target,
 			Conflicts:  conflictsWith(conflicts, p.id),
 			Duplicates: conflictsWith(duplicates, p.id),
@@ -612,13 +618,31 @@ func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 	if duplicates == nil {
 		duplicates = []proposalConflict{}
 	}
-	// Advertise the re-run verbs when at least one listed proposal accepts
-	// them, so `next` is a real eligibility list (not settlement-only).
+	// Advertise the union of verbs the listed proposals actually accept, so
+	// `next` is a real eligibility list: a failed-seal entry contributes
+	// recover/continue, an ordinary worktree contributes continue/fork.
 	next := proposalVerbs()
+	hasFailedSeal := false
 	for _, analysis := range analyses {
-		if analysis.proposal != nil && analysis.proposal.delta == nil && len(analysis.proposal.transcript) > 0 {
-			next = continuableVerbs()
-			break
+		p := analysis.proposal
+		if p == nil {
+			continue
+		}
+		if p.failedSeal != nil {
+			hasFailedSeal = true
+			continue
+		}
+		if p.delta == nil && len(p.transcript) > 0 {
+			for _, verb := range continuableVerbs() {
+				if !hasVerb(next, verb) {
+					next = append(next, verb)
+				}
+			}
+		}
+	}
+	for _, verb := range sealFailedVerbs(hasFailedSeal) {
+		if hasFailedSeal && !hasVerb(next, verb) {
+			next = append(next, verb)
 		}
 	}
 	env := proposalListEnvelope{Status: "open", Proposals: list, Conflicts: conflicts, Duplicates: duplicates, Next: next}
@@ -1150,7 +1174,24 @@ func startRetainedRun(
 	// the artifact and its transcript, so a host can reseed the work.
 	transcriptID, omitted, terr := persistProposalTranscript(base, mgr, id, scopeID, transcript)
 	if terr != nil {
-		return retainedRunResult{Stage: RetainedStageSeal}, fmt.Errorf("delegate: %w", terr)
+		// The conversation is a hard guarantee: without a transcript fact a
+		// failed seal could not be reseeded. Do not seal; clean up the review
+		// pair and the world so nothing is stranded for the reaper.
+		var failureNotes []string
+		failureNotes = append(failureNotes, "durable transcript: "+terr.Error())
+		if derr := recordFailedReviewDecision(ctx, mgr, reviewProposal, reviewFactID, terr); derr != nil {
+			failureNotes = append(failureNotes, "review decision: "+derr.Error())
+		}
+		if scope, gok := mgr.Get(scopeID); gok {
+			if derr := parent.Discard(scope); derr != nil {
+				failureNotes = append(failureNotes, "scope discard: "+derr.Error())
+			}
+		} else {
+			rt.EndDispatchScope(scopeID)
+		}
+		env.Status = "error"
+		env.Error = trimResult(strings.Join(failureNotes, "; "))
+		return retainedRunResult{Proposal: &env}, nil
 	}
 	seal := mgr.Seal
 	if rt.sealOutput != nil {
@@ -1210,7 +1251,7 @@ func startRetainedRun(
 			// The runtime kept the worktree and the transcript behind a
 			// durable artifact. Expose it as a failed-seal proposal instead
 			// of destroying the world.
-			markSealFailedEnvelope(&env, sealErrTyped.ArtifactID)
+			markSealFailedEnvelope(&env, sealErrTyped.ArtifactID, len(sealErrTyped.Handle.Transcript) > 0)
 			if derr := registerFailedSealProposal(sealErrTyped.Handle, mgr, rt); derr != nil {
 				notes = append(notes, "failed-seal proposal: "+derr.Error())
 			}
@@ -1534,7 +1575,26 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	}
 	transcriptID, omitted, terr := persistProposalTranscript(ctx, mgr, newID, scopeID, transcript)
 	if terr != nil {
-		return "", fmt.Errorf("continue: %w", terr)
+		var failureNotes []string
+		failureNotes = append(failureNotes, "durable transcript: "+terr.Error())
+		if derr := recordFailedReviewDecision(ctx, mgr, reviewProposal, reviewFactID, terr); derr != nil {
+			failureNotes = append(failureNotes, "review decision: "+derr.Error())
+		}
+		if scope, gok := mgr.Get(scopeID); gok {
+			if derr := parent.Discard(scope); derr != nil {
+				failureNotes = append(failureNotes, "scope discard: "+derr.Error())
+			}
+		} else {
+			rt.EndDispatchScope(scopeID)
+		}
+		env := proposalEnvelope{
+			ProposalID: newID,
+			Status:     "error",
+			Error:      trimResult(strings.Join(failureNotes, "; ")),
+			Next:       proposalVerbs(),
+			World:      string(subagent.WorldWorktree),
+		}
+		return marshalProposalEnvelope(env), nil
 	}
 	seal := mgr.Seal
 	if rt.sealOutput != nil {
@@ -1610,7 +1670,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		var sealErrTyped *goatherd.SealError
 		recoverable := errors.As(sealErr, &sealErrTyped) && sealErrTyped.ArtifactID != "" && sealErrTyped.Handle != nil
 		if recoverable {
-			markSealFailedEnvelope(&env, sealErrTyped.ArtifactID)
+			markSealFailedEnvelope(&env, sealErrTyped.ArtifactID, len(sealErrTyped.Handle.Transcript) > 0)
 			if derr := registerFailedSealProposal(sealErrTyped.Handle, mgr, rt); derr != nil {
 				notes = append(notes, "failed-seal proposal: "+derr.Error())
 			}
@@ -1673,10 +1733,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	}
 	if consumeOriginal {
 		if p.failedSeal != nil {
-			// A failed-seal handle has no output to settle; consuming it
-			// removes the proposal and tells the runtime the artifact is done.
-			rt.Proposals.remove(id)
-			if derr := mgr.DiscardFailedSeal(ctx, p.failedSeal.ID); derr != nil {
+			if derr := clearFailedSealArtifact(ctx, mgr, rt.Proposals, p); derr != nil {
 				notes = append(notes, "failed-seal artifact "+id+" could not be discarded: "+derr.Error())
 				env.Notes += " (artifact could not be discarded)"
 			} else {
@@ -1939,12 +1996,9 @@ func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id
 		if action != "discard" {
 			return Settlement{}, fmt.Errorf("proposal %s: a failed-seal artifact can only be discarded or recovered; it has no output to settle", id)
 		}
-		if p.mgr != nil {
-			if derr := p.mgr.DiscardFailedSeal(ctx, p.failedSeal.ID); derr != nil {
-				return Settlement{}, fmt.Errorf("discard failed-seal artifact %s: %w", id, derr)
-			}
+		if derr := clearFailedSealArtifact(ctx, p.mgr, r, p); derr != nil {
+			return Settlement{}, derr
 		}
-		r.remove(id)
 		return newSettlement(proposalEnvelope{
 			Status:     "settled",
 			ProposalID: id,
