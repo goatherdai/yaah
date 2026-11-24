@@ -268,3 +268,49 @@ func contains(values []string, want string) bool {
 	}
 	return false
 }
+
+// TestFailedSealEmptyTranscriptArrayAdvertisesOnlyDiscard pins finding
+// #7 (yaah-iw8v): recoverability is gated on DECODED MESSAGES, not
+// transcript bytes. `[]` is non-empty bytes carrying zero messages and
+// must not be advertised for recovery — the same decoded-message gate
+// the retained.go continuation path applies.
+//
+// Cross-repo assumption (deps pinned in go.mod): goatherd.FailedSeal's
+// Transcript is a JSON-encoded []types.Message array, and a handoff
+// that recorded no messages leaves `[]` rather than nil. The shape is
+// pinned by the goatherd-runtime module version in go.mod.
+func TestFailedSealEmptyTranscriptArrayAdvertisesOnlyDiscard(t *testing.T) {
+	h := &goatherd.FailedSeal{
+		ArtifactID: "art:empty:1",
+		Transcript: []byte("[]"),
+		Workspace:  kerneltrace.WorkspaceState{Backend: "git", Revision: "abc"},
+		Baseline:   kerneltrace.WorkspaceState{Backend: "git", Revision: "base"},
+	}
+	verbs := sealFailedVerbs(h)
+	for _, v := range verbs {
+		if v == "recover" || v == "continue" {
+			t.Errorf("sealFailedVerbs() = %v: an empty transcript array must not advertise %q (byte length lies; count decoded messages)", verbs, v)
+		}
+	}
+
+	// Control: one decoded message IS a recoverable conversation.
+	full, err := json.Marshal([]types.Message{{Role: "user", Content: "do the work"}})
+	if err != nil {
+		t.Fatalf("marshal transcript: %v", err)
+	}
+	h2 := &goatherd.FailedSeal{
+		ArtifactID: "art:one-msg:1",
+		Transcript: full,
+		Workspace:  kerneltrace.WorkspaceState{Backend: "git", Revision: "abc"},
+		Baseline:   kerneltrace.WorkspaceState{Backend: "git", Revision: "base"},
+	}
+	var recoverable bool
+	for _, v := range sealFailedVerbs(h2) {
+		if v == "recover" {
+			recoverable = true
+		}
+	}
+	if !recoverable {
+		t.Errorf("sealFailedVerbs() with one decoded message = %v, want recover advertised", sealFailedVerbs(h2))
+	}
+}

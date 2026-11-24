@@ -33,7 +33,13 @@ func failedSealHasWorkspaceSeed(h *goatherd.FailedSeal) bool {
 // without workspace state ForkFromFailedSeal refuses the fork. Only discard
 // is advertised when either is missing.
 func sealFailedVerbs(h *goatherd.FailedSeal) []string {
-	if h == nil || len(h.Transcript) == 0 || !failedSealHasWorkspaceSeed(h) {
+	// Transcript is the raw JSON encoding of the captured messages, so
+	// byte length lies: the encoding of an EMPTY conversation (`[]`) is
+	// non-empty. The decoded message count is the same truth the
+	// continuation gate enforces (PR #398 review finding 7).
+	var decoded []json.RawMessage
+	hasConversation := h != nil && len(h.Transcript) > 0 && json.Unmarshal(h.Transcript, &decoded) == nil && len(decoded) > 0
+	if !hasConversation || !failedSealHasWorkspaceSeed(h) {
 		return []string{"discard"}
 	}
 	// Both re-run verbs consume the artifact: the runtime resolves a source
@@ -50,7 +56,10 @@ func markSealFailedEnvelope(env *proposalEnvelope, h *goatherd.FailedSeal) {
 	env.ProposalID = h.ArtifactID
 	env.Next = sealFailedVerbs(h)
 	env.FailureClass = FailureClassSealFailed
-	if failedSealHasWorkspaceSeed(h) && len(h.Transcript) > 0 {
+	// Recoverable conversation = decoded messages, not transcript bytes
+	// (`[]` must not be advertised for recovery — review finding 7).
+	var recovered []json.RawMessage
+	if failedSealHasWorkspaceSeed(h) && json.Unmarshal(h.Transcript, &recovered) == nil && len(recovered) > 0 {
 		env.Recovery = &ResultRecovery{
 			Recommended: "inspect the failed-seal proposal with proposal show, then recover it or discard it explicitly; do not auto-redispatch",
 		}
