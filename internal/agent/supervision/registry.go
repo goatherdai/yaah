@@ -306,17 +306,18 @@ func (r *Registry) Redirect(scopeID string, fromGen uint64) (RedirectHandle, err
 	return RedirectHandle{ScopeID: scopeID, Gen: fromGen}, nil
 }
 
-// DepositRedirect attaches guidance to an already-claimed redirect as a
+// DepositRedirect attaches the handoff payload (guidance plus the
+// live-revert mark) to an already-claimed redirect as a
 // compare-and-swap on the generation: the scope must still be
 // registered at fromGen and the claim must still be pending. ErrNoRun
 // reports an unregistered scope or a generation mismatch — the claim
 // died with its registration (the run finished or a successor Register
-// superseded it), so the guidance has nowhere to land. ErrRedirectNotClaimed
+// superseded it), so the payload has nowhere to land. ErrRedirectNotClaimed
 // reports a live generation nobody claimed. The deposit is a separate
 // call from the claim so the claimer can carry its own payload type
 // without widening Redirect's yaah-8gxg.1 signature; the tool always
 // claims first, then deposits, then cancels the current run.
-func (r *Registry) DepositRedirect(scopeID string, fromGen uint64, guidance string) error {
+func (r *Registry) DepositRedirect(scopeID string, fromGen uint64, req RedirectRequest) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	entry, ok := r.runs[scopeID]
@@ -329,7 +330,8 @@ func (r *Registry) DepositRedirect(scopeID string, fromGen uint64, guidance stri
 	if entry.pendingRedirect == nil {
 		entry.pendingRedirect = &RedirectRequest{}
 	}
-	entry.pendingRedirect.Guidance = guidance
+	entry.pendingRedirect.Guidance = req.Guidance
+	entry.pendingRedirect.Revert = req.Revert
 	return nil
 }
 

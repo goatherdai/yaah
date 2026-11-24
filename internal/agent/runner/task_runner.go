@@ -468,6 +468,31 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// root — so an advisory run is never read as jailed.
 		recordConfinementFact(ctx, subScope, subConf)
 
+		// Live revert (yaah-1050.1.3): the pre-run workspace snapshot of
+		// the CURRENT generation — captured right after its bridge
+		// registration, before its runOnce, and re-captured after every
+		// adopted handoff, so it always names the state the workspace
+		// held before the run that is about to start. A scope with no
+		// sandbox (isolated/container session, pure-causal fork) has no
+		// rollback substrate: preRunOK stays false and the adoption loop
+		// surfaces a note instead of failing the run.
+		var preRunState kerneltrace.WorkspaceState
+		preRunOK := false
+		capturePreRun := func(captureCtx context.Context) {
+			preRunOK = false
+			if subScope == nil || subScope.Sandbox() == nil {
+				return
+			}
+			state, err := subScope.Sandbox().Capture(captureCtx)
+			if err != nil {
+				slog.Warn("live revert: pre-run workspace capture failed; a revert handoff will have no snapshot to restore",
+					"scope", subScope.ID(), "err", err)
+				return
+			}
+			preRunState = state
+			preRunOK = true
+		}
+
 		// Supervision bridge (adoption plans A2/A3): the run registers
 		// its steering channel and its cancellation under the scope ID,
 		// so the supervisor tool's inject and halt reach this loop
@@ -540,6 +565,9 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 				return runCtx
 			}
 			ctx = registerBridge()
+			// Snapshot the workspace this generation starts from, so a
+			// revert claimed against THIS generation can restore it.
+			capturePreRun(ctx)
 			bridgeLive = true
 			defer func() {
 				// Panic safety net only, mirroring the end-of-sequence
@@ -767,6 +795,30 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			haltedBySupervisor.Store(false)
 			denials.denials = nil
 			ctx = registerBridge()
+			// Live revert (yaah-1050.1.3): roll the workspace back to the
+			// PREVIOUS generation's pre-run snapshot BEFORE the successor
+			// loop starts — the rollback that separates revert from plain
+			// redirect (the LLM-side handoff above is identical). Then
+			// re-capture, so the successor's own pre-run snapshot is the
+			// rolled-back workspace. A missing substrate or snapshot
+			// skips the rollback with a note: a revert must never fail
+			// the run it handsoff.
+			if req.Revert {
+				switch {
+				case subScope == nil || subScope.Sandbox() == nil:
+					slog.Warn("live revert: workspace rollback skipped — the sub-agent scope has no sandbox (isolated/container sessions have no per-sub-agent rollback substrate); the successor loop starts on the workspace as it is",
+						"scope", bridgeScopeID)
+				case !preRunOK:
+					slog.Warn("live revert: workspace rollback skipped — no pre-run snapshot was captured for this run; the successor loop starts on the workspace as it is",
+						"scope", bridgeScopeID)
+				default:
+					if err := subScope.Sandbox().Apply(ctx, preRunState); err != nil {
+						slog.Warn("live revert: workspace rollback failed; the successor loop starts on the workspace as it is",
+							"scope", bridgeScopeID, "err", err)
+					}
+				}
+			}
+			capturePreRun(ctx)
 			if req.Guidance != "" {
 				prompt = req.Guidance
 			}

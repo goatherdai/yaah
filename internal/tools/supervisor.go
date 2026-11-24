@@ -46,8 +46,9 @@ type runBridge interface {
 	// single winner per generation (ErrAlreadyClaimed), ErrNoRun when
 	// the generation no longer names a live run.
 	Redirect(scopeID string, fromGen uint64) (supervisionapi.RedirectHandle, error)
-	// DepositRedirect attaches guidance to a claim made by Redirect.
-	DepositRedirect(scopeID string, fromGen uint64, guidance string) error
+	// DepositRedirect attaches the handoff payload (the successor's
+	// guidance plus the live-revert flag) to a claim made by Redirect.
+	DepositRedirect(scopeID string, fromGen uint64, req supervisionapi.RedirectRequest) error
 }
 
 // firingSource is the status view's consumer-side view of the advisory
@@ -122,16 +123,16 @@ func (*SupervisorTool) Schema() json.RawMessage {
 		"properties": {
 			"action": {
 				"type": "string",
-				"enum": ["list_scopes", "inject", "halt", "redirect", "status", "snapshot"],
-				"description": "list_scopes: show all scopes and their state; inject: push guidance into a scope (trace-only if no active run); halt: cancel a scope and bounded-quiesce it (root halt needs supervisor_halt_root); redirect: claim the scope's current run, deposit guidance for its successor, cancel it, and return immediately — the dispatch adopts a fresh loop on the same scope with the guidance as its first message; status: show supervision system status; snapshot: read a compact per-agent snapshot of what each sub-agent is doing (trailing tool calls, modified files, error counts, age)"
+				"enum": ["list_scopes", "inject", "halt", "redirect", "revert", "status", "snapshot"],
+				"description": "list_scopes: show all scopes and their state; inject: push guidance into a scope (trace-only if no active run); halt: cancel a scope and bounded-quiesce it (root halt needs supervisor_halt_root); redirect: claim the scope's current run, deposit guidance for its successor, cancel it, and return immediately — the dispatch adopts a fresh loop on the same scope with the guidance as its first message; revert: redirect plus a workspace rollback — before the fresh loop the dispatch restores the sub-agent's workspace to its pre-run snapshot (a scope with no rollback substrate skips the rollback and logs a note); status: show supervision system status; snapshot: read a compact per-agent snapshot of what each sub-agent is doing (trailing tool calls, modified files, error counts, age)"
 			},
 			"scope_id": {
 				"type": "string",
-				"description": "Scope ID (required for inject, halt and redirect)"
+				"description": "Scope ID (required for inject, halt, redirect and revert)"
 			},
 			"guidance": {
 				"type": "string",
-				"description": "Guidance text to inject (required for inject; the successor's first message for redirect)"
+				"description": "Guidance text to inject (required for inject; the successor's first message for redirect and revert)"
 			}
 		},
 		"required": ["action"]
@@ -188,13 +189,21 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 		if raw.ScopeID == t.RootScopeID && !t.HaltRoot {
 			return "", fmt.Errorf("supervisor: redirecting the session root requires the supervisor_halt_root opt-in (agents.default.supervisor_halt_root); it stops the session's current run and no dispatch loop exists to adopt a replacement. Redirect a sub-agent scope instead (see list_scopes)")
 		}
-		return executeRedirect(mgr, runs, raw.ScopeID, raw.Guidance)
+		return executeRedirect(mgr, runs, raw.ScopeID, raw.Guidance, false)
+	case "revert":
+		if raw.ScopeID == "" || raw.Guidance == "" {
+			return "", fmt.Errorf("supervisor: scope_id and guidance required for revert")
+		}
+		if raw.ScopeID == t.RootScopeID && !t.HaltRoot {
+			return "", fmt.Errorf("supervisor: reverting the session root requires the supervisor_halt_root opt-in (agents.default.supervisor_halt_root); it stops the session's current run and no dispatch loop exists to adopt a replacement. Revert a sub-agent scope instead (see list_scopes)")
+		}
+		return executeRedirect(mgr, runs, raw.ScopeID, raw.Guidance, true)
 	case "status":
 		return executeStatus(mgr, runs, svc)
 	case "snapshot":
 		return executeSnapshot(t.Snapshot)
 	default:
-		return "", fmt.Errorf("supervisor: unknown action %q (valid: list_scopes, inject, halt, redirect, status, snapshot)", raw.Action)
+		return "", fmt.Errorf("supervisor: unknown action %q (valid: list_scopes, inject, halt, redirect, revert, status, snapshot)", raw.Action)
 	}
 }
 
@@ -303,16 +312,20 @@ func executeHalt(mgr *goatherd.ScopeManager, runs runBridge, scopeID string) (st
 }
 
 // executeRedirect claims the scope's live run for a handoff, deposits
-// the successor's guidance, cancels the current run so it returns, and
-// reports immediately (yaah-8gxg.4). It never waits for the
-// replacement: the claim is a compare-and-swap the dispatch's parent
-// loop adopts only when the cancelled run returns, and holding this
-// call through that return is exactly the through-the-replacement
+// the successor's payload (guidance, plus revert's workspace-rollback
+// mark — yaah-1050.1.3), cancels the current run so it returns, and
+// reports immediately (yaah-8gxg.4). revert selects between the two
+// handoffs: false is the plain redirect, true is the live revert — the
+// same LLM-side effect either way, with the rollback decided by the
+// dispatch's adoption loop from the deposited flag. It never waits for
+// the replacement: the claim is a compare-and-swap the dispatch's
+// parent loop adopts only when the cancelled run returns, and holding
+// this call through that return is exactly the through-the-replacement
 // blocking the redesign forbids. Every refusal — no live run, an
 // already claimed generation, a deposit with no claim behind it — is a
 // result rather than an error, so the orchestrator learns what happened
 // and can re-inspect instead of retrying blind.
-func executeRedirect(mgr *goatherd.ScopeManager, runs runBridge, scopeID, guidance string) (string, error) {
+func executeRedirect(mgr *goatherd.ScopeManager, runs runBridge, scopeID, guidance string, revert bool) (string, error) {
 	if _, ok := mgr.Get(scopeID); !ok {
 		return "", fmt.Errorf("supervisor: scope %s not found", scopeID)
 	}
@@ -334,7 +347,7 @@ func executeRedirect(mgr *goatherd.ScopeManager, runs runBridge, scopeID, guidan
 	case err != nil:
 		return "", fmt.Errorf("supervisor: redirect claim failed: %w", err)
 	}
-	if err := runs.DepositRedirect(scopeID, handle.Gen, guidance); err != nil {
+	if err := runs.DepositRedirect(scopeID, handle.Gen, supervisionapi.RedirectRequest{Guidance: guidance, Revert: revert}); err != nil {
 		// The claim died between the two calls — the run ended or was
 		// superseded, so the guidance has nowhere to land.
 		return fmt.Sprintf("The redirect guidance for %s could not be recorded (%v); no replacement will start.", scopeID, err), nil
@@ -346,6 +359,9 @@ func executeRedirect(mgr *goatherd.ScopeManager, runs runBridge, scopeID, guidan
 	// action exists to avoid.
 	switch _, err := runs.Cancel(scopeID); {
 	case err == nil:
+		if revert {
+			return fmt.Sprintf("Revert requested for %s: the current run was cancelled; the dispatch will roll the workspace back to the pre-run snapshot and start a fresh loop on the same scope. This call returns now — the replacement is adopted when that run returns.", scopeID), nil
+		}
 		return fmt.Sprintf("Redirect requested for %s: the current run was cancelled and its guidance will start a fresh loop on the same scope. This call returns now — the replacement is adopted when that run returns.", scopeID), nil
 	case errors.Is(err, supervisionapi.ErrNotHaltable):
 		return fmt.Sprintf("Redirect claimed for %s, but the run registered no cancellation; the successor loop will start when the current run returns on its own.", scopeID), nil

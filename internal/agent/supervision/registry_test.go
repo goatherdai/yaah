@@ -373,7 +373,7 @@ func TestRegistry_RedirectGuidanceRoundTrip(t *testing.T) {
 	}
 
 	// Deposit before a claim is refused: guidance rides a claim only.
-	if err := r.DepositRedirect("scope:handoff", gen, "early"); !errors.Is(err, ErrRedirectNotClaimed) {
+	if err := r.DepositRedirect("scope:handoff", gen, RedirectRequest{Guidance: "early"}); !errors.Is(err, ErrRedirectNotClaimed) {
 		t.Errorf("DepositRedirect without a claim = %v, want ErrRedirectNotClaimed", err)
 	}
 
@@ -381,10 +381,10 @@ func TestRegistry_RedirectGuidanceRoundTrip(t *testing.T) {
 		t.Fatalf("Redirect: %v", err)
 	}
 	// A generation that no longer (or never) names the run cannot deposit.
-	if err := r.DepositRedirect("scope:handoff", gen+1, "stale"); !errors.Is(err, ErrNoRun) {
+	if err := r.DepositRedirect("scope:handoff", gen+1, RedirectRequest{Guidance: "stale"}); !errors.Is(err, ErrNoRun) {
 		t.Errorf("DepositRedirect at gen+1 = %v, want ErrNoRun", err)
 	}
-	if err := r.DepositRedirect("scope:handoff", gen, "plan B"); err != nil {
+	if err := r.DepositRedirect("scope:handoff", gen, RedirectRequest{Guidance: "plan B"}); err != nil {
 		t.Fatalf("DepositRedirect after the claim: %v", err)
 	}
 

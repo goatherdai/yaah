@@ -55,6 +55,12 @@ type RedirectRequest struct {
 	// Guidance is the successor loop's first user message, deposited
 	// verbatim by DepositRedirect after the claim.
 	Guidance string
+	// Revert marks a live revert (yaah-1050.1.3): when true, the
+	// adoption loop rolls the sub-agent's workspace back to the
+	// pre-run snapshot before starting the successor loop on the same
+	// scope. When false the handoff is a plain redirect — the
+	// workspace is left exactly as the cancelled run left it.
+	Revert bool
 }
 
 // Firing is one aggregated rule firing: one per rule, scope, and kind, so

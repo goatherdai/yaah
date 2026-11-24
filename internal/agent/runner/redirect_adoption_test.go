@@ -12,6 +12,7 @@ import (
 
 	"github.com/goatherdai/yaah/internal/agent/supervision"
 	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/supervisionapi"
 	"github.com/goatherdai/yaah/internal/tools"
 	"github.com/goatherdai/yaah/internal/types"
 )
@@ -147,7 +148,7 @@ func TestTaskRunner_RedirectAdoptionRunsFreshLoopOnSameScope(t *testing.T) {
 	if _, err := runs.Redirect(scopeID, gen1); err != nil {
 		t.Fatalf("Redirect: %v", err)
 	}
-	if err := runs.DepositRedirect(scopeID, gen1, guidance); err != nil {
+	if err := runs.DepositRedirect(scopeID, gen1, supervisionapi.RedirectRequest{Guidance: guidance}); err != nil {
 		t.Fatalf("DepositRedirect: %v", err)
 	}
 	if _, err := runs.Cancel(scopeID); err != nil {
