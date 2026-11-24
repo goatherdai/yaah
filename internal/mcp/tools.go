@@ -123,6 +123,13 @@ func StartMCPClientsFromConfig(ctx context.Context, manifests map[string]*Manife
 			}
 			client = stdioClient
 		default:
+			// A server we cannot start must still show up in the mcp
+			// inventory with its error, not vanish (review finding 8).
+			infos = append(infos, ServerInfo{
+				Name:      name,
+				Transport: manifest.Transport,
+				Error:     "unsupported transport: " + manifest.Transport,
+			})
 			continue
 		}
 

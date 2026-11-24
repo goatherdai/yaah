@@ -571,27 +571,43 @@ func buildMCPSkills(cfg *config.Config, opts SessionOptions, lc *sessionConfig, 
 	// internal/tools never imports internal/mcp. Works in isolated mode
 	// too — the servers run there, only their tools stay unregistered.
 	tr.reg.Register(&tools.MCPListTool{Lister: func() []tools.MCPServerStatus {
-		out := make([]tools.MCPServerStatus, 0, len(st.mcpClients))
+		// Roster from the startup infos, not the successful clients: a
+		// server that failed to start stays visible with its error
+		// (review finding 8). Tool names come from the live clients, but
+		// only names the registry actually exposes are listed as
+		// callable — a discovered name the session never registered
+		// (isolated mode) or withdrew later is counted as unregistered
+		// instead (findings 9, 12). Command carries the executable only:
+		// resolved arguments routinely hold tokens (finding 3).
+		byName := make(map[string]mcp.MCPClient, len(st.mcpClients))
 		for _, cl := range st.mcpClients {
-			info := cl.Info()
-			declared := cl.Tools()
-			names := make([]string, 0, len(declared))
-			for _, tl := range declared {
-				if tl.ServerName != "" {
-					names = append(names, tl.ServerName+"_"+tl.Name)
-				} else {
-					names = append(names, tl.Name)
-				}
-			}
-			out = append(out, tools.MCPServerStatus{
+			byName[cl.Info().Name] = cl
+		}
+		out := make([]tools.MCPServerStatus, 0, len(st.mcpInfos))
+		for _, info := range st.mcpInfos {
+			entry := tools.MCPServerStatus{
 				Name:      info.Name,
 				Transport: info.Transport,
 				Command:   info.Command,
 				URL:       info.URL,
 				Connected: info.Connected,
-				Tools:     names,
 				Error:     info.Error,
-			})
+				Tools:     []string{},
+			}
+			if cl, ok := byName[info.Name]; ok {
+				for _, tl := range cl.Tools() {
+					name := tl.Name
+					if tl.ServerName != "" {
+						name = tl.ServerName + "_" + tl.Name
+					}
+					if tr.reg.Get(name) != nil {
+						entry.Tools = append(entry.Tools, name)
+					} else {
+						entry.UnregisteredToolCount++
+					}
+				}
+			}
+			out = append(out, entry)
 		}
 		return out
 	}})

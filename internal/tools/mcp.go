@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"sort"
 
 	"github.com/goatherdai/yaah/internal/prompts"
@@ -12,15 +13,23 @@ import (
 // MCPServerStatus is the neutral per-server report the mcp tool renders.
 // The wiring layer adapts live MCP clients into it, so this package never
 // imports internal/mcp.
+//
+// Two fields carry connection details and therefore a secret-handling
+// contract (review finding 3): Command is the executable only — never
+// arguments, which routinely carry resolved tokens — and URL is scrubbed
+// of userinfo and query by the renderer before output. Tools lists only
+// names registered and callable in this session; exposed-but-unregistered
+// tools are counted in UnregisteredToolCount instead (findings 9, 12).
 type MCPServerStatus struct {
-	Name      string   `json:"name"`
-	Transport string   `json:"transport"`
-	Command   string   `json:"command,omitempty"`
-	URL       string   `json:"url,omitempty"`
-	Connected bool     `json:"connected"`
-	ToolCount int      `json:"tool_count"` // derived from Tools on render
-	Tools     []string `json:"tools"`
-	Error     string   `json:"error,omitempty"`
+	Name                  string   `json:"name"`
+	Transport             string   `json:"transport"`
+	Command               string   `json:"command,omitempty"`
+	URL                   string   `json:"url,omitempty"`
+	Connected             bool     `json:"connected"`
+	ToolCount             int      `json:"tool_count"` // derived from Tools on render
+	Tools                 []string `json:"tools"`
+	UnregisteredToolCount int      `json:"unregistered_tool_count,omitempty"`
+	Error                 string   `json:"error,omitempty"`
 }
 
 // MCPServerLister reports the session's MCP servers and the tools each
@@ -66,6 +75,7 @@ func (t *MCPListTool) Execute(ctx context.Context, args string) (string, error) 
 	}
 	sort.Slice(servers, func(i, j int) bool { return servers[i].Name < servers[j].Name })
 	for i := range servers {
+		servers[i].URL = scrubURL(servers[i].URL)
 		if servers[i].Tools == nil {
 			servers[i].Tools = []string{}
 		}
@@ -80,4 +90,21 @@ func (t *MCPListTool) Execute(ctx context.Context, args string) (string, error) 
 		return "", fmt.Errorf("mcp: render server inventory: %w", err)
 	}
 	return string(pretty), nil
+}
+
+// scrubURL removes the parts of a URL that routinely carry secrets: the
+// userinfo (user:token@host) and the query string. An unparseable URL is
+// dropped entirely — an unreadable connection string is never shown.
+func scrubURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }

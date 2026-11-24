@@ -100,3 +100,49 @@ func TestMCPListToolExecute(t *testing.T) {
 		}
 	})
 }
+
+func TestMCPListToolRedactsConnectionStrings(t *testing.T) {
+	tool := &MCPListTool{Lister: func() []MCPServerStatus {
+		return []MCPServerStatus{{
+			Name:                  "vault",
+			Transport:             "http",
+			Command:               "npx",
+			URL:                   "https://user:SECRETPW@example.com/mcp?sig=SIGNEDTOKEN&x=1#frag",
+			Connected:             true,
+			Tools:                 []string{"vault_read"},
+			UnregisteredToolCount: 3,
+		}}
+	}}
+	raw, err := tool.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	// No resolved credential, userinfo, or query material may survive
+	// rendering (review finding 3).
+	for _, leak := range []string{"SECRETPW", "SIGNEDTOKEN", "user:", "sig=", "frag"} {
+		if strings.Contains(raw, leak) {
+			t.Errorf("output leaks %q:\n%s", leak, raw)
+		}
+	}
+	if !strings.Contains(raw, `"url": "https://example.com/mcp"`) {
+		t.Errorf("want scrubbed URL, got:\n%s", raw)
+	}
+	if !strings.Contains(raw, `"unregistered_tool_count": 3`) {
+		t.Errorf("want unregistered_tool_count rendered, got:\n%s", raw)
+	}
+	if !strings.Contains(raw, `"command": "npx"`) {
+		t.Errorf("want executable-only command, got:\n%s", raw)
+	}
+
+	// An unparseable URL is dropped entirely, never guessed at.
+	tool.Lister = func() []MCPServerStatus {
+		return []MCPServerStatus{{Name: "weird", URL: "https://exa mple.com/?token=SECRETVAL", Connected: true, Tools: []string{}}}
+	}
+	raw, err = tool.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if strings.Contains(raw, "SECRETVAL") {
+		t.Errorf("unparseable URL leaked:\n%s", raw)
+	}
+}
