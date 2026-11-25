@@ -477,11 +477,14 @@ func BackgroundCompletionEnvelope(st jobs.BackgroundJobStatus, result string, er
 		DispatchID: st.ID,
 		Label:      st.Description,
 		Role:       st.Role,
-		Result:     result,
 		Model:      st.Model,
 		World:      st.World,
 		DurationMs: st.DurationMs,
 	}
+	// The report is paged, not dumped: a background job id is a retrieval
+	// handle, so the envelope carries a bounded head naming the total and the
+	// route, and the full text stays on the job record (yaah-okcl).
+	env.setReport(result, retrieveJobReport(st.ID))
 	switch st.Status {
 	case jobs.BGStatusFailed:
 		env.Status = EnvelopeStatusError

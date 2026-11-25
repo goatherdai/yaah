@@ -413,7 +413,9 @@ func runDispatchContainerProposal(
 	if sealErr != nil {
 		notes = append(notes, "seal: "+sealErr.Error())
 		env.Status = "error"
-		env.Result = trimResult(result)
+		// The manifest was never written, so nothing was retained to page:
+		// the marker says so instead of naming a route that does not exist.
+		env.setReport(result, retrieveProposalReport(""))
 		env.Error = trimResult(strings.Join(notes, "; "))
 		return retainedRunResult{}, nil
 	}
@@ -421,7 +423,7 @@ func runDispatchContainerProposal(
 	if perr != nil {
 		notes = append(notes, "seal: persist delta: "+perr.Error())
 		env.Status = "error"
-		env.Result = trimResult(result)
+		env.setReport(result, retrieveProposalReport(""))
 		env.Error = trimResult(strings.Join(notes, "; "))
 		return retainedRunResult{}, nil
 	}
@@ -441,10 +443,13 @@ func runDispatchContainerProposal(
 	}
 
 	proposal := &retainedProposal{
-		id:          id,
-		delta:       delta,
-		review:      review,
-		result:      trimResult(result),
+		id:     id,
+		delta:  delta,
+		review: review,
+		// The manifest's meta.json keeps the report verbatim (persistGitDelta
+		// writes the raw text); this in-session copy must be the same text, or
+		// paging would answer differently before and after a restart.
+		result:      result,
 		runErr:      bodyFailure,
 		parentID:    rt.RootScopeID,
 		mgr:         rt.ScopeManager,
@@ -464,7 +469,7 @@ func runDispatchContainerProposal(
 	rt.Proposals.recordSealConflictFacts(ctx, proposal)
 
 	env.Status = "proposal"
-	env.Result = trimResult(result)
+	env.setReport(result, retrieveProposalReport(id))
 	env.Files = delta.Paths()
 	reviewText := review
 	if reviewText == "" {

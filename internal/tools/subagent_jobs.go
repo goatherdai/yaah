@@ -39,6 +39,17 @@ func (*SubAgentJobsTool) Schema() json.RawMessage {
 				"minimum": 1,
 				"maximum": 300,
 				"description": "Max seconds to wait (wait action only; default 60)"
+			},
+			"result_offset": {
+				"type": "integer",
+				"minimum": 0,
+				"description": "status only: byte offset into the job's full result at which the returned page starts (absent means the head). Pages carry no marker, so consecutive pages concatenate to the original output; pass the previous response's result_next_offset to continue."
+			},
+			"result_limit": {
+				"type": "integer",
+				"minimum": 1,
+				"maximum": 1048576,
+				"description": "status only: page size in bytes (default 4000, maximum 1 MiB)"
 			}
 		},
 		"additionalProperties": false,
@@ -47,7 +58,7 @@ func (*SubAgentJobsTool) Schema() json.RawMessage {
 }
 
 func (t *SubAgentJobsTool) Execute(ctx context.Context, args string) (string, error) {
-	strict, err := DecodeStrictObject("subagent_jobs", args, "action", "job_id", "timeout_seconds")
+	strict, err := DecodeStrictObject("subagent_jobs", args, "action", "job_id", "timeout_seconds", "result_offset", "result_limit")
 	if err != nil {
 		return "", err
 	}
@@ -59,6 +70,8 @@ func (t *SubAgentJobsTool) Execute(ctx context.Context, args string) (string, er
 		Action         string `json:"action"`
 		JobID          string `json:"job_id"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
+		ResultOffset   int    `json:"result_offset"`
+		ResultLimit    int    `json:"result_limit"`
 	}
 	fixed, err := json.Marshal(strict)
 	if err != nil {
@@ -75,7 +88,7 @@ func (t *SubAgentJobsTool) Execute(ctx context.Context, args string) (string, er
 		if raw.JobID == "" {
 			return "", fmt.Errorf("subagent_jobs: job_id is required for status")
 		}
-		return t.executeStatus(raw.JobID)
+		return t.executeStatus(raw.JobID, raw.ResultOffset, raw.ResultLimit)
 	case "cancel":
 		if raw.JobID == "" {
 			return "", fmt.Errorf("subagent_jobs: job_id is required for cancel")
@@ -107,10 +120,29 @@ func (t *SubAgentJobsTool) executeList() (string, error) {
 	return string(data), nil
 }
 
-func (t *SubAgentJobsTool) executeStatus(jobID string) (string, error) {
+// executeStatus answers a status read. With no paging parameters it reports the
+// snapshot's bounded head; with result_offset/result_limit it reports that exact
+// page of the job's FULL retained result plus the paging fields, so a truncated
+// read is always recoverable a page at a time (yaah-okcl). A page carries no
+// marker: pages concatenate to the original output.
+func (t *SubAgentJobsTool) executeStatus(jobID string, offset, limit int) (string, error) {
 	st, ok := t.Jobs.Status(jobID)
 	if !ok {
 		return "", fmt.Errorf("subagent_jobs: unknown job_id %q", jobID)
+	}
+	if offset != 0 || limit != 0 {
+		page, pok := t.Jobs.ResultPage(jobID, offset, limit)
+		if !pok {
+			return "", fmt.Errorf("subagent_jobs: unknown job_id %q", jobID)
+		}
+		st.Result = page.Text
+		st.ResultTotalBytes = page.Total
+		st.ResultOffset = page.Offset
+		st.ResultLimit = page.Limit
+		st.ResultNextOffset = 0
+		if page.Truncated() {
+			st.ResultNextOffset = page.Next()
+		}
 	}
 	data, _ := json.Marshal(st)
 	return string(data), nil
