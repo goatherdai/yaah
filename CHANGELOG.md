@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.219.0](https://github.com/goatherdai/yaah/compare/v0.218.1...v0.219.0) (2026-11-25)
+
+
+### Features
+
+* **output:** raw spool files + honest truncation notices (yaah-vw1v) ([#420](https://github.com/goatherdai/yaah/issues/420)) ([c083525](https://github.com/goatherdai/yaah/commit/c083525931f7444111778457cc61c61ac7e28e6f))
+
 ## [0.218.1](https://github.com/goatherdai/yaah/compare/v0.218.0...v0.218.1) (2026-11-25)
 
 
