@@ -281,7 +281,9 @@ func (w *clientWorkspace) terminalOutput(ctx context.Context, terminalID string)
 		return "", fmt.Errorf("terminal/output: %w", err)
 	}
 	if output.Truncated {
-		return output.Output + "\n...[terminal output truncated]", nil
+		// The CLIENT truncated its own buffer; nothing on this side holds the
+		// rest, so the note states that instead of implying a retrievable copy.
+		return output.Output + "\n...[terminal output truncated by the ACP client; no fuller copy is available]", nil
 	}
 	return output.Output, nil
 }

@@ -24,16 +24,22 @@ type (
 )
 
 var (
-	drivePath                      = substrate.DrivePath
-	WithSubAgentWorldPtr           = jobs.WithSubAgentWorldPtr
-	ErrStuckChild                  = jobs.ErrStuckChild
-	ErrDispatchStartup             = jobs.ErrDispatchStartup
-	deniedBy                       = substrate.DeniedBy
-	NewPathValidator               = substrate.NewPathValidator
-	atomicWriteFile                = substrate.AtomicWriteFile
-	withinRoot                     = substrate.WithinRoot
-	keepTail                       = substrate.KeepTail
-	truncationMarker               = substrate.TruncationMarker
+	drivePath            = substrate.DrivePath
+	WithSubAgentWorldPtr = jobs.WithSubAgentWorldPtr
+	ErrStuckChild        = jobs.ErrStuckChild
+	ErrDispatchStartup   = jobs.ErrDispatchStartup
+	deniedBy             = substrate.DeniedBy
+	NewPathValidator     = substrate.NewPathValidator
+	atomicWriteFile      = substrate.AtomicWriteFile
+	withinRoot           = substrate.WithinRoot
+	keepTail             = substrate.KeepTail
+	// truncationMarker is the dispatch lane's single "bytes dropped" marker.
+	// Every cap in this package discards the remainder (an envelope caveat, a
+	// diff bounded for the envelope, a folded error body) with no spool behind
+	// it, so the honest family here is DroppedMarker — the plain
+	// TruncationMarker means "bounded view, full text still on disk" and would
+	// promise a read that cannot be served (yaah-vw1v).
+	truncationMarker               = substrate.DroppedMarker
 	ScrubConfinementScratch        = substrate.ScrubConfinementScratch
 	DispatchWorkspace              = substrate.DispatchWorkspace
 	OpenContainerdWorkspaceSandbox = substrate.OpenContainerdWorkspaceSandbox

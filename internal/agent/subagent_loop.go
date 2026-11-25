@@ -286,6 +286,7 @@ func NewSubAgentLoop(provider Provider, registry ToolRegistry, model, systemProm
 	l.CtxMgr.PruneMinTurns = cfg.PruneMinTurns
 	l.CtxMgr.ContextWindow = cfg.ContextWindow
 	l.CtxMgr.OtelEnabled = cfg.OtelEnabled
+	l.CtxMgr.SpillDir = cfg.ToolSpillDir
 	l.CtxMgr.EnsurePruner()
 
 	// Supervision steering (adoption plan A2): the channel the

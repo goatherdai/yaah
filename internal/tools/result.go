@@ -42,9 +42,18 @@ const (
 	// by shell tools. The agent loop's outer cap may cut this further and
 	// spill the full text to disk.
 	commandOutputMaxBytes = 1 << 20 // 1 MiB
-	// truncationMarker is the only marker tools append when they cap
-	// success output.
-	truncationMarker = substrate.TruncationMarker
+	// truncationMarker is the only marker tools append when a cap DISCARDS
+	// output. A tool has no spill directory, so the dropped bytes exist
+	// nowhere: the marker says that outright and names the recovery route
+	// (re-request a narrower range) rather than leaving a reader to hunt for a
+	// spill file nobody wrote (yaah-vw1v). Aliased from the substrate so the
+	// dispatch layer's folds (a failed run's partial report) and a tool result
+	// carry one marker for "truly dropped".
+	truncationMarker = substrate.DroppedMarker
+	// moreAvailableMarker marks a bounded VIEW of a payload whose full text is
+	// still on disk — read's offset/limit window. No bytes were lost, so it
+	// makes no storage claim at all.
+	moreAvailableMarker = substrate.TruncationMarker
 	// tailTruncationMarker prefixes text kept from the END of an over-long
 	// payload: what was lost came before the kept text, not after. Both
 	// markers are the only ones tools append when they cap output.
@@ -53,8 +62,13 @@ const (
 
 // truncateAt caps s at max bytes on a UTF-8 rune boundary and appends
 // truncationMarker when it cuts. max <= 0 means no cap.
+//
+// It delegates to the substrate helper rather than repeating the UTF-8
+// back-off loop: two copies of a rune-boundary cut drift apart, and the
+// substrate family (TruncateAt / TruncateAtDropped / KeepTail) is where the
+// marker choice is decided.
 func truncateAt(s string, max int) string {
-	return substrate.TruncateAt(s, max)
+	return substrate.TruncateAtDropped(s, max)
 }
 
 // truncateResult caps s at toolResultMaxBytes on a UTF-8 rune boundary and

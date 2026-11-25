@@ -292,5 +292,6 @@ func WithAgentConfig(cfg AgentConfig) Option {
 		l.CtxMgr.PruneProtectTokens = cfg.PruneProtectTokens
 		l.CtxMgr.PruneMinReclaim = cfg.PruneMinReclaim
 		l.CtxMgr.PruneMinTurns = cfg.PruneMinTurns
+		l.CtxMgr.SpillDir = cfg.ToolSpillDir
 	}
 }

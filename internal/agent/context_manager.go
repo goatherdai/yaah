@@ -47,6 +47,13 @@ type ContextManager struct {
 	PruneMinReclaim    int
 	PruneMinTurns      int
 
+	// SpillDir is where oversized tool results (and the full text of a
+	// soft-pruned result) are spilled. It mirrors LoopConfig.ToolSpillDir:
+	// the loop spills after its own cap, the pruner spills the text its
+	// excerpt elides. Empty disables spilling for both writers, and each
+	// notice then says the dropped bytes are not stored (yaah-vw1v).
+	SpillDir string
+
 	// State points to the Loop's LoopState, providing direct read/write
 	// access to mutable compaction state without a sync dance.
 	State *LoopState
@@ -122,8 +129,13 @@ func (cm *ContextManager) EnsurePruner() {
 		if cm.PruneMinTurns > 0 {
 			cfg.MinTurns = cm.PruneMinTurns
 		}
+		cfg.SpillDir = cm.SpillDir
 		cm.Pruner = pipeline.NewPruner(cfg)
 	}
+	// An attached Pruner may predate this call (a caller supplied its own, or
+	// SpillDir was set after construction), so push the directory every time
+	// rather than only at construction.
+	cm.Pruner.SetSpillDir(cm.SpillDir)
 }
 
 // estimatedTokens returns the char/4 token estimate for all messages.

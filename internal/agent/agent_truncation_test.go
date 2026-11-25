@@ -1,8 +1,11 @@
 package agent
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -93,14 +96,24 @@ func TestTruncateToolResult_emptyResult(t *testing.T) {
 	}
 }
 
+// TestTruncateToolResult_noSpillDirDeclaresNoSpool: with no spill directory the
+// cut bytes exist nowhere, so the notice must SAY that instead of leaving a
+// bare "truncated" marker that invites a search for a file nobody wrote
+// (yaah-vw1v).
 func TestTruncateToolResult_noSpillDirFallsBack(t *testing.T) {
 	var sb strings.Builder
 	for i := 0; i < defaultTruncateMaxLines+100; i++ {
 		sb.WriteString("line\n")
 	}
 	got := testLoop().truncateToolResult(sb.String())
-	if !strings.Contains(got, "[truncated]") {
-		t.Error("loop without ToolSpillDir should fall back to bare truncation marker")
+	if !strings.Contains(got, "not stored") {
+		t.Errorf("no-spool notice must state the dropped bytes are not stored: %q", tail(got, 240))
+	}
+	if !strings.Contains(got, "no spill directory") {
+		t.Errorf("no-spool notice must say why: %q", tail(got, 240))
+	}
+	if strings.Contains(got, "full output at") {
+		t.Errorf("no-spool notice must not name a spill path: %q", tail(got, 240))
 	}
 }
 
@@ -178,34 +191,185 @@ func countFiles(dir string) int {
 	return len(entries)
 }
 
-// TestTruncateToolResult_singleLineBlobSpillWrapped (yaah-was9.14): a
-// single-line blob (a delegate's JSON envelope, minified output) used to
-// spill as a one-line file the read tool could not page — the recovery hint
-// pointed at a dead end. The spill is now hard-wrapped and the hint says so;
-// joining the lines reconstructs the original bytes.
-func TestTruncateToolResult_singleLineBlobSpillWrapped(t *testing.T) {
+// TestTruncateToolResult_singleLineBlobSpillsRawWithPagerSibling (yaah-vw1v,
+// superseding yaah-was9.14): a single-line blob used to spill hard-wrapped, so
+// the canonical file was a derived artifact that only reconstructed after
+// joining lines and that grep/tail could not search. Now the canonical spill is
+// the RAW bytes and the pager copy is a `.wrapped` sibling beside it.
+func TestTruncateToolResult_singleLineBlobSpillsRawWithPagerSibling(t *testing.T) {
 	result := `{"result":"` + strings.Repeat("report line\\n", 3000) + `"}`
 	loop := testLoopWithSpill(t)
 
 	got := loop.truncateToolResult(result)
 
-	if !strings.Contains(got, "line-wrapped for paging") {
-		t.Errorf("hint should announce wrapping, got tail: %q", got[max(0, len(got)-220):])
-	}
-	files, err := os.ReadDir(loop.Config.ToolSpillDir)
-	if err != nil || len(files) != 1 {
-		t.Fatalf("expected one spill file, got %v (err %v)", files, err)
-	}
-	spill, err := os.ReadFile(filepath.Join(loop.Config.ToolSpillDir, files[0].Name()))
+	canonical, sibling := spillFiles(t, loop.Config.ToolSpillDir)
+	raw, err := os.ReadFile(canonical)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(spill), "\n") < 2 {
-		t.Error("spill of a single-line blob should be wrapped into multiple lines")
+	if string(raw) != result {
+		t.Errorf("canonical spill must be the original bytes: got %d bytes, want %d", len(raw), len(result))
 	}
-	if joined := strings.ReplaceAll(string(spill), "\n", ""); joined != result {
-		t.Error("joining wrapped spill lines must reconstruct the original bytes")
+	wrapped, err := os.ReadFile(sibling)
+	if err != nil {
+		t.Fatalf("pager sibling: %v", err)
 	}
+	if strings.Count(string(wrapped), "\n") < 2 {
+		t.Error("pager sibling of a single-line blob should be wrapped into multiple lines")
+	}
+	if joined := strings.ReplaceAll(string(wrapped), "\n", ""); joined != result {
+		t.Error("joining the pager sibling's lines must reconstruct the original bytes")
+	}
+	for _, want := range []string{canonical, sibling, "line-wrapped paging copy at", "byte-for-byte in a single line"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("notice must name %q: %q", want, tail(got, 400))
+		}
+	}
+	// The paging instruction must name the SIBLING, not the canonical file:
+	// offset/limit against a one-line file returns the whole blob, which is the
+	// dead end the sibling exists to close.
+	idx := strings.Index(got, "To read portions")
+	if idx < 0 {
+		t.Fatalf("notice must carry the paging instruction: %q", tail(got, 400))
+	}
+	paging := got[idx:]
+	if !strings.Contains(paging, sibling) {
+		t.Errorf("the paging instruction must name the pager sibling: %q", tail(got, 400))
+	}
+	if strings.Contains(paging, "against that file") {
+		t.Errorf("the paging instruction still points offset/limit at the one-line canonical file: %q", tail(got, 400))
+	}
+}
+
+// TestTruncateToolResult_spillIsByteIdentical is the acceptance test for
+// yaah-vw1v: whatever the byte shape of the output — multi-byte UTF-8, CRLF
+// line endings, one enormous JSON line, trailing newlines, or bytes that are
+// not valid UTF-8 at all — the spill file reads back byte-for-byte.
+func TestTruncateToolResult_spillIsByteIdentical(t *testing.T) {
+	cases := map[string]string{
+		"multi-byte-utf8":   strings.Repeat("héllo—世界 🀄\n", 4000),
+		"crlf-line-endings": strings.Repeat("row value\r\n", 4000),
+		"single-line-json":  `{"result":"` + strings.Repeat("x", 200_000) + `"}`,
+		"trailing-newlines": strings.Repeat("line\n", 3000) + "\n\n\n",
+		"invalid-utf8":      strings.Repeat("\x00\x80\xff\xfe", 20000),
+	}
+	for name, original := range cases {
+		t.Run(name, func(t *testing.T) {
+			loop := testLoopWithSpill(t)
+			_ = loop.truncateToolResult(original)
+
+			canonical, _ := spillFiles(t, loop.Config.ToolSpillDir)
+			got, err := os.ReadFile(canonical)
+			if err != nil {
+				t.Fatalf("read spill: %v", err)
+			}
+			if !bytes.Equal(got, []byte(original)) {
+				t.Fatalf("spill is not byte-identical: got %d bytes, want %d", len(got), len(original))
+			}
+		})
+	}
+}
+
+// TestTruncateToolResult_spilledEnvelopeParsesAsJSON: the reason the canonical
+// spill has to be raw. A consumer extracts a field from a spooled delegate
+// envelope by parsing the FILE, not by reassembling it first.
+func TestTruncateToolResult_spilledEnvelopeParsesAsJSON(t *testing.T) {
+	report := strings.Repeat("hard earned context ", 10_000)
+	original := `{"role":"golang-developer","result":` + strconv.Quote(report) + `,"stop_reason":"finished"}`
+	if strings.Contains(original, "\n") {
+		t.Fatal("fixture must be a single line")
+	}
+
+	loop := testLoopWithSpill(t)
+	_ = loop.truncateToolResult(original)
+
+	canonical, _ := spillFiles(t, loop.Config.ToolSpillDir)
+	data, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatalf("read spill: %v", err)
+	}
+	var envelope struct {
+		Role       string `json:"role"`
+		Result     string `json:"result"`
+		StopReason string `json:"stop_reason"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatalf("spill does not parse as JSON: %v", err)
+	}
+	if envelope.Result != report || envelope.Role != "golang-developer" {
+		t.Errorf("envelope round-trip mismatch: role=%q result bytes=%d", envelope.Role, len(envelope.Result))
+	}
+}
+
+// TestTruncateToolResult_noticeNamesRawReadPath pins the shipped notice text:
+// the path, the fact that the file is raw, and the read tool's offset/limit as
+// the paging mechanism. The old "line-wrapped for paging — join lines" wording
+// is gone for good.
+func TestTruncateToolResult_noticeDeclaresRawBytes(t *testing.T) {
+	var sb strings.Builder
+	for i := 0; i < defaultTruncateMaxLines+100; i++ {
+		sb.WriteString("line\n")
+	}
+	loop := testLoopWithSpill(t)
+	got := loop.truncateToolResult(sb.String())
+
+	for _, want := range []string{
+		"[output truncated at",
+		"full output at ",
+		". To read portions, use the read tool with offset/limit",
+		"raw output byte-for-byte",
+		"no line wrapping",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("notice missing %q: %q", want, tail(got, 400))
+		}
+	}
+	for _, banned := range []string{"line-wrapped for paging", "join lines to recover"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("notice still claims wrapping (%q): %q", banned, tail(got, 400))
+		}
+	}
+}
+
+// spillFiles returns the canonical spill and its pager sibling, failing the
+// test unless exactly one of each exists. A `.wrapped` sibling only appears for
+// a single-line blob; callers that expect none assert on the canonical only.
+func spillFiles(t *testing.T, dir string) (canonical, sibling string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read spill dir: %v", err)
+	}
+	var siblings []string
+	for _, e := range entries {
+		p := filepath.Join(dir, e.Name())
+		if strings.HasSuffix(p, ".wrapped") {
+			siblings = append(siblings, p)
+			continue
+		}
+		if canonical != "" {
+			t.Fatalf("expected exactly one canonical spill, also found %s", p)
+		}
+		canonical = p
+	}
+	if canonical == "" {
+		t.Fatal("no canonical spill file was written")
+	}
+	if len(siblings) > 1 {
+		t.Fatalf("expected at most one pager sibling, got %v", siblings)
+	}
+	if len(siblings) == 1 {
+		sibling = siblings[0]
+	}
+	return canonical, sibling
+}
+
+// tail returns the last n bytes of s, for readable failure messages.
+func tail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return "…" + s[len(s)-n:]
 }
 
 // TestTruncateToolResult_multiLineSpillStaysVerbatim: content with real line

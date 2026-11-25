@@ -2,10 +2,8 @@ package agent
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"log/slog"
 	"strings"
-	"time"
 
 	agentctx "github.com/goatherdai/yaah/internal/agent/context"
 )
@@ -65,30 +63,39 @@ func (l *Loop) truncateToolResult(result string) string {
 
 	// Spill directory is injected via LoopConfig.ToolSpillDir by the
 	// composition root; empty disables spilling (finding C4).
+	//
+	// The spill is the RAW result, byte-for-byte (yaah-vw1v): a programmatic
+	// consumer can parse a spooled JSON envelope straight off disk, and a byte
+	// comparison against this result succeeds. A single-line blob gets a
+	// `.wrapped` PAGER SIBLING instead of being wrapped in place, so the
+	// canonical file stays the original bytes while offset/limit paging still
+	// has line structure to work with.
 	spillDir := l.Config.ToolSpillDir
-	if err := os.MkdirAll(spillDir, 0o755); err == nil {
-		ts := time.Now().UnixNano()
-		filename := fmt.Sprintf("%d-tool.txt", ts)
-		fullPath := filepath.Join(spillDir, filename)
-		// A single-line blob (a delegate's JSON envelope, minified output)
-		// defeats the recovery hint: the read tool cannot offset into a
-		// one-line file, so the spill is hard-wrapped for paging
-		// (yaah-was9.14). Content with real line structure spills verbatim.
-		spill := result
-		wrappedNote := ""
-		if strings.Count(result, "\n") <= 1 && len(result) > maxBytes {
-			spill = agentctx.WrapForPaging(result, 200)
-			wrappedNote = " (line-wrapped for paging — join lines to recover the original bytes)"
+	raw := []byte(result)
+	if fullPath, writeErr := agentctx.WriteSpool(spillDir, "tool", raw); writeErr == nil {
+		wrapped, wrapErr := agentctx.SpoolPagerSibling(fullPath, raw, agentctx.SpoolPagerWidth)
+		if wrapErr != nil {
+			// The canonical spill is intact, so the notice stays truthful (it
+			// names no pager copy), but the loss of offset/limit paging would
+			// otherwise be invisible: record it instead of discarding the error.
+			slog.Debug("spill pager copy failed", "spill", fullPath, "err", wrapErr)
 		}
-		if writeErr := os.WriteFile(fullPath, []byte(spill), 0o644); writeErr == nil {
-			agentctx.CleanTruncatedDir(spillDir)
-			hint := fmt.Sprintf(
-				"\n...[output truncated at %d lines / %d bytes — full output at %s%s. To read portions, use the read tool with offset/limit or spawn a subagent for large analysis.]...",
-				truncatedLines, len(result), fullPath, wrappedNote,
-			)
-			return truncated + hint
-		}
+		agentctx.CleanTruncatedDir(spillDir)
+		hint := fmt.Sprintf(
+			"\n...[output truncated at %d lines / %d bytes — %s. Or spawn a subagent for large analysis.]...",
+			truncatedLines, len(result), agentctx.RecoveryClause(fullPath, wrapped),
+		)
+		return truncated + hint
 	}
 
-	return truncated + "\n...[truncated]..."
+	// No spill landed, so the cut bytes exist nowhere. Say so: a notice that
+	// only says "truncated" invites a search for a file that was never written.
+	reason := "no spill directory is configured for this session"
+	if spillDir != "" {
+		reason = "the spill write failed"
+	}
+	return truncated + fmt.Sprintf(
+		"\n...[truncated at %d lines / %d bytes — %s]...",
+		truncatedLines, len(result), agentctx.NoSpoolClause(reason),
+	)
 }

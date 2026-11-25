@@ -12,11 +12,14 @@ package pipeline
 
 import (
 	"encoding/json"
+	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf8"
 
+	agentctx "github.com/goatherdai/yaah/internal/agent/context"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -52,6 +55,15 @@ type PruneConfig struct {
 	MinReclaim     int             // minimum reclaim required to commit a prune
 	MinTurns       int             // number of recent turns (user msgs or assistant+tool_calls) always kept
 	ProtectedTools map[string]bool // tool names whose results are never pruned
+
+	// SpillDir, when non-empty, is where a pruned result's FULL text is
+	// spilled before its excerpt replaces it in the provider request. The
+	// excerpt notice then names that file, so the elided middle has a
+	// first-class read path (the read tool with offset/limit) instead of
+	// being unreachable (yaah-vw1v). Empty means no spill: the notice then
+	// says the dropped text is not stored, rather than leaving a reader to
+	// hunt for a file nobody wrote.
+	SpillDir string
 }
 
 // DefaultPruneConfig returns the recommended defaults.
@@ -113,6 +125,18 @@ func NewPruner(cfg PruneConfig) *Pruner {
 	}
 }
 
+// SetSpillDir points the pruner at the directory its full-text spills go to.
+// An empty dir disables spilling: the prune notice then states that the elided
+// text was not stored instead of naming a file nobody wrote.
+func (p *Pruner) SetSpillDir(dir string) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.cfg.SpillDir = dir
+}
+
 // estimateToolTokens returns a cheap token estimate for a tool-result
 // message: content length / 4 with a 10-token floor. Tool-result messages
 // carry no ToolCalls, so only Content is counted.
@@ -134,9 +158,22 @@ type pruneCandidate struct {
 	id      string
 	name    string
 	content string
-	reclaim int    // tokens attributable to this result beyond the protect window
+	raw     int    // tokens this result contributes beyond the protect window
+	reclaim int    // raw minus the replacement's own cost
 	preview string // cached replacement, built once before commit
 }
+
+// estimateRecoveryClause is the stand-in recovery clause used when costing a
+// candidate excerpt. The committed clause names absolute spill and pager paths,
+// which the prune cannot know before it writes them, so the estimate is built
+// from the REAL renderer with deliberately over-long representative paths: a
+// copy hand-written here would silently stop being conservative the day the
+// clause's wording grows, and TestEstimateRecoveryClauseCoversRealClause pins
+// the estimate against a realistic committed clause.
+var estimateRecoveryClause = agentctx.RecoveryClause(
+	"/tmp/estimating-a-spill-path/deeply/nested/representative/scratch/directory/1795639718490606315-prune.txt",
+	"/tmp/estimating-a-spill-path/1795639718490606315-prune.txt.wrapped",
+)
 
 // Mark walks messages backwards from the most recent, deciding which stale
 // tool results beyond the protect window should be soft-pruned. It records
@@ -246,7 +283,7 @@ func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 			id:      m.ToolCallID,
 			name:    m.Name,
 			content: m.Content,
-			reclaim: reclaimable,
+			raw:     reclaimable,
 		})
 	}
 
@@ -266,6 +303,9 @@ func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 	// replacement is no longer near-empty, so using the full original
 	// estimate would overstate the saving and let MinReclaim commit a prune
 	// that barely shrinks the turn.
+	//
+	// This pass costs the excerpt only — it writes nothing — so a prune that
+	// is not committed leaves no orphan spill behind.
 	calls := toolCallIndex(messages)
 	actualReclaim := 0
 	for i := range candidates {
@@ -275,8 +315,8 @@ func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 		if name == "" {
 			name = call.Function.Name
 		}
-		c.preview = shrinkToolResult(c.content, name, call.Function.Arguments)
-		c.reclaim -= estimateTextTokens(c.preview)
+		c.preview = shrinkToolResult(c.content, name, call.Function.Arguments, estimateRecoveryClause)
+		c.reclaim = c.raw - estimateTextTokens(c.preview)
 		if c.reclaim < 0 {
 			c.reclaim = 0
 		}
@@ -285,6 +325,47 @@ func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 	stats.ReclaimedTokens = actualReclaim
 
 	if actualReclaim <= p.cfg.MinReclaim {
+		stats.Committed = false
+		stats.TotalMarked = len(p.pruned)
+		stats.CumMarked = p.cumMarked
+		stats.CumReclaimed = p.cumReclaimed
+		p.last = stats
+		return stats
+	}
+
+	// Committed: spill each result's full text and rebuild its excerpt with
+	// the recovery clause naming that spill. Reclaim is recomputed from the
+	// final excerpts so the clause's own cost is charged honestly (a longer
+	// notice reclaims less, never more).
+	actualReclaim = 0
+	var spilled []string
+	for i := range candidates {
+		c := &candidates[i]
+		call := calls[c.id]
+		name := c.name
+		if name == "" {
+			name = call.Function.Name
+		}
+		var wrote []string
+		c.preview, wrote = p.spillingPreview(c.content, name, call.Function.Arguments)
+		spilled = append(spilled, wrote...)
+		c.reclaim = c.raw - estimateTextTokens(c.preview)
+		if c.reclaim < 0 {
+			c.reclaim = 0
+		}
+		actualReclaim += c.reclaim
+	}
+	stats.ReclaimedTokens = actualReclaim
+
+	// Re-check the floor against the honest recomputation. The estimate above is
+	// derived from the real clause and is no shorter than it, so a commit that
+	// passed the first gate should still pay here — but the clause's absolute
+	// paths only exist once written, and a prune reported Committed with
+	// ReclaimedTokens <= MinReclaim would be a prune that left the turn no
+	// smaller. Withdrawing the spills keeps the promise that a prune which does
+	// not commit leaves no orphan behind.
+	if actualReclaim <= p.cfg.MinReclaim {
+		withdrawSpills(spilled)
 		stats.Committed = false
 		stats.TotalMarked = len(p.pruned)
 		stats.CumMarked = p.cumMarked
@@ -345,7 +426,8 @@ func (p *Pruner) Filter(messages []types.Message) []types.Message {
 		if name == "" {
 			name = call.Function.Name
 		}
-		out[i].Content = shrinkToolResult(m.Content, name, call.Function.Arguments)
+		out[i].Content = shrinkToolResult(m.Content, name, call.Function.Arguments,
+			agentctx.NoSpoolClause("the excerpt was rebuilt because its cached preview was missing"))
 	}
 	return out
 }
@@ -364,13 +446,66 @@ func toolCallIndex(messages []types.Message) map[string]types.ToolCall {
 
 const pruneNoticePrefix = "[output pruned — "
 
+// spillingPreview spills content and renders the excerpt that replaces it,
+// with the notice naming the spill. When no spill dir is configured, or the
+// write fails, the notice says the dropped text is not stored — the two cases
+// are never left ambiguous.
+//
+// The pager sibling is written here exactly as the loop-cap spill does it
+// (internal/agent/agent_truncation.go): the notice tells the model to page the
+// spill with offset/limit, and for a single-line blob that instruction is a
+// dead end unless the derived `.wrapped` copy sits beside the raw bytes.
+//
+// It returns the files it wrote so a prune that turns out not to pay for itself
+// can withdraw them (Mark's second gate).
+func (p *Pruner) spillingPreview(content, toolName, rawArgs string) (preview string, spilled []string) {
+	recovery := ""
+	if p.cfg.SpillDir != "" {
+		if path, err := agentctx.WriteSpool(p.cfg.SpillDir, "prune", []byte(content)); err == nil {
+			spilled = append(spilled, path)
+			wrapped, wrapErr := agentctx.SpoolPagerSibling(path, []byte(content), agentctx.SpoolPagerWidth)
+			if wrapErr != nil {
+				// The canonical spill is intact, so the notice stays truthful (it
+				// names no pager copy), but a silently missing pager copy is
+				// exactly the dead end this branch exists to close.
+				slog.Debug("prune spill pager copy failed", "spill", path, "err", wrapErr)
+			} else if wrapped != "" {
+				spilled = append(spilled, wrapped)
+			}
+			agentctx.CleanTruncatedDir(p.cfg.SpillDir)
+			recovery = agentctx.RecoveryClause(path, wrapped)
+		} else {
+			recovery = agentctx.NoSpoolClause("the spill write failed")
+		}
+	}
+	if recovery == "" {
+		recovery = agentctx.NoSpoolClause("no spill directory is configured for this session")
+	}
+	return shrinkToolResult(content, toolName, rawArgs, recovery), spilled
+}
+
+// withdrawSpills removes spill files written for a prune that did not commit.
+// Best effort: a file that cannot be removed is a stray under the spill
+// directory (CleanTruncatedDir reclaims it later), never a lost result.
+func withdrawSpills(paths []string) {
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			slog.Debug("prune spill rollback failed", "path", path, "err", err)
+		}
+	}
+}
+
 // shrinkToolResult replaces a pruned tool result with a bounded excerpt plus
 // enough identity (tool name, primary argument, original size) for the model
 // to decide whether it needs the full result again. Keeping a head/tail
 // excerpt avoids the old all-or-nothing stub, which discarded the very
 // fragment most reads and greps are answered from.
-func shrinkToolResult(content, toolName, rawArgs string) string {
-	notice := pruneNotice(len(content), toolName, primaryArgument(rawArgs))
+//
+// recovery names where the elided middle can be read (or states that it is
+// gone). It is folded into the notice rather than into the excerpt, so the
+// excerpt's head/tail markers stay small.
+func shrinkToolResult(content, toolName, rawArgs, recovery string) string {
+	notice := pruneNotice(len(content), toolName, primaryArgument(rawArgs), recovery)
 	if content == "" {
 		return notice + "\n(empty result)"
 	}
@@ -382,7 +517,12 @@ func shrinkToolResult(content, toolName, rawArgs string) string {
 	return b.String()
 }
 
-func pruneNotice(size int, toolName, primary string) string {
+// pruneNotice renders the notice that stands in for a pruned result. size,
+// toolName and primary identify what was elided; recovery names where the
+// elided bytes live (or states that nothing holds them). recovery ALWAYS comes
+// from agentctx.RecoveryClause or agentctx.NoSpoolClause — never hand-rolled
+// here — so the notice cannot promise a read path the session does not have.
+func pruneNotice(size int, toolName, primary, recovery string) string {
 	label := strings.TrimSpace(toolName)
 	if label == "" {
 		label = "tool"
@@ -390,7 +530,11 @@ func pruneNotice(size int, toolName, primary string) string {
 	if primary != "" {
 		label += " " + primary
 	}
-	return pruneNoticePrefix + strconv.Itoa(size) + " bytes; " + label + "]"
+	notice := pruneNoticePrefix + strconv.Itoa(size) + " bytes; " + label
+	if recovery != "" {
+		notice += "; " + recovery
+	}
+	return notice + "]"
 }
 
 // primaryArgument extracts the argument that best identifies a tool call for

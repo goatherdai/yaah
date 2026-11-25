@@ -24,7 +24,11 @@ const maxAssistantContentBytes = 256 << 10
 // assistantTruncationMarker names the drop in-band. It is deliberately not
 // prose-shaped: a reader (or the model) must be able to tell the message is
 // incomplete without mistaking the note for output.
-const assistantTruncationMarker = "\n…[yaah: assistant message truncated, %d bytes dropped]\n"
+//
+// It says "not stored" because that is the whole truth at this cap: the bytes
+// are cut before the message is appended or persisted, so no spill, no trace
+// fact, and no session row holds them (yaah-vw1v).
+const assistantTruncationMarker = "\n…[yaah: assistant message truncated, %d bytes dropped and not stored]\n"
 
 // CapAssistantContent bounds an assistant message's content, keeping the head
 // and the tail and replacing the middle with a marker naming the dropped byte

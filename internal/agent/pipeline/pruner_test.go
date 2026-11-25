@@ -2,10 +2,13 @@ package pipeline
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	agentctx "github.com/goatherdai/yaah/internal/agent/context"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -666,5 +669,259 @@ func TestByteExcerpt_SingleLineKeepsRuneCut(t *testing.T) {
 	}
 	if !strings.HasSuffix(content, tail) {
 		t.Error("tail is not a suffix of the original")
+	}
+}
+
+// TestPruner_SpillsFullResultAndNamesIt (yaah-vw1v): a pruned result's full
+// text is spilled and the excerpt's notice names it, so the elided middle has a
+// first-class read path instead of being unreachable.
+func TestPruner_SpillsFullResultAndNamesIt(t *testing.T) {
+	spillDir := t.TempDir()
+	p := NewPruner(PruneConfig{ProtectTokens: 10, MinReclaim: 1, MinTurns: 1, SpillDir: spillDir})
+	msgs := pruneFixture(80)
+	content := msgs[2].Content
+
+	if stats := p.Mark(msgs, "post_tool"); !stats.Committed {
+		t.Fatalf("prune should have committed: %+v", stats)
+	}
+	got := filteredContent(p, msgs, "c1")
+
+	if !strings.Contains(got, "full output at ") {
+		t.Fatalf("prune notice must name the spill path:\n%s", head(got))
+	}
+	entries, err := os.ReadDir(spillDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected one spill file, got %v (err %v)", entries, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(spillDir, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != content {
+		t.Errorf("prune spill must hold the original bytes: got %d, want %d", len(raw), len(content))
+	}
+	if !strings.Contains(got, filepath.Join(spillDir, entries[0].Name())) {
+		t.Errorf("notice must name the actual spill file, got:\n%s", head(got))
+	}
+}
+
+// TestPruner_NoSpillDirDeclaresNoSpool: with no spill directory the notice says
+// the dropped text is not stored, rather than naming a file nobody wrote.
+func TestPruner_NoSpillDirDeclaresNoSpool(t *testing.T) {
+	p := NewPruner(PruneConfig{ProtectTokens: 10, MinReclaim: 1, MinTurns: 1})
+	msgs := pruneFixture(80)
+
+	if stats := p.Mark(msgs, "post_tool"); !stats.Committed {
+		t.Fatalf("prune should have committed: %+v", stats)
+	}
+	got := filteredContent(p, msgs, "c1")
+
+	if !strings.Contains(got, "not stored") || !strings.Contains(got, "no spill directory") {
+		t.Fatalf("notice must declare that nothing holds the elided text:\n%s", head(got))
+	}
+	if strings.Contains(got, "full output at") {
+		t.Fatalf("notice must not name a spill path:\n%s", head(got))
+	}
+}
+
+// pruneFixture builds user + assistant(call c1) + tool(c1) with 80 lines of
+// content, enough to clear the prune floor.
+func pruneFixture(lines int) []types.Message {
+	body := ""
+	for i := 0; i < lines; i++ {
+		body += fmt.Sprintf("line-%02d of the tool result\n", i)
+	}
+	return []types.Message{
+		types.UserMsg("do the thing"),
+		types.AssistantMsg("", []types.ToolCall{{
+			ID:       "c1",
+			Type:     "function",
+			Function: types.ToolCallFn{Name: "read", Arguments: `{"filePath":"src/main.go"}`},
+		}}),
+		types.ToolResultMsg("c1", "read", body),
+		// A turn after the batch: the newest completed batch is protected, and
+		// the model has consumed this one, so it is eligible for pruning.
+		types.UserMsg("what did you find?"),
+	}
+}
+
+func filteredContent(p *Pruner, msgs []types.Message, id string) string {
+	for _, m := range p.Filter(msgs) {
+		if m.ToolCallID == id {
+			return m.Content
+		}
+	}
+	return ""
+}
+
+func head(s string) string {
+	if len(s) > 400 {
+		return s[:400]
+	}
+	return s
+}
+
+// spillPair returns the canonical spill and its pager sibling from dir, failing
+// the test unless exactly one of each exists.
+func spillPair(t *testing.T, dir string) (canonical, sibling string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read spill dir: %v", err)
+	}
+	for _, e := range entries {
+		path := filepath.Join(dir, e.Name())
+		if strings.HasSuffix(path, ".wrapped") {
+			sibling = path
+			continue
+		}
+		canonical = path
+	}
+	if canonical == "" {
+		t.Fatalf("no canonical spill in %s", dir)
+	}
+	if sibling == "" {
+		t.Fatalf("no pager sibling in %s", dir)
+	}
+	return canonical, sibling
+}
+
+// singleLineMsg builds user + assistant(call id) + tool(id) whose result is one
+// long, newline-free line — a delegate's JSON envelope is the real-world case.
+func singleLineMsg(id, content string) []types.Message {
+	return []types.Message{
+		types.UserMsg("do the thing"),
+		types.AssistantMsg("", []types.ToolCall{{
+			ID:       id,
+			Type:     "function",
+			Function: types.ToolCallFn{Name: "read", Arguments: `{"filePath":"src/main.go"}`},
+		}}),
+		types.ToolResultMsg(id, "read", content),
+		// A trailing turn: the pruner protects the most recent batch, so a
+		// lone trailing tool result would never become a prune candidate.
+		types.AssistantMsg("read it", nil),
+		types.UserMsg("next step"),
+		types.AssistantMsg("", []types.ToolCall{{
+			ID:       "c2",
+			Type:     "function",
+			Function: types.ToolCallFn{Name: "read", Arguments: `{"filePath":"src/other.go"}`},
+		}}),
+		types.ToolResultMsg("c2", "read", "small result"),
+	}
+}
+
+// TestPruner_SingleLineBlobGetsPagerSibling (review round 1): the prune notice
+// tells the model to page the spill with offset/limit. For a single-line blob
+// that instruction is a dead end unless the `.wrapped` pager copy the loop-cap
+// spill writes exists here too — offset/limit against the canonical file would
+// return the whole blob as one line.
+func TestPruner_SingleLineBlobGetsPagerSibling(t *testing.T) {
+	spillDir := t.TempDir()
+	p := NewPruner(PruneConfig{ProtectTokens: 10, MinReclaim: 1, MinTurns: 1, SpillDir: spillDir})
+	blob := `{"result":"` + strings.Repeat("report line\\n", 4000) + `"}`
+	if strings.Contains(blob, "\n") {
+		t.Fatal("fixture must be a single line")
+	}
+	msgs := singleLineMsg("c1", blob)
+
+	if stats := p.Mark(msgs, "post_tool"); !stats.Committed {
+		t.Fatalf("prune should have committed: %+v", stats)
+	}
+	got := filteredContent(p, msgs, "c1")
+
+	canonical, sibling := spillPair(t, spillDir)
+	raw, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != blob {
+		t.Errorf("canonical spill must hold the raw bytes: got %d, want %d", len(raw), len(blob))
+	}
+	wrapped, err := os.ReadFile(sibling)
+	if err != nil {
+		t.Fatalf("pager sibling: %v", err)
+	}
+	if strings.Count(string(wrapped), "\n") < 2 {
+		t.Error("the pager sibling of a single-line blob must be wrapped into lines")
+	}
+	if joined := strings.ReplaceAll(string(wrapped), "\n", ""); joined != blob {
+		t.Error("joining the pager sibling's lines must reconstruct the raw bytes")
+	}
+	if !strings.Contains(got, sibling) {
+		t.Errorf("the notice's paging instruction must name the pager sibling %q:\n%s", sibling, head(got))
+	}
+	if !strings.Contains(got, "line-wrapped paging copy at") {
+		t.Errorf("the notice must say the paging copy is wrapped:\n%s", head(got))
+	}
+}
+
+// TestPruner_UncommittedMarkWritesNoSpill pins the invariant the two-gate
+// design rests on: a prune that never commits leaves no orphan spill behind.
+func TestPruner_UncommittedMarkWritesNoSpill(t *testing.T) {
+	spillDir := t.TempDir()
+	p := NewPruner(PruneConfig{ProtectTokens: 10, MinReclaim: 1 << 30, MinTurns: 1, SpillDir: spillDir})
+	msgs := pruneFixture(80)
+
+	stats := p.Mark(msgs, "post_tool")
+	if stats.Committed {
+		t.Fatalf("no prune can reclaim a gigabyte of tokens: %+v", stats)
+	}
+	entries, err := os.ReadDir(spillDir)
+	if err != nil {
+		t.Fatalf("read spill dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("an uncommitted prune wrote %d spill file(s)", len(entries))
+	}
+	if got := filteredContent(p, msgs, "c1"); got != msgs[2].Content {
+		t.Errorf("an uncommitted prune must not change the result, got %q", head(got))
+	}
+}
+
+// TestPruner_SpillWriteFailureDeclaresNoSpool: a failed spill write is reported
+// as such, and the notice never names a file that does not exist. The two
+// no-storage causes stay distinguishable ("the spill write failed" vs "no spill
+// directory").
+func TestPruner_SpillWriteFailureDeclaresNoSpool(t *testing.T) {
+	dir := t.TempDir()
+	// A spill "directory" that is actually a regular file: MakeDirAll fails, so
+	// the write fails for a reason other than an unset SpillDir.
+	notADir := filepath.Join(dir, "spill-file")
+	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := NewPruner(PruneConfig{ProtectTokens: 10, MinReclaim: 1, MinTurns: 1, SpillDir: notADir})
+	msgs := pruneFixture(80)
+
+	if stats := p.Mark(msgs, "post_tool"); !stats.Committed {
+		t.Fatalf("prune should have committed: %+v", stats)
+	}
+	got := filteredContent(p, msgs, "c1")
+	if !strings.Contains(got, "the spill write failed") {
+		t.Fatalf("a failed spill write must be named:\n%s", head(got))
+	}
+	if strings.Contains(got, "full output at") {
+		t.Fatalf("a failed spill write must not name a spill path:\n%s", head(got))
+	}
+	if strings.Contains(got, "no spill directory") {
+		t.Fatalf("a write failure must not be reported as an unset directory:\n%s", head(got))
+	}
+}
+
+// TestEstimateRecoveryClauseCoversRealClause pins the costing estimate against
+// the real renderer: the estimate must be no shorter than a committed clause
+// for a realistic spill path, or MinReclaim could commit a prune whose honest
+// notice leaves the turn no smaller.
+func TestEstimateRecoveryClauseCoversRealClause(t *testing.T) {
+	realPath := filepath.Join(string(filepath.Separator), "home", "someone", ".yaah",
+		"truncated", "1795639718490606315-prune.txt")
+	for name, clause := range map[string]string{
+		"with-pager": agentctx.RecoveryClause(realPath, realPath+".wrapped"),
+		"no-pager":   agentctx.RecoveryClause(realPath, ""),
+	} {
+		if len(estimateRecoveryClause) < len(clause) {
+			t.Errorf("%s: estimate is %d bytes, real clause %d — the estimate must stay conservative",
+				name, len(estimateRecoveryClause), len(clause))
+		}
 	}
 }

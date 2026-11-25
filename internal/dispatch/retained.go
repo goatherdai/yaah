@@ -1138,8 +1138,9 @@ func startRetainedRun(
 			// head-capped here — the note budget of foldRetainedPartial
 			// tail-keeps, which would keep the wrong half. The report
 			// body itself is bounded by the role's output_limit; only the
-			// caveat gets this tool-side budget.
-			notes = append(notes, substrate.TruncateAt(provErr.Error(), noteBudget))
+			// caveat gets this tool-side budget, and the remainder is gone
+			// (no spool), so the cap uses the dropped marker.
+			notes = append(notes, substrate.TruncateAtDropped(provErr.Error(), noteBudget))
 		}
 		// yaah-atn: a report dispatch registers no proposal, so a scratch
 		// that does not come down has no record to be recovered through
@@ -1985,7 +1986,12 @@ func remainingAllowance(ctx context.Context, allowance time.Duration) time.Durat
 // verbatim: the body keeps its head (the part that orients), the caveat
 // keeps its tail (teardown notes end with the worktree path they report).
 func foldRetainedPartial(body, note string) string {
-	return retainedNote(substrate.TruncateAt(body, substrate.ToolResultMaxBytes), keepTail(note, noteBudget))
+	// TruncateAtDropped, not TruncateAt: the folded body's remainder is
+	// discarded with no spool behind it, so the marker must say "dropped and
+	// not stored" — the plain TruncationMarker means "bounded view, full text
+	// still on disk" since yaah-vw1v and would promise a read that cannot
+	// serve it.
+	return retainedNote(substrate.TruncateAtDropped(body, substrate.ToolResultMaxBytes), keepTail(note, noteBudget))
 }
 
 // worktreeOnDisk reports whether a worktree directory still exists.
@@ -2499,7 +2505,7 @@ func recordFailedReviewDecision(ctx context.Context, mgr *goatherd.ScopeManager,
 	}
 	reason := "seal failed"
 	if sealErr != nil {
-		reason += ": " + substrate.TruncateAt(sealErr.Error(), noteBudget)
+		reason += ": " + substrate.TruncateAtDropped(sealErr.Error(), noteBudget)
 	}
 	if _, err := mgr.RecordMergeDecision(context.WithoutCancel(ctx), proposal, false, reason, "seal_failed", factID); err != nil {
 		return fmt.Errorf("record merge decision: %w", err)
@@ -2720,7 +2726,7 @@ func clipDiff(diff string) string {
 	if len(lines) <= retainedDiffMaxLines {
 		return diff
 	}
-	return strings.Join(lines[:retainedDiffMaxLines], "\n") + "\n...[truncated]"
+	return strings.Join(lines[:retainedDiffMaxLines], "\n") + substrate.DroppedMarker
 }
 
 // retainedDiffMaxLines bounds a proposal envelope's diff. It matches the review
@@ -2752,11 +2758,7 @@ func changesPaths(changes []goatherd.ProposedChange) []string {
 // for them.
 func trimResult(s string) string {
 	const maxResult = 4000
-	s = strings.TrimRight(s, " \t\r\n")
-	if len(s) > maxResult {
-		return s[:maxResult] + "\n...[truncated]"
-	}
-	return s
+	return substrate.TruncateAtDropped(strings.TrimRight(s, " \t\r\n"), maxResult)
 }
 
 // runWorktreeBootstrap runs the configured bootstrap command inside a freshly
