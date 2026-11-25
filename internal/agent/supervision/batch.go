@@ -10,20 +10,14 @@
 // Batch is the SHARED ARBITER, not the caller's decider. It owns no model and
 // forms no opinion: the caller renders the snapshot (SnapshotText), has its
 // decider act on that text, and hands the decision list back to Next. The same
-// arbiter serves three callers — the `supervise` tool (agent mode), the
-// headless one-shot decider, and (phase 2) a `fanout` workflow node — which is
+// arbiter serves three callers — the `supervise` tool (agent mode, yaah-fy28),
+// the headless one-shot decider (HeadlessDecider + RunHeadlessLoop in
+// headless.go, yaah-0nbb), and (phase 2) a `fanout` workflow node — which is
 // what makes the two measured modes comparable at all.
 //
-// What this file deliberately does NOT do, and which bead adds it:
-//   - the `supervise` tool surface and its embedded doc (yaah-fy28);
-//   - the headless Decider plus `supervisor.policy`/`policy_model` config and
-//     the locked v1 prompt wiring (yaah-0nbb; the prompt asset and the
-//     renderer are landed, the binding is not);
-//   - revert by construction — lane upgrade, fatal pre-run capture — which is
-//     what makes a revert reachable on a dispatched scope at all (yaah-ugtl).
-//     Until that lands, a revert is only as good as the registration says
-//     (Registration.Reversible), which is exactly what this arbiter reads: a
-//     revert on a scope with no capture is dropped, never downgraded.
+// A revert is only as good as the registration says (Registration.Reversible,
+// backed since yaah-ugtl by the runner's pre-run capture): a revert on a scope
+// with no capture is dropped, never downgraded.
 //
 // What it DOES do with its records, since yaah-vaxv: every tick hands its
 // results to the session's intervention log (recordInterventions), which is
@@ -423,6 +417,48 @@ func (b *Batch) ShouldDecide() bool {
 	return b.cfg.Trigger != TriggerOnChange || b.changed
 }
 
+// Live reports whether the batch has any live member, WITHOUT the trigger
+// fold ShouldDecide applies. It is the liveness question a loop-lifecycle
+// caller asks (HeadlessHost.Settle): under TriggerOnChange a quiet tick makes
+// ShouldDecide false while workers are still running, so settling a dispatch
+// by that answer would stop supervision with siblings mid-flight (PR #417
+// review finding 1). Same bootstrap guarantee as ShouldDecide: the first call
+// ingests, so the answer is about real scopes, not the pre-first-render empty
+// universe.
+func (b *Batch) Live() bool {
+	b.ensureIngested()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.members) > 0
+}
+
+// RefreshLive polls a FRESH snapshot, updates the batch's membership (and its
+// changed flag, so the trigger stays coherent), and reports whether any member
+// is live. It is the liveness question a loop-lifecycle caller asks AT SETTLE
+// (HeadlessHost.Settle): Live reads the cache the last ingest left, and at
+// settle time that cache still contains the scope that just settled — the run
+// unregisters only after the hook returns — so answering from the cache would
+// keep the loop running to its own next Done tick: one more interval of model
+// calls the measurement would count and an arbiter left armed after the last
+// supervised dispatch is over (PR #417 review round 2, finding 1).
+//
+// Callers may hold the HOST's lock while calling this (Settle does): the lock
+// order is host-mu before batch-mu, and nothing in this package takes them the
+// other way round.
+func (b *Batch) RefreshLive() bool {
+	fresh := b.takeSnapshot()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	prev := b.snapshot
+	b.ingested = true
+	b.snapshot = fresh
+	b.members = membersOf(fresh, b.cfg.RootScopeID)
+	b.pruneClaimsLocked()
+	b.bumpAgesLocked()
+	b.changed = changedSince(prev, b.members)
+	return len(b.members) > 0
+}
+
 // SnapshotText renders the LAST INGESTED snapshot as meta-agent prompt text
 // (design §4.3), threading the batch's own per-scope ages and the previous
 // render's labels so a worker keeps its name across ticks. It stores the
@@ -536,6 +572,21 @@ func (b *Batch) queueRuleLocked(q queuedRule) bool {
 	}
 	b.rules = append(b.rules, q)
 	return true
+}
+
+// Labels returns the label map of the last SnapshotText render — the labels the
+// rendered text called scopes by, paired with the scope IDs they name.
+//
+// It exists for the headless decider (yaah-0nbb): a decision names a LABEL, and
+// the decider has to answer "did the text I sent actually assign this scope
+// name?" before handing the list to Next. Deriving labels a second time (by
+// re-rendering the snapshot) would be a second assignment that could disagree
+// with the one Next resolves against, which is exactly the failure that would
+// steer the wrong worker.
+func (b *Batch) Labels() []renderer.Labeled {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]renderer.Labeled(nil), b.labels...)
 }
 
 // RulesDropped reports how many rule firings were discarded because the queue
@@ -764,15 +815,19 @@ func (b *Batch) generationLocked(scopeID string) (uint64, bool) {
 	return b.runs.Generation(scopeID)
 }
 
-// changedSince is the TriggerOnChange verdict (design §4.4): a scope advanced
-// its Through cursor, a scope's consecutive-error count grew, or two scopes in
-// the batch named the same modified file. The first two are compared against
-// the previous snapshot; the file overlap is a property of the current one
-// alone.
+// changedSince reports whether the ingest that produced members saw a change
+// since prev (design §4.4, TriggerOnChange). Three things count:
 //
-// A scope APPEARING is not a change by this definition: a brand new worker has
-// no work to react to yet, and its cursor only advances once it does
-// something. That keeps a quiet dispatch quiet.
+//   - a live worker prev did not have. This is the BOOTSTRAP case as well as a
+//     new dispatch, and it must count: a loop that never asks the model about a
+//     worker it has just discovered is not supervising it. (The bootstrap ingest
+//     compares against the zero Snapshot, so every first tick with a live worker
+//     is a change — which is what makes `trigger: on-change` decide at least
+//     once per discovered scope.)
+//   - a scope whose cursor advanced (Through) or whose consecutive-error streak
+//     grew;
+//   - two scopes naming the same modified file, which the meta-agent reads as a
+//     collision.
 func changedSince(prev supervisionapi.Snapshot, members map[string]supervisionapi.AgentSnapshot) bool {
 	prevBy := make(map[string]supervisionapi.AgentSnapshot, len(prev.Agents))
 	for _, a := range prev.Agents {
@@ -780,10 +835,12 @@ func changedSince(prev supervisionapi.Snapshot, members map[string]supervisionap
 	}
 	owners := make(map[string]string, 8)
 	for scopeID, a := range members {
-		if p, ok := prevBy[scopeID]; ok {
-			if a.Through > p.Through || a.ConsecutiveErrors > p.ConsecutiveErrors {
-				return true
-			}
+		p, known := prevBy[scopeID]
+		if !known {
+			return true
+		}
+		if a.Through > p.Through || a.ConsecutiveErrors > p.ConsecutiveErrors {
+			return true
 		}
 		for _, f := range a.ModifiedFiles {
 			if owner, ok := owners[f]; ok && owner != scopeID {

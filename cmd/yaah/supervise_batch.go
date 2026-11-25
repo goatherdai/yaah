@@ -24,6 +24,7 @@ import (
 
 	"github.com/goatherdai/yaah/internal/agent/supervision"
 	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/supervisionapi"
 	"github.com/goatherdai/yaah/internal/tools"
 )
 
@@ -98,42 +99,81 @@ func registerSuperviseTool(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 		// context (SuperviseTool.CallerScope is that seam); until then this
 		// is the root agent, which is the mode's default caller.
 		CallerScopeID: st.rootScopeID,
-		NewBatch:      newSuperviseBatchFactory(st, snap),
+		NewBatch:      newSuperviseBatchFactory(st, cfg, snap),
 	})
 }
 
-// superviseBatchConfig is the BatchConfig the production factory builds. It is
-// a function so the settings exist in exactly one place and are pinned by a
-// test (supervise_registration_test.go): CooldownTicks is the design's default
-// selector — a NEGATIVE value means supervision.DefaultCooldownTicks, i.e. the
-// `cooldown_ticks: 1` the tool's doc and design §4.9 promise. The ZERO value
-// means "no cooldown", which is why leaving the field unset here would silently
-// disable a documented brake.
-func superviseBatchConfig(callerScopeID string, stop supervision.StopFunc) supervision.BatchConfig {
+// superviseBatchConfig resolves the batch's tuning from the supervisor stanza
+// (design §4.9). It is the ONE place a config key becomes a batch setting, for
+// both modes: agent mode ticks the batch from the `supervise` tool, headless mode
+// from the host loop, and both must run with the cadence, trigger, action mask,
+// cooldown and cap the operator configured — otherwise the two modes the
+// measurement compares would not be comparing the same loop.
+//
+// A nil cfg is the defaults: the accessors on SupervisorConfig supply the
+// documented values (5s, one tick, unlimited, all three actions, always), so the
+// zero-value stanza and an absent stanza behave identically.
+func superviseBatchConfig(cfg *config.Config, callerScopeID string, stop supervision.StopFunc) supervision.BatchConfig {
+	var sup config.SupervisorConfig
+	if cfg != nil {
+		sup = cfg.Agent.Default.Supervisor
+	}
 	return supervision.BatchConfig{
 		// The batch's own root: the caller is never a member and never a
 		// target. For the root agent that is exactly the session root the
 		// design names; the descendant filter has already removed every
 		// ancestor for a nested caller, so naming the caller here only
 		// turns "not live" into the honest root_scope drop.
-		RootScopeID: callerScopeID,
-		// -1 selects the documented default (one tick), never 0.
-		CooldownTicks: -1,
-		Stop:          stop,
+		RootScopeID:      callerScopeID,
+		Interval:         sup.TickInterval(),
+		CooldownTicks:    sup.CooldownTicks(),
+		MaxInterventions: sup.MaxInterventions(),
+		Actions:          policyActionMask(sup),
+		Trigger:          policyTrigger(sup),
+		Stop:             stop,
 	}
+}
+
+// policyActionMask maps supervisor.actions onto the arbiter's vocabulary. An
+// ABSENT key resolves to all three actions, while an explicit `actions: []`
+// resolves to a non-nil EMPTY slice once mapped — which the arbiter reads as
+// "apply nothing", the configuration's stated intent rather than a missing key.
+func policyActionMask(sup config.SupervisorConfig) []supervisionapi.Action {
+	names, _ := sup.ActionMask()
+	out := make([]supervisionapi.Action, 0, len(names))
+	for _, name := range names {
+		switch name {
+		case config.SupervisorActionSteer:
+			out = append(out, supervisionapi.ActionSteer)
+		case config.SupervisorActionRedirect:
+			out = append(out, supervisionapi.ActionRedirect)
+		case config.SupervisorActionRevert:
+			out = append(out, supervisionapi.ActionRevert)
+		}
+	}
+	return out
+}
+
+// policyTrigger maps supervisor.trigger onto the batch's trigger. Validation has
+// already refused anything else, so the two-value switch is total.
+func policyTrigger(sup config.SupervisorConfig) supervision.Trigger {
+	if sup.TriggerMode() == config.SupervisorTriggerOnChange {
+		return supervision.TriggerOnChange
+	}
+	return supervision.TriggerAlways
 }
 
 // newSuperviseBatchFactory builds the batch a `supervise` call binds on first
 // use. The batch is created LATE — on the first call, not at startup — so a
 // session that never supervises constructs nothing and leaves the rules
 // engine's direct delivery exactly as it was.
-func newSuperviseBatchFactory(st *loopInfraStage, snap *supervision.Snapshotter) tools.SuperviseBatchFactory {
+func newSuperviseBatchFactory(st *loopInfraStage, cfg *config.Config, snap *supervision.Snapshotter) tools.SuperviseBatchFactory {
 	return func(callerScopeID string) *tools.SuperviseBinding {
 		batch := supervision.NewBatch(st.runs, &tools.DescendantSnapshot{
 			Source: snap,
 			Scopes: st.scopeMgr,
 			Caller: callerScopeID,
-		}, superviseBatchConfig(callerScopeID, superviseStopFunc(st.supervisorSvc)))
+		}, superviseBatchConfig(cfg, callerScopeID, superviseStopFunc(st.supervisorSvc)))
 
 		binding := &tools.SuperviseBinding{Batch: batch}
 		if svc := st.supervisorSvc; svc != nil {

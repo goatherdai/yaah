@@ -98,25 +98,47 @@ func TestSuperviseTool_RegisteredOnlyUnderAgentPolicy(t *testing.T) {
 	}
 }
 
-// TestSuperviseBatchConfig_PinsProductionDefaults pins the BatchConfig the
-// production factory builds. CooldownTicks must be the design's DEFAULT
-// SELECTOR (negative), never zero: zero disables the cooldown outright, so a
-// zero-valued field here would silently drop the `cooldown_ticks: 1` brake that
-// design §4.9 and the tool's doc both promise. supervision tests pin that a
-// negative value normalizes to supervision.DefaultCooldownTicks
-// (internal/agent/supervision/batch_test.go TestBatch_Cooldown, which asserts
-// the batch's own cfg after BatchConfig.normalized runs) — this test pins the
-// CONFIG, that one pins what it becomes, so neither duplicates the other.
+// TestSuperviseBatchConfig_PinsProductionDefaults pins the DEFAULTS half of
+// the config → BatchConfig mapping (yaah-0nbb): an absent supervisor stanza
+// must resolve to the design's defaults — the 5s interval, the one-tick
+// cooldown, the always trigger, all three actions, no cap — because each would
+// be a different behavior if it were zero-valued (a zero interval is a busy
+// loop, a zero cooldown removes the brake design §4.9 promises, and a nil
+// action mask is "all three" only by the batch's own default). The OVERRIDES
+// half — an explicit stanza whose keys each beat their default, including the
+// explicit `cooldown_ticks: 0` that means "no cooldown" — is pinned in
+// supervise_headless_test.go, and what the batch makes of these values
+// (normalization) in internal/agent/supervision's batch tests, so none of the
+// three duplicates another. (Before 0nbb this comment claimed CooldownTicks
+// had to be the negative default SELECTOR; that stopped being the shape when
+// the config accessors took over resolution — PR #417 review round 2,
+// finding 4.)
 func TestSuperviseBatchConfig_PinsProductionDefaults(t *testing.T) {
 	stopCalled := false
 	stop := func(_ context.Context, _, _ string, _ func()) (bool, error) {
 		stopCalled = true
 		return true, nil
 	}
-	cfg := superviseBatchConfig("scope:root", stop)
+	cfg := superviseBatchConfig(nil, "scope:root", stop)
 
-	if cfg.CooldownTicks != -1 {
-		t.Fatalf("CooldownTicks = %d, want -1 (the documented default selector; 0 would disable the cooldown, so the production batch would run with no brake)", cfg.CooldownTicks)
+	// Defaults, resolved from an ABSENT supervisor stanza. Each would be a
+	// different behavior if it were zero: a zero interval is a busy loop, a zero
+	// cooldown disables the brake design 4.9 promises, and a nil action slice is
+	// "all three" only by the batch's own default rather than by the config's.
+	if cfg.Interval != supervision.DefaultBatchInterval {
+		t.Errorf("Interval = %v, want the documented default %v", cfg.Interval, supervision.DefaultBatchInterval)
+	}
+	if cfg.CooldownTicks != supervision.DefaultCooldownTicks {
+		t.Fatalf("CooldownTicks = %d, want the documented default %d (0 would disable the cooldown outright)", cfg.CooldownTicks, supervision.DefaultCooldownTicks)
+	}
+	if cfg.Trigger != supervision.TriggerAlways {
+		t.Errorf("Trigger = %q, want %q", cfg.Trigger, supervision.TriggerAlways)
+	}
+	if len(cfg.Actions) != 3 {
+		t.Errorf("Actions = %v, want the three policy verbs (steer, redirect, revert)", cfg.Actions)
+	}
+	if cfg.MaxInterventions != 0 {
+		t.Errorf("MaxInterventions = %d, want 0 (unlimited)", cfg.MaxInterventions)
 	}
 	if cfg.RootScopeID != "scope:root" {
 		t.Errorf("RootScopeID = %q, want the caller's scope (never a member, never a target)", cfg.RootScopeID)
@@ -134,7 +156,7 @@ func TestSuperviseBatchConfig_PinsProductionDefaults(t *testing.T) {
 // so the binding carries a batch and no arbiter hooks (and the tool simply has
 // nothing to arm or release).
 func TestNewSuperviseBatchFactory_NilServiceHasNoHooks(t *testing.T) {
-	factory := newSuperviseBatchFactory(&loopInfraStage{}, liveSnapshot())
+	factory := newSuperviseBatchFactory(&loopInfraStage{}, nil, liveSnapshot())
 	binding := factory("scope:root")
 	if binding == nil {
 		t.Fatal("factory returned nil")

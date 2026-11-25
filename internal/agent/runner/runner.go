@@ -156,6 +156,13 @@ type DelegateToolOpts struct {
 	// sub-agent's tools inside it. Nil leaves every dispatch on the worktree
 	// (or the session's own substrate).
 	DispatchWorlds *dispatch.DispatchWorlds
+
+	// SuperviseRun is host-side supervision's start seam (yaah-0nbb, design
+	// §4.8): headless mode's composition root supplies it, and the runner calls
+	// it once per dispatch when the supervision bridge is live and the
+	// supervised start gate has passed. Nil — the default, and what policy none
+	// and policy agent get — means nothing host-side watches the dispatch.
+	SuperviseRun SuperviseRunHook
 }
 
 // NewDelegateTool builds the planner's DelegateTool: it resolves the advertised
@@ -198,6 +205,7 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 		guardDenyRec:          opts.ShellGuardDenyRec,
 		resolveProviderByName: opts.ResolveProviderByName,
 		requireReversible:     opts.RequireReversible,
+		superviseRun:          opts.SuperviseRun,
 	}, depth)
 
 	tool := &tools.DelegateTool{

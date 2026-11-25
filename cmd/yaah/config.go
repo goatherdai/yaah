@@ -88,6 +88,42 @@ var configShowCmd = &cobra.Command{
 			}
 		}
 
+		// Supervisor posture (yaah-0nbb, design §4.9): the policy mode and the
+		// keys that mode reads, printed through the SAME accessors the wiring
+		// reads (PolicyMode/TickInterval/TriggerMode/ActionMask/...), so this
+		// section cannot drift from runtime behavior. The tuning keys render
+		// only under a policy that consumes them; under none the rules-engine
+		// switch is the only live behavior.
+		cmd.Println()
+		cmd.Println("[supervisor]")
+		sup := cfg.Agent.Default.Supervisor
+		if sup.Enabled == nil {
+			cmd.Println("  enabled:            (not set — rules engine on by default)")
+		} else {
+			cmd.Printf("  enabled:            %v\n", *sup.Enabled)
+		}
+		cmd.Printf("  require_reversible: %v\n", sup.RequireReversible)
+		cmd.Printf("  policy:             %s\n", sup.PolicyMode())
+		if sup.PolicyMode() != config.SupervisorPolicyNone {
+			cmd.Printf("  interval:           %s\n", sup.TickInterval())
+			cmd.Printf("  trigger:            %s\n", sup.TriggerMode())
+			if actions, explicit := sup.ActionMask(); explicit && len(actions) == 0 {
+				cmd.Println("  actions:            [] (all masked)")
+			} else {
+				cmd.Printf("  actions:            %s\n", strings.Join(actions, ", "))
+			}
+			cmd.Printf("  cooldown_ticks:     %d\n", sup.CooldownTicks())
+			cmd.Printf("  max_interventions:  %d (0 = unlimited)\n", sup.MaxInterventions())
+			if sup.PolicyHeadless() {
+				// prompt is read by headless mode only — in agent mode the
+				// decider is the model itself and the meta-prompt asset is
+				// never consulted (PR #417 review round 2, finding 8), so the
+				// line renders only under the mode that consumes it.
+				cmd.Printf("  prompt:             %s\n", sup.PromptVersion())
+				cmd.Printf("  policy_model:       %s\n", sup.PolicyModelName())
+			}
+		}
+
 		cmd.Println()
 		cmd.Printf("[other]\n")
 		cmd.Printf("  editor:    %s\n", config.ResolveEditor(cfg))

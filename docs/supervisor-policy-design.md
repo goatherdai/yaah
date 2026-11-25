@@ -1,7 +1,10 @@
 # Supervisor policy design — yaah-1050.1.4
 
-Status: **revised design** — direction decided 2026-11-24, implementation not
-started. Supersedes the dedicated-supervisor-loop design of aeee7543.
+Status: **landed** — direction decided 2026-11-24; steps 1–7 of §6 merged
+2026-11-25 (yaah-k0x1 types, yaah-wego renderer + prompt asset, yaah-3l34
+Batch, yaah-ugtl revert by construction, yaah-fy28 supervise tool,
+yaah-vaxv envelope records, yaah-0nbb config + headless decider).
+Supersedes the dedicated-supervisor-loop design of aeee7543.
 Amended 2026-11-24: revert by construction and in-flight calls are folded
 in; intent in the trace and a restrict action are recorded as follow-ups.
 Amended 2026-11-25: bead references added. Steps 1–7 of §6 are seven
