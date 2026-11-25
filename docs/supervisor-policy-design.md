@@ -119,6 +119,9 @@ Gaps this task closes:
 5. **Rules and decisions have no shared arbiter**, so they can steer the same
    worker twice in one window.
 6. **No prompt asset.** The paper's v1 prompt is the parity baseline.
+   *Landed:* the asset is a byte-exact copy at
+   `internal/prompts/supervision/meta_prompt_v1.md` (embedded by
+   `prompt.go`, pinned byte-for-byte by a drift test, yaah-wego).
 7. **Revert availability is not enforced.** A shared-lane dispatch or a
    failed pre-run capture degrades to a warning, and revert later silently
    becomes a restart.
@@ -191,10 +194,22 @@ true by construction:
 - `internal/supervision/render.go` turns a `Snapshot` into text under a
   token budget (default 3K, configurable). The tool and the headless decider
   use the same renderer. Scope labels are short and stable (`w1`, `w2`, …) so
-  decisions can name them.
+  decisions can name them: the label is a pure function of the scope set
+  (ScopeID ascending), never of the snapshot's ordering, so it does not move
+  when a neighbour finishes. Over budget, the renderer degrades cheapest
+  information loss first — trail trimmed from the oldest end, then
+  finished agents' headers, then whole agents omitted oldest-finished-first
+  with an honest footer — and each cut is stated in the text. Fields that
+  are capped unconditionally (the file list, the in-flight list, a note)
+  say how much they cut, and the header always reports the true agent
+  count split live/finished, so a footer-omitted agent is never mistaken
+  for a quiet one.
 - `internal/prompts/supervision/meta_prompt_v1.md` holds the paper's prompt
-  verbatim, with scope ids substituted. Headless mode uses it as the system
-  prompt.
+  byte-exact (a drift test pins its length and SHA-256). The asset's protocol
+  names each agent by a short id, and those ids — `w1`, `w2`, … — are
+  assigned by, and substituted into, the RENDERED SNAPSHOT text; the asset
+  itself is never edited, trimmed, or re-flowed. Headless mode uses the asset
+  as its system prompt and the rendered snapshot as the user message.
 - Agent mode does not replace the agent's system prompt. The `supervise`
   tool's embedded doc carries the same heuristics in condensed form: steer is
   cheap, redirect and revert are expensive, what "stuck" means, when revert is
