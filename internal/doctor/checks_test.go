@@ -378,3 +378,69 @@ func newDoctorGitRepo(t *testing.T) string {
 	}
 	return dir
 }
+
+// TestCheckSupervisor pins the supervisor posture surface (yaah-0nbb): the
+// default session reports policy none with the rules engine's own state, a
+// headless policy reports the decider's model and cadence, and the one
+// combination startup warns about — require_reversible without an explicit
+// supervisor.enabled — is a WARN here too, because doctor and the session
+// must not disagree about what is inert.
+func TestCheckSupervisor(t *testing.T) {
+	t.Run("config error", func(t *testing.T) {
+		if got := CheckSupervisor(nil, errors.New("boom")); got.Status != "WARN" {
+			t.Errorf("status = %q, want WARN", got.Status)
+		}
+	})
+
+	t.Run("default posture", func(t *testing.T) {
+		got := CheckSupervisor(&config.Config{}, nil)
+		if got.Status != "OK" {
+			t.Errorf("status = %q, want OK", got.Status)
+		}
+		if !strings.Contains(got.Detail, "policy: none") {
+			t.Errorf("detail %q must name the default policy", got.Detail)
+		}
+		if !strings.Contains(got.Detail, "rules engine: on") {
+			t.Errorf("detail %q must report the engine's default-on posture", got.Detail)
+		}
+	})
+
+	t.Run("headless reports its decider", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Agent.Default.Supervisor.Policy = "headless"
+		cfg.Agent.Default.Supervisor.PolicyModel = "deepseek/test-model"
+		cfg.Agent.Default.Supervisor.PolicyInterval = "250ms"
+		cfg.Agent.Default.Supervisor.PolicyTrigger = "on-change"
+		got := CheckSupervisor(cfg, nil)
+		if got.Status != "OK" {
+			t.Errorf("status = %q, want OK", got.Status)
+		}
+		for _, want := range []string{"policy: headless", "model → deepseek/test-model", "interval → 250ms", "trigger → on-change"} {
+			if !strings.Contains(got.Detail, want) {
+				t.Errorf("detail %q missing %q", got.Detail, want)
+			}
+		}
+	})
+
+	t.Run("explicit empty actions list reads as masked", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Agent.Default.Supervisor.Policy = "agent"
+		cfg.Agent.Default.Supervisor.PolicyActions = []string{}
+		got := CheckSupervisor(cfg, nil)
+		if !strings.Contains(got.Detail, "all masked") {
+			t.Errorf("detail %q must say an explicit empty list masks every action", got.Detail)
+		}
+	})
+
+	t.Run("require_reversible alone warns", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Agent.Default.Supervisor.RequireReversible = true
+		got := CheckSupervisor(cfg, nil)
+		if got.Status != "WARN" {
+			t.Fatalf("status = %q, want WARN: require_reversible without an explicit enabled is inert and doctor must say so", got.Status)
+		}
+		if !strings.Contains(got.Detail, "no effect") {
+			t.Errorf("detail %q must name the consequence", got.Detail)
+		}
+	})
+}

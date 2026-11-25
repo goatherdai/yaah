@@ -191,7 +191,23 @@ type taskRunnerOpts struct {
 	// that built it resolved (review M1) — the child of a supervised
 	// dispatch is supervised, the child of an opted-out one is not.
 	supervised bool
+
+	// superviseRun is host-side supervision's start seam (yaah-0nbb, design
+	// §4.8): called once per dispatch, after the bridge registered and the
+	// supervised start gate passed, with the context the whole run sequence
+	// shares. Its returned function is deferred, i.e. called when the dispatch
+	// settles. Nil means the session runs no host-side supervision — policy
+	// none and policy agent both leave it nil, agent mode driving its ticks from
+	// the `supervise` tool instead.
+	superviseRun SuperviseRunHook
 }
+
+// SuperviseRunHook starts host-side supervision for one dispatch and returns the
+// function that stops it (yaah-0nbb). scopeID is the dispatch's supervision
+// scope — the scope the bridge registered — so a caller that wants a per-scope
+// bound has it without a second seam; the batch's membership stays the session's
+// whole dispatched set either way.
+type SuperviseRunHook func(ctx context.Context, scopeID string) (stop func())
 
 // dispatchClock returns the clock that stamps dispatch IDs: the test
 // override when set, time.Now otherwise.
@@ -748,6 +764,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		var bridgeScopeID string
 		var runGen uint64
 		var registerBridge func() context.Context
+		var superviseCtx context.Context
 		bridgeLive := false
 		if subScope != nil && opts.runs != nil {
 			// The sequence's root context: every generation's cancellable
@@ -756,6 +773,11 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			// context — WithCancel, never WithoutCancel (finding #8) —
 			// and still answers to halt, deadline, and interrupts.
 			baseCtx := ctx
+			// The host-supervision hook's context: the dispatch's own, captured
+			// before any generation replaces it, so a halt or a redirect handoff
+			// (both of which cancel the CURRENT generation's context) never stops
+			// host-side supervision for the workers still running.
+			superviseCtx = baseCtx
 			// Quiesce is a property of the SEQUENCE (finding #2): one
 			// channel for every generation, created here and closed ONCE
 			// at the end of the sequence while the last registration is
@@ -870,6 +892,23 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 				bridgeLive = false
 			}
 			return "", gaterr
+		}
+
+		// Host-side supervision hook (yaah-0nbb, design §4.8): headless mode's
+		// start seam. It is called ONCE per dispatch — after the bridge has
+		// registered (so the scope is a member of the batch) and after the
+		// supervised start gate has passed (so a refused dispatch never starts a
+		// loop that would watch a run which does not exist).
+		//
+		// The returned stop is DEFERRED rather than called at the
+		// end-of-sequence cut below: the defer runs at this body's return, i.e.
+		// after that teardown, so the loop's last tick sees the same membership
+		// the dispatch envelope does — and a panic anywhere in the gauntlet still
+		// joins the loop instead of leaking it.
+		if bridgeLive && opts.superviseRun != nil {
+			if stop := opts.superviseRun(superviseCtx, bridgeScopeID); stop != nil {
+				defer stop()
+			}
 		}
 
 		// Per-turn checkpointing is enabled per role (subagent.roles.<name>.

@@ -113,10 +113,26 @@ func TestSuperviseBatchConfig_PinsProductionDefaults(t *testing.T) {
 		stopCalled = true
 		return true, nil
 	}
-	cfg := superviseBatchConfig("scope:root", stop)
+	cfg := superviseBatchConfig(nil, "scope:root", stop)
 
-	if cfg.CooldownTicks != -1 {
-		t.Fatalf("CooldownTicks = %d, want -1 (the documented default selector; 0 would disable the cooldown, so the production batch would run with no brake)", cfg.CooldownTicks)
+	// Defaults, resolved from an ABSENT supervisor stanza. Each would be a
+	// different behavior if it were zero: a zero interval is a busy loop, a zero
+	// cooldown disables the brake design 4.9 promises, and a nil action slice is
+	// "all three" only by the batch's own default rather than by the config's.
+	if cfg.Interval != supervision.DefaultBatchInterval {
+		t.Errorf("Interval = %v, want the documented default %v", cfg.Interval, supervision.DefaultBatchInterval)
+	}
+	if cfg.CooldownTicks != supervision.DefaultCooldownTicks {
+		t.Fatalf("CooldownTicks = %d, want the documented default %d (0 would disable the cooldown outright)", cfg.CooldownTicks, supervision.DefaultCooldownTicks)
+	}
+	if cfg.Trigger != supervision.TriggerAlways {
+		t.Errorf("Trigger = %q, want %q", cfg.Trigger, supervision.TriggerAlways)
+	}
+	if len(cfg.Actions) != 3 {
+		t.Errorf("Actions = %v, want the three policy verbs (steer, redirect, revert)", cfg.Actions)
+	}
+	if cfg.MaxInterventions != 0 {
+		t.Errorf("MaxInterventions = %d, want 0 (unlimited)", cfg.MaxInterventions)
 	}
 	if cfg.RootScopeID != "scope:root" {
 		t.Errorf("RootScopeID = %q, want the caller's scope (never a member, never a target)", cfg.RootScopeID)
@@ -134,7 +150,7 @@ func TestSuperviseBatchConfig_PinsProductionDefaults(t *testing.T) {
 // so the binding carries a batch and no arbiter hooks (and the tool simply has
 // nothing to arm or release).
 func TestNewSuperviseBatchFactory_NilServiceHasNoHooks(t *testing.T) {
-	factory := newSuperviseBatchFactory(&loopInfraStage{}, liveSnapshot())
+	factory := newSuperviseBatchFactory(&loopInfraStage{}, nil, liveSnapshot())
 	binding := factory("scope:root")
 	if binding == nil {
 		t.Fatal("factory returned nil")

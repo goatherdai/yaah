@@ -39,9 +39,9 @@ func TestSupervisorPolicyValidation(t *testing.T) {
 		{name: "agent passes", policy: "agent"},
 		{name: "absent passes"},
 		{
-			name:    "headless names its bead",
+			name:    "headless without a policy model",
 			policy:  "headless",
-			wantErr: "yaah-0nbb",
+			wantErr: "policy_model",
 		},
 		{
 			name:    "an unknown mode is refused",

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/goatherdai/yaah/internal/tracestore"
 )
@@ -62,15 +63,107 @@ type SupervisorConfig struct {
 	// behavior — no policy loop, no `supervise` tool, rules engine only.
 	// "agent" registers the `supervise` tool so the DISPATCHING AGENT's own
 	// turn cycle is the loop (design §4.7). "headless" is the host-driven
-	// measurement loop and is NOT implemented yet (yaah-0nbb); naming it is a
-	// load-time validation error rather than a silently unsupervised run.
+	// measurement loop (design §4.8, yaah-0nbb): a stateless one-shot decider
+	// per tick, no conversation and no tools, requiring PolicyModel.
 	//
 	// The field is a string rather than a bool because the vocabulary is the
 	// design's: a later mode must be addable without re-reading every
 	// configuration, and an unknown value must be a visible error instead of
-	// falling back to "off". Use PolicyMode/PolicyAgent, not the raw field.
+	// falling back to "off". Use PolicyMode/PolicyAgent/PolicyHeadless, not the
+	// raw field.
 	Policy string `yaml:"policy"`
+
+	// PolicyInterval is the policy loop's tick cadence (design §4.9
+	// `interval`, default 5s), as a Go duration string ("5s", "250ms"). It
+	// paces the host loop in headless mode and the wait between ticks in agent
+	// mode — the batch's own Interval — so one key sets the tempo both modes
+	// are measured at. Read it through TickInterval, never raw: an
+	// unparseable value is a load-time error, and the accessor is what supplies
+	// the documented default.
+	PolicyInterval string `yaml:"interval"`
+
+	// PolicyTrigger selects when the loop spends a model call (design §4.4,
+	// §4.9): TriggerAlways (the default — every tick with a live worker, the
+	// paper's protocol) or TriggerOnChange (only when the ingest that ended the
+	// previous tick saw a change). Read it through TriggerMode.
+	PolicyTrigger string `yaml:"trigger"`
+
+	// PolicyActions is the policy's action mask (design §4.9 `actions`): which
+	// verbs a policy decision may use. ABSENT means all three (steer, redirect,
+	// revert). An EXPLICIT empty list masks every action, which is how a
+	// configuration turns the policy's interventions off without turning the
+	// policy off — the loop still ticks and still records (and the rules engine
+	// still routes through its arbiter), it just applies nothing. That
+	// distinction is why the field is a slice rather than three bools: a nil
+	// slice and an empty one must not mean the same thing (ActionMask reports
+	// which one the configuration holds).
+	PolicyActions []string `yaml:"actions"`
+
+	// PolicyCooldownTicks is how many ticks after an intervention a scope
+	// ignores further ones (design §4.9 `cooldown_ticks`, default 1). A pointer
+	// because an EXPLICIT 0 means "no cooldown" while an absent key means the
+	// documented default of one tick; the zero value of an int cannot say which
+	// the operator meant. Read it through CooldownTicks.
+	PolicyCooldownTicks *int `yaml:"cooldown_ticks"`
+
+	// PolicyMaxInterventions caps the policy's applied interventions over a
+	// batch's whole life (design §4.9 `max_interventions`); 0 — the default —
+	// means unlimited. A rules stop is exempt in both directions (it never
+	// blocks on the cap and never spends it): the cap governs the POLICY's
+	// actions, and a stop is the rules engine's safety valve (design §4.6).
+	PolicyMaxInterventions int `yaml:"max_interventions"`
+
+	// PolicyPrompt names the meta-prompt version (design §4.9 `prompt`,
+	// default v1). Only the locked v1 asset exists
+	// (internal/prompts/supervision/meta_prompt_v1.md, byte-pinned by its own
+	// drift test); an unknown value is a load-time error rather than a silent
+	// fallback, because a measurement is only comparable to the paper's if the
+	// prompt is the one it locked. Read it through PromptVersion.
+	PolicyPrompt string `yaml:"prompt"`
+
+	// PolicyModel is the model that runs the headless decider (design §4.9
+	// `policy_model`): "provider/model" when the prefix names a configured
+	// provider, else a bare model on the session's default provider — the same
+	// spelling compaction_model uses. REQUIRED when Policy is headless, and a
+	// missing one is a load-time validation error: the decider is one model
+	// call per tick, so without a model the mode has nothing to decide with.
+	PolicyModel string `yaml:"policy_model"`
 }
+
+// Supervisor policy defaults (docs/supervisor-policy-design.md §4.9). They
+// mirror the batch's own defaults — supervision.DefaultBatchInterval and
+// supervision.DefaultCooldownTicks, which the batch applies to a zero/negative
+// config field — and the command layer pins the two against each other, so a
+// drift between the documented default and the one a batch actually uses fails
+// a test instead of a measurement.
+const (
+	// DefaultSupervisorInterval is `interval`'s default: the design's 5s tick.
+	DefaultSupervisorInterval = 5 * time.Second
+	// DefaultSupervisorCooldownTicks is `cooldown_ticks`'s default: a scope
+	// acted on in tick N ignores a new action in tick N+1.
+	DefaultSupervisorCooldownTicks = 1
+)
+
+// Supervisor policy vocabulary (docs/supervisor-policy-design.md §4.4, §4.9).
+const (
+	// SupervisorTriggerAlways asks the decider every tick with a live worker.
+	SupervisorTriggerAlways = "always"
+	// SupervisorTriggerOnChange asks it only when the previous tick's ingest
+	// saw a change.
+	SupervisorTriggerOnChange = "on-change"
+
+	// SupervisorActionSteer, SupervisorActionRedirect and
+	// SupervisorActionRevert are the policy's three verbs (design §4.5). The
+	// rules engine's stop is NOT among them: a decider may not end a worker's
+	// run (design D6).
+	SupervisorActionSteer    = "steer"
+	SupervisorActionRedirect = "redirect"
+	SupervisorActionRevert   = "revert"
+
+	// SupervisorPromptV1 is the locked v1 meta-prompt (the design's `prompt:
+	// v1`, aliased to the asset's own name meta_prompt_v1 by PromptVersion).
+	SupervisorPromptV1 = "v1"
+)
 
 // Supervisor policy modes (docs/supervisor-policy-design.md §4.9).
 const (
@@ -82,8 +175,10 @@ const (
 	// decision list per tick.
 	SupervisorPolicyAgent = "agent"
 	// SupervisorPolicyHeadless is the host-driven one-shot decider
-	// (design §4.8), the measurement mode. Not implemented yet: yaah-0nbb
-	// lands it, and until then the mode is a validation error.
+	// (design §4.8), the measurement mode (yaah-0nbb): the host runs a tick
+	// loop per supervised batch, each tick a stateless JSON-mode completion
+	// over the rendered snapshot. It requires PolicyModel and registers no
+	// `supervise` tool — the decider can call nothing (design §4.12).
 	SupervisorPolicyHeadless = "headless"
 )
 
@@ -176,6 +271,98 @@ func (s SupervisorConfig) PolicyMode() string {
 // session is byte-identical to today's.
 func (s SupervisorConfig) PolicyAgent() bool {
 	return s.PolicyMode() == SupervisorPolicyAgent
+}
+
+// PolicyHeadless reports whether the HOST runs the meta-agent loop
+// (design §4.8): one stateless decider call per tick, no conversation, no
+// tools, and no `supervise` tool registered. It is mutually exclusive with
+// PolicyAgent by construction — the mode is one key, not two switches.
+func (s SupervisorConfig) PolicyHeadless() bool {
+	return s.PolicyMode() == SupervisorPolicyHeadless
+}
+
+// TickInterval resolves the policy loop's cadence: the configured duration, or
+// DefaultSupervisorInterval when the key is absent. An unparseable or
+// non-positive value cannot reach here — validation refuses it at load — but a
+// value that did would fall back to the default rather than to a zero interval,
+// because a zero interval is a busy loop, not a slower one.
+func (s SupervisorConfig) TickInterval() time.Duration {
+	if d, err := time.ParseDuration(strings.TrimSpace(s.PolicyInterval)); err == nil && d > 0 {
+		return d
+	}
+	return DefaultSupervisorInterval
+}
+
+// TriggerMode normalizes the trigger: absent is TriggerAlways, and case and
+// surrounding whitespace are ignored so " On-Change " is the on-change trigger
+// rather than an unknown value. An unknown value is refused at load.
+func (s SupervisorConfig) TriggerMode() string {
+	switch t := strings.ToLower(strings.TrimSpace(s.PolicyTrigger)); t {
+	case "":
+		return SupervisorTriggerAlways
+	default:
+		return t
+	}
+}
+
+// ActionMask resolves the policy's action mask and reports whether the
+// configuration named it EXPLICITLY.
+//
+// nil means the key is absent, which is all three actions; a non-nil EMPTY
+// slice means the operator wrote `actions: []`, which masks every action (see
+// the field's doc). The second return value is what lets a caller state the
+// difference to an operator instead of reporting both as "no actions
+// configured".
+func (s SupervisorConfig) ActionMask() ([]string, bool) {
+	if s.PolicyActions == nil {
+		return []string{SupervisorActionSteer, SupervisorActionRedirect, SupervisorActionRevert}, false
+	}
+	out := make([]string, 0, len(s.PolicyActions))
+	seen := make(map[string]bool, len(s.PolicyActions))
+	for _, a := range s.PolicyActions {
+		name := strings.ToLower(strings.TrimSpace(a))
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out, true
+}
+
+// CooldownTicks resolves the cooldown: the configured value, or the documented
+// default of one tick when the key is absent. An explicit 0 is preserved — it
+// means "no cooldown", which is a configuration, not a missing one.
+func (s SupervisorConfig) CooldownTicks() int {
+	if s.PolicyCooldownTicks == nil {
+		return DefaultSupervisorCooldownTicks
+	}
+	return *s.PolicyCooldownTicks
+}
+
+// MaxInterventions resolves the intervention cap; 0 means unlimited, which is
+// also the default, so the raw field is already total.
+func (s SupervisorConfig) MaxInterventions() int {
+	return s.PolicyMaxInterventions
+}
+
+// PromptVersion normalizes the meta-prompt version: absent is v1, and the
+// asset's own name (meta_prompt_v1, the token internal/prompts/supervision
+// documents) is accepted as an alias so a configuration written either way
+// names the one shipped prompt. Anything else is refused at load.
+func (s SupervisorConfig) PromptVersion() string {
+	switch v := strings.ToLower(strings.TrimSpace(s.PolicyPrompt)); v {
+	case "", SupervisorPromptV1, "meta_prompt_v1":
+		return SupervisorPromptV1
+	default:
+		return v
+	}
+}
+
+// PolicyModelName returns the configured decider model, trimmed. Empty means
+// unconfigured, which is only legal outside headless mode (validation).
+func (s SupervisorConfig) PolicyModelName() string {
+	return strings.TrimSpace(s.PolicyModel)
 }
 
 // DispatchSupervised reports whether this session's DISPATCHES run supervised
@@ -298,23 +485,81 @@ func (d Defaults) HaltRootEnabled() bool {
 	return d.SupervisorHaltRoot
 }
 
-// validateSupervisorPolicy checks the policy mode (design §4.9). "none" and
-// "agent" are the supported values; "headless" is named and refused so a
-// configuration written against the design's full stanza fails loudly instead
-// of running with no decider.
+// validateSupervisorPolicy checks the policy mode AND its tuning keys
+// (design §4.9). The three modes are supported; "headless" additionally
+// requires a decider model, because a host loop with no model has nothing to
+// decide with.
+//
+// Every policy key is checked here regardless of the mode, unlike the rule
+// thresholds below (which are gated on the rule being enabled): a typo in
+// `trigger`, `actions`, `interval`, `prompt` or `policy_model` is never inert
+// — it silently changes what a policy loop does, or makes it spend model
+// calls doing the wrong thing — and all of these keys are new, so no existing
+// configuration can be broken by refusing one.
 func validateSupervisorPolicy(d Defaults) []string {
-	switch mode := d.Supervisor.PolicyMode(); mode {
+	sup := d.Supervisor
+	var errs []string
+	switch mode := sup.PolicyMode(); mode {
 	case SupervisorPolicyNone, SupervisorPolicyAgent:
-		return nil
 	case SupervisorPolicyHeadless:
-		return []string{fmt.Sprintf(
-			"agents.default.supervisor.policy %q is not supported yet — the headless decider lands in yaah-0nbb; use %q (the dispatching agent runs the loop) or %q (the default, no policy loop)",
-			SupervisorPolicyHeadless, SupervisorPolicyAgent, SupervisorPolicyNone)}
+		if sup.PolicyModelName() == "" {
+			errs = append(errs, fmt.Sprintf(
+				"agents.default.supervisor.policy_model is required when agents.default.supervisor.policy is %q: the headless decider is one model call per tick, so without a model it has nothing to decide with — set policy_model (\"provider/model\", or a bare model on the session's default provider), or use policy: %q or %q",
+				SupervisorPolicyHeadless, SupervisorPolicyAgent, SupervisorPolicyNone))
+		}
 	default:
-		return []string{fmt.Sprintf(
-			"agents.default.supervisor.policy %q is not a policy mode: use %q (the default, no policy loop), %q (the dispatching agent runs the loop), or %q (not yet supported)",
-			d.Supervisor.Policy, SupervisorPolicyNone, SupervisorPolicyAgent, SupervisorPolicyHeadless)}
+		errs = append(errs, fmt.Sprintf(
+			"agents.default.supervisor.policy %q is not a policy mode: use %q (the default, no policy loop), %q (the dispatching agent runs the loop), or %q (the host runs a one-shot decider per tick)",
+			sup.Policy, SupervisorPolicyNone, SupervisorPolicyAgent, SupervisorPolicyHeadless))
 	}
+	return append(errs, validateSupervisorPolicyKeys(sup)...)
+}
+
+// validateSupervisorPolicyKeys checks the tuning keys themselves, in the order
+// the design lists them. Each check names the key and both ways out.
+func validateSupervisorPolicyKeys(sup SupervisorConfig) []string {
+	var errs []string
+	if raw := strings.TrimSpace(sup.PolicyInterval); raw != "" {
+		if d, err := time.ParseDuration(raw); err != nil || d <= 0 {
+			errs = append(errs, fmt.Sprintf(
+				"agents.default.supervisor.interval %q must be a positive Go duration (\"5s\", \"250ms\") or absent for the %s default", raw, DefaultSupervisorInterval))
+		}
+	}
+	if raw := strings.TrimSpace(sup.PolicyTrigger); raw != "" {
+		switch sup.TriggerMode() {
+		case SupervisorTriggerAlways, SupervisorTriggerOnChange:
+		default:
+			errs = append(errs, fmt.Sprintf(
+				"agents.default.supervisor.trigger %q must be %q (the default: a decider call every tick with a live worker) or %q (only when the previous tick saw a change)",
+				raw, SupervisorTriggerAlways, SupervisorTriggerOnChange))
+		}
+	}
+	for _, a := range sup.PolicyActions {
+		switch strings.ToLower(strings.TrimSpace(a)) {
+		case SupervisorActionSteer, SupervisorActionRedirect, SupervisorActionRevert:
+		default:
+			errs = append(errs, fmt.Sprintf(
+				"agents.default.supervisor.actions entry %q must be one of %q, %q or %q (omit the key for all three; an explicit empty list allows none)",
+				a, SupervisorActionSteer, SupervisorActionRedirect, SupervisorActionRevert))
+		}
+	}
+	if sup.PolicyCooldownTicks != nil && *sup.PolicyCooldownTicks < 0 {
+		errs = append(errs, fmt.Sprintf(
+			"agents.default.supervisor.cooldown_ticks %d must be 0 (no cooldown) or positive (omit the key for the %d-tick default)",
+			*sup.PolicyCooldownTicks, DefaultSupervisorCooldownTicks))
+	}
+	if sup.PolicyMaxInterventions < 0 {
+		errs = append(errs, fmt.Sprintf(
+			"agents.default.supervisor.max_interventions %d must be 0 (unlimited) or positive", sup.PolicyMaxInterventions))
+	}
+	if raw := strings.TrimSpace(sup.PolicyPrompt); raw != "" {
+		if v := sup.PromptVersion(); v != SupervisorPromptV1 {
+			errs = append(errs, fmt.Sprintf(
+				"agents.default.supervisor.prompt %q is not a meta-prompt version: the only locked asset is %q (internal/prompts/supervision/meta_prompt_v1.md, aliased %q), whose bytes a measurement is comparable to the paper's only if they are the ones it sends",
+				raw, SupervisorPromptV1, "meta_prompt_v1"))
+		}
+	}
+	return errs
 }
 
 // validateSupervisor checks the supervisor stanza's numeric settings.

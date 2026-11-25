@@ -538,6 +538,21 @@ func (b *Batch) queueRuleLocked(q queuedRule) bool {
 	return true
 }
 
+// Labels returns the label map of the last SnapshotText render — the labels the
+// rendered text called scopes by, paired with the scope IDs they name.
+//
+// It exists for the headless decider (yaah-0nbb): a decision names a LABEL, and
+// the decider has to answer "did the text I sent actually assign this scope
+// name?" before handing the list to Next. Deriving labels a second time (by
+// re-rendering the snapshot) would be a second assignment that could disagree
+// with the one Next resolves against, which is exactly the failure that would
+// steer the wrong worker.
+func (b *Batch) Labels() []renderer.Labeled {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]renderer.Labeled(nil), b.labels...)
+}
+
 // RulesDropped reports how many rule firings were discarded because the queue
 // was full (maxQueuedRules). A non-zero count means the batch is not ticking
 // often enough for the rules engine, which a status surface can say out loud.
@@ -773,6 +788,19 @@ func (b *Batch) generationLocked(scopeID string) (uint64, bool) {
 // A scope APPEARING is not a change by this definition: a brand new worker has
 // no work to react to yet, and its cursor only advances once it does
 // something. That keeps a quiet dispatch quiet.
+// changedSince reports whether the ingest that produced members saw a change
+// since prev (design §4.4, TriggerOnChange). Three things count:
+//
+//   - a live worker prev did not have. This is the BOOTSTRAP case as well as a
+//     new dispatch, and it must count: a loop that never asks the model about a
+//     worker it has just discovered is not supervising it. (The bootstrap ingest
+//     compares against the zero Snapshot, so every first tick with a live worker
+//     is a change — which is what makes `trigger: on-change` decide at least
+//     once per discovered scope.)
+//   - a scope whose cursor advanced (Through) or whose consecutive-error streak
+//     grew;
+//   - two scopes naming the same modified file, which the meta-agent reads as a
+//     collision.
 func changedSince(prev supervisionapi.Snapshot, members map[string]supervisionapi.AgentSnapshot) bool {
 	prevBy := make(map[string]supervisionapi.AgentSnapshot, len(prev.Agents))
 	for _, a := range prev.Agents {
@@ -780,10 +808,12 @@ func changedSince(prev supervisionapi.Snapshot, members map[string]supervisionap
 	}
 	owners := make(map[string]string, 8)
 	for scopeID, a := range members {
-		if p, ok := prevBy[scopeID]; ok {
-			if a.Through > p.Through || a.ConsecutiveErrors > p.ConsecutiveErrors {
-				return true
-			}
+		p, known := prevBy[scopeID]
+		if !known {
+			return true
+		}
+		if a.Through > p.Through || a.ConsecutiveErrors > p.ConsecutiveErrors {
+			return true
 		}
 		for _, f := range a.ModifiedFiles {
 			if owner, ok := owners[f]; ok && owner != scopeID {

@@ -293,6 +293,12 @@ type agentSession struct {
 	supervisor rulesService
 	reaper     *supervision.Reaper // stale dispatch-scope sweeper (yaah-95ri.4)
 
+	// headless is the session's host-side supervision loop (yaah-0nbb, design
+	// §4.8): non-nil only under supervisor.policy: headless. While it runs it
+	// holds the SAME rules arbiter the `supervise` tool would, which is why
+	// teardown stops and joins it before the rules service closes.
+	headless *supervision.HeadlessHost
+
 	// roleWatcher polls the role search paths and reloads the default
 	// registry on raw file edits (W6). Closed with the reaper in teardown,
 	// before the background-jobs drain. Nil only on the (warned)
@@ -534,6 +540,16 @@ func (s *agentSession) shutdown() {
 		default:
 			slog.Warn("session teardown: the supervise registry entry has an unexpected type; its Close was skipped", "type", fmt.Sprintf("%T", st))
 		}
+	}
+	// The headless supervision loop (yaah-0nbb) is armed as the SAME arbiter:
+	// while it runs, the rules engine's firings queue into its batch instead of
+	// being delivered. Stop and JOIN it here — before the service closes below
+	// and at the same point as the supervise tool's release, for the same
+	// reason: a loop still armed into Close would swallow the drain's last
+	// firings. Stop also releases the arbiter, so the service's own Close sees
+	// direct delivery.
+	if s.headless != nil {
+		s.headless.Close()
 	}
 	// The advisory rules service drains INTO the registry below: stop it
 	// first and join its drain goroutine, so no delivery is mid-flight

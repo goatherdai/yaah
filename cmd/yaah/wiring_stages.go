@@ -812,6 +812,13 @@ type loopInfraStage struct {
 	worldStatus worldinfo.Status
 	taskTool    *tools.DelegateTool
 
+	// headless is the session's host-side supervision loop (yaah-0nbb, design
+	// §4.8), built only under supervisor.policy: headless and only when the
+	// session can serve it. Nil under every other policy — and nil is also what
+	// the runner's supervise-run hook sees, which is what keeps agent mode's
+	// tool path byte-identical.
+	headless *supervision.HeadlessHost
+
 	// roleWatcher keeps the default role registry in sync with raw role
 	// file edits the role tool did not make (W6): started with the
 	// session, stopped in the session close and in the startup guard.
@@ -1377,6 +1384,18 @@ func buildDelegateTool(st *loopInfraStage, cfg *config.Config, lc *sessionConfig
 		RetainedWorktreeRoot: cfg.Agent.Default.RetainedWorktreeRoot,
 		RetainedBootstrap:    cfg.Agent.Default.RetainedWorktreeBootstrap,
 		DispatchWorlds:       posture.worlds,
+
+		// Host-side supervision (yaah-0nbb, design §4.8): a LATE-BINDING hook,
+		// not the host itself — the host needs the snapshot source, which is
+		// built after this tool (registerHeadlessSupervisor). A nil st.headless
+		// is the answer for every policy but headless, so the hook costs one nil
+		// check per dispatch and changes nothing else.
+		SuperviseRun: func(ctx context.Context, scopeID string) func() {
+			if st.headless == nil {
+				return nil
+			}
+			return st.headless.RunHook(ctx, scopeID)
+		},
 	})
 
 	// RoleResolver provides a live role-name lookup so the delegate
@@ -1612,6 +1631,12 @@ func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 		// registered and belt-admitted only under supervisor.policy: agent,
 		// so an unconfigured session's tool surface is unchanged.
 		registerSuperviseTool(st, cfg, tr, snapSrc)
+
+		// headless (yaah-0nbb, design §4.8): the host-driven measurement loop.
+		// Built here because this is where the snapshot source exists; it
+		// registers NO tool (the two modes are exclusive by the policy key), and
+		// the delegate hook installed above picks it up through st.headless.
+		registerHeadlessSupervisor(st, cfg, snapSrc)
 
 		// Proposal tool (Plan 7 Phase 2): settles the sealed proposals the
 		// retained lane produces. Registered only when that lane is live — a

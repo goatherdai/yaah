@@ -51,6 +51,7 @@ func RunChecks(opts Options) []Check {
 		CheckProvider(cfg, cfgErr),
 		CheckModel(cfg, cfgErr),
 		CheckSubAgents(cfg, cfgErr),
+		CheckSupervisor(cfg, cfgErr),
 		CheckContainment(cfg, cfgErr),
 		CheckDispatchWorld(cfg, cfgErr),
 		CheckWorkspace(cfg, cfgErr),
@@ -181,6 +182,61 @@ func CheckModel(cfg *config.Config, cfgErr error) Check {
 }
 
 // CheckSubAgents reports the sub-agent provider/model configuration.
+// CheckSupervisor reports the supervisor posture (yaah-0nbb, design §4.9):
+// the policy mode and what that mode is configured with, plus the two
+// dispatch-path switches. Mode validity is guaranteed at load
+// (validateSupervisorPolicy refuses unknown modes and a headless policy
+// without policy_model), so this check surfaces the effective posture and
+// flags the one combination startup also warns about: require_reversible
+// without an explicit supervisor.enabled has no supervised dispatch to
+// narrow, so it is inert.
+func CheckSupervisor(cfg *config.Config, cfgErr error) Check {
+	if cfgErr != nil {
+		return Check{Label: "Supervisor", Status: "WARN", Detail: "config not loaded"}
+	}
+	sup := cfg.Agent.Default.Supervisor
+	mode := sup.PolicyMode()
+	parts := []string{"policy: " + mode}
+	switch mode {
+	case config.SupervisorPolicyHeadless:
+		parts = append(parts,
+			"model → "+sup.PolicyModelName(),
+			"interval → "+sup.TickInterval().String(),
+			"trigger → "+sup.TriggerMode())
+		actions, explicit := sup.ActionMask()
+		if explicit && len(actions) == 0 {
+			parts = append(parts, "actions → all masked (explicit empty list)")
+		} else {
+			parts = append(parts, "actions → "+strings.Join(actions, ", "))
+		}
+		parts = append(parts, fmt.Sprintf("cooldown_ticks → %d", sup.CooldownTicks()))
+		if max := sup.MaxInterventions(); max > 0 {
+			parts = append(parts, fmt.Sprintf("max_interventions → %d", max))
+		}
+	case config.SupervisorPolicyAgent:
+		parts = append(parts, "the dispatching agent runs the loop (supervise tool)")
+		// The masked state matters in agent mode too — the tool's batch reads
+		// the same actions key — and it is the one tuning state an operator
+		// would not guess from "policy: agent", so it is the one worth the
+		// detail line here.
+		if actions, explicit := sup.ActionMask(); explicit && len(actions) == 0 {
+			parts = append(parts, "actions → all masked (explicit empty list)")
+		}
+	default:
+		if sup.EngineEnabled() {
+			parts = append(parts, "rules engine: on")
+		} else {
+			parts = append(parts, "rules engine: off")
+		}
+	}
+	status := "OK"
+	if sup.RequireReversible && !sup.DispatchSupervised() {
+		status = "WARN"
+		parts = append(parts, "require_reversible is set but supervisor.enabled is not explicitly true — no supervised dispatch to narrow, so it has no effect")
+	}
+	return Check{Label: "Supervisor", Status: status, Detail: strings.Join(parts, " · ")}
+}
+
 func CheckSubAgents(cfg *config.Config, cfgErr error) Check {
 	if cfgErr != nil {
 		return Check{Label: "Sub-agents", Status: "WARN", Detail: "config not loaded"}

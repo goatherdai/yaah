@@ -155,3 +155,85 @@ func TestConfigShow_printsEmbeddingSection(t *testing.T) {
 		}
 	})
 }
+
+// TestConfigShow_printsSupervisorSection pins the supervisor surface (yaah-0nbb
+// acceptance: "config shows the new keys"): the section renders in the default
+// posture (policy none, no tuning keys — nothing consumes them), and under a
+// headless policy it renders every key the decider reads, through the same
+// accessors the wiring reads.
+func TestConfigShow_printsSupervisorSection(t *testing.T) {
+	runConfigShow := func(t *testing.T, configYAML string) string {
+		t.Helper()
+		tmp := t.TempDir()
+		t.Setenv("YAAH_HOME", tmp)
+		if configYAML != "" {
+			if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(configYAML), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+		defer rootCmd.ResetFlags()
+
+		rootCmd.SetArgs([]string{"config", "show"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("Execute() error: %v", err)
+		}
+		return buf.String()
+	}
+
+	t.Run("default posture", func(t *testing.T) {
+		output := runConfigShow(t, "")
+		for _, want := range []string{"[supervisor]", "policy:             none", "rules engine"} {
+			if !strings.Contains(output, want) {
+				t.Errorf("config show output missing %q\ngot:\n%s", want, output)
+			}
+		}
+		if strings.Contains(output, "policy_model") {
+			t.Errorf("the default posture renders no decider keys\ngot:\n%s", output)
+		}
+	})
+
+	t.Run("headless renders the decider's keys", func(t *testing.T) {
+		output := runConfigShow(t, `agents:
+  default:
+    supervisor:
+      policy: headless
+      policy_model: deepseek/test-decider
+      interval: 250ms
+      trigger: on-change
+      actions: [steer]
+      cooldown_ticks: 2
+      max_interventions: 5
+`)
+		for _, want := range []string{
+			"[supervisor]",
+			"policy:             headless",
+			"policy_model:       deepseek/test-decider",
+			"interval:           250ms",
+			"trigger:            on-change",
+			"actions:            steer",
+			"cooldown_ticks:     2",
+			"max_interventions:  5",
+			"prompt:             v1",
+		} {
+			if !strings.Contains(output, want) {
+				t.Errorf("config show output missing %q\ngot:\n%s", want, output)
+			}
+		}
+	})
+
+	t.Run("explicit empty actions list says masked", func(t *testing.T) {
+		output := runConfigShow(t, `agents:
+  default:
+    supervisor:
+      policy: agent
+      actions: []
+`)
+		if !strings.Contains(output, "actions:            [] (all masked)") {
+			t.Errorf("an explicit empty list must render as masked\ngot:\n%s", output)
+		}
+	})
+}
