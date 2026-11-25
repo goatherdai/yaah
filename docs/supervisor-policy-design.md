@@ -119,6 +119,9 @@ Gaps this task closes:
 5. **Rules and decisions have no shared arbiter**, so they can steer the same
    worker twice in one window.
 6. **No prompt asset.** The paper's v1 prompt is the parity baseline.
+   *Landed:* the asset is a byte-exact copy at
+   `internal/prompts/supervision/meta_prompt_v1.md` (embedded by
+   `prompt.go`, pinned byte-for-byte by a drift test, yaah-wego).
 7. **Revert availability is not enforced.** A shared-lane dispatch or a
    failed pre-run capture degrades to a warning, and revert later silently
    becomes a restart.
@@ -156,14 +159,18 @@ Field-for-field with Appendix E, per agent:
 | cumulative event count | `Calls` | exists |
 | consecutive-error count | derived from `Trail` statuses | new, derived |
 | modified-file set | `ModifiedFiles` | exists |
-| last action, and how many ticks ago | `LastAction` plus `Batch` state | age is new |
+| last action, and how many ticks ago | `Batch` state: `TickState.LastIntervention` and its age (`ticks_ago`) | new |
 | trailing 25 tool calls (about 150 B each) | `Trail`, 160 B of args | exists |
 | in-flight calls | the host's tool-start events, held in memory by the `Batch` | new |
 | — | `Reversible`, `Redirectable` per scope | new |
 
 Age is ticks since this batch last acted on the scope, kept by the `Batch`,
 exactly as the released loop keeps `ticks_since_last_action`. No kernel
-timestamp is needed for parity. A per-effect timestamp, which would tell
+timestamp is needed for parity. The row's "last action" is therefore the
+META-AGENT's last intervention on the scope, never `AgentSnapshot.LastAction`:
+that field is the scope's own most recent tool call, a different fact, which
+the supervisor tool's status view prints as `last:` and which the rendered
+text does not carry (§4.3). A per-effect timestamp, which would tell
 "working" from "wedged", remains the declared future work in
 `internal/supervisionapi` and is not a prerequisite here.
 
@@ -189,12 +196,37 @@ true by construction:
 ### 4.3 Renderer and prompt
 
 - `internal/supervision/render.go` turns a `Snapshot` into text under a
-  token budget (default 3K, configurable). The tool and the headless decider
-  use the same renderer. Scope labels are short and stable (`w1`, `w2`, …) so
-  decisions can name them.
+  token budget (default 3K, configurable) covering the snapshot alone —
+  headless mode pairs it with a ~1.4K-token system prompt (the 4200-byte
+  asset under this package's chars/4 × 1.3 estimator, ≈ 1365; a bare chars/4
+  understates it by about a third), so a caller that sends both reserves that
+  share and passes a reduced budget, ~4.4K together. The tool and
+  the headless decider use the same renderer. Scope labels are short (`w1`,
+  `w2`, …) so decisions can name them: within one snapshot a label is a pure
+  function of the scope set (ScopeID ascending), never of the snapshot's
+  ordering, so it does not move when a neighbour finishes; ACROSS ticks it is
+  stable only when the caller threads the previous assignment in
+  (`RenderOptions.Known`, ScopeID → label), which the `Batch` must do — a
+  lower-sorting scope joining otherwise renumbers the live workers. Over
+  budget, the renderer degrades cheapest information loss first — trail
+  trimmed from the oldest end, then finished agents' headers (leaving a
+  one-token `state: finished` marker so a finished block still identifies
+  itself), then every agent's feature line clipped, then whole agents omitted
+  oldest-finished-first with an honest footer — and each cut is stated in the
+  text. The ladder is monotone: no tier renders more text than the one before
+  it. Fields that are capped unconditionally (the file list, the in-flight
+  list, a note) say how much they cut, and the header always reports the true
+  agent count split live/finished, so a footer-omitted agent is never mistaken
+  for a quiet one. The per-scope stats line renders the meta-agent's last
+  intervention as `last_intervention=` (`ticks_ago=N` once it has acted),
+  never as `last_action`: `AgentSnapshot.LastAction` is the scope's own most
+  recent tool call.
 - `internal/prompts/supervision/meta_prompt_v1.md` holds the paper's prompt
-  verbatim, with scope ids substituted. Headless mode uses it as the system
-  prompt.
+  byte-exact (a drift test pins its length and SHA-256). The asset's protocol
+  names each agent by a short id, and those ids — `w1`, `w2`, … — are
+  assigned by, and substituted into, the RENDERED SNAPSHOT text; the asset
+  itself is never edited, trimmed, or re-flowed. Headless mode uses the asset
+  as its system prompt and the rendered snapshot as the user message.
 - Agent mode does not replace the agent's system prompt. The `supervise`
   tool's embedded doc carries the same heuristics in condensed form: steer is
   cheap, redirect and revert are expensive, what "stuck" means, when revert is
