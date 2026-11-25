@@ -192,18 +192,29 @@ true by construction:
 ### 4.3 Renderer and prompt
 
 - `internal/supervision/render.go` turns a `Snapshot` into text under a
-  token budget (default 3K, configurable). The tool and the headless decider
-  use the same renderer. Scope labels are short and stable (`w1`, `w2`, …) so
-  decisions can name them: the label is a pure function of the scope set
-  (ScopeID ascending), never of the snapshot's ordering, so it does not move
-  when a neighbour finishes. Over budget, the renderer degrades cheapest
-  information loss first — trail trimmed from the oldest end, then
-  finished agents' headers, then whole agents omitted oldest-finished-first
-  with an honest footer — and each cut is stated in the text. Fields that
-  are capped unconditionally (the file list, the in-flight list, a note)
-  say how much they cut, and the header always reports the true agent
-  count split live/finished, so a footer-omitted agent is never mistaken
-  for a quiet one.
+  token budget (default 3K, configurable) covering the snapshot alone —
+  headless mode pairs it with a ~1.05K-token system prompt, so a caller that
+  sends both reserves that share and passes a reduced budget. The tool and
+  the headless decider use the same renderer. Scope labels are short (`w1`,
+  `w2`, …) so decisions can name them: within one snapshot a label is a pure
+  function of the scope set (ScopeID ascending), never of the snapshot's
+  ordering, so it does not move when a neighbour finishes; ACROSS ticks it is
+  stable only when the caller threads the previous assignment in
+  (`RenderOptions.Known`, ScopeID → label), which the `Batch` must do — a
+  lower-sorting scope joining otherwise renumbers the live workers. Over
+  budget, the renderer degrades cheapest information loss first — trail
+  trimmed from the oldest end, then finished agents' headers (leaving a
+  one-token `state: finished` marker so a finished block still identifies
+  itself), then every agent's feature line clipped, then whole agents omitted
+  oldest-finished-first with an honest footer — and each cut is stated in the
+  text. The ladder is monotone: no tier renders more text than the one before
+  it. Fields that are capped unconditionally (the file list, the in-flight
+  list, a note) say how much they cut, and the header always reports the true
+  agent count split live/finished, so a footer-omitted agent is never mistaken
+  for a quiet one. The per-scope stats line renders the meta-agent's last
+  intervention as `last_intervention=` (`ticks_ago=N` once it has acted),
+  never as `last_action`: `AgentSnapshot.LastAction` is the scope's own most
+  recent tool call.
 - `internal/prompts/supervision/meta_prompt_v1.md` holds the paper's prompt
   byte-exact (a drift test pins its length and SHA-256). The asset's protocol
   names each agent by a short id, and those ids — `w1`, `w2`, … — are

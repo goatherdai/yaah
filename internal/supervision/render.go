@@ -34,9 +34,18 @@ import (
 	"github.com/goatherdai/yaah/internal/supervisionapi"
 )
 
-// DefaultRenderBudgetTokens is the Appendix E snapshot budget
-// (docs/supervisor-policy-design.md §4.3): the paper's whole meta-agent
-// prompt stays under ~3K tokens, so the rendered snapshot must too.
+// DefaultRenderBudgetTokens is the SNAPSHOT-ONLY budget
+// (docs/supervisor-policy-design.md §4.3): the snapshot is the part of the
+// paper's sub-3K-token prompt a renderer controls, so the rendered snapshot
+// alone is bounded by it.
+//
+// It is NOT the whole prompt. Headless mode (yaah-0nbb) pairs this text with
+// the locked v1 system prompt — internal/prompts/supervision's 4200-byte
+// asset, about 1.05K estimated tokens — so a caller that also sends a system
+// prompt must reserve that estimate and pass a REDUCED
+// RenderOptions.BudgetTokens, or the pair can reach ~4K. That reservation is
+// exactly what the per-call budget seam is for; this package stays a leaf and
+// does not import the prompt package to compute it.
 const DefaultRenderBudgetTokens = 3000
 
 // estimateFactor is internal/agent/context's DefaultEstimateFactor. The
@@ -66,18 +75,35 @@ const (
 )
 
 // footerJSON is the return instruction the locked v1 prompt's protocol
-// expects. yaah's action vocabulary is none|steer|redirect|revert; the
-// paper's inject/handoff/discard map onto steer/redirect/revert.
-const footerJSON = `Return JSON: {"decisions": [{"agent": "...", "action": "none"|"steer"|"redirect"|"revert", "reason": "...", "guidance": "..."}]}`
+// expects, in yaah's decision vocabulary: the keys are
+// supervisionapi.Decision's field names (encoding/json matches them
+// case-insensitively, so Scope decodes from "scope") and the action values
+// are the Action constants — a conforming reply therefore unmarshals straight
+// into the decision type the decider returns. It carries ONE valid JSON
+// example, because a `"a"|"b"` menu is not JSON, and states the allowed
+// values as prose.
+//
+// The paper's per-decision key is "agent" and its verbs are
+// inject/handoff/discard: yaah names the scope label (the label THIS text
+// assigned) and maps those verbs onto steer/redirect/revert. The pinned
+// contract test (TestRender_FooterContract) parses the example below into
+// supervisionapi.Decision, so a change to either side fails the build.
+const footerJSON = `Return one JSON object: {"decisions": [{"scope": "w1", "action": "steer", "reason": "...", "guidance": "..."}]}. "scope" is a label from above (w1, w2, …); "action" is "none", "steer", "redirect" or "revert"; "reason" is max 20 words; "guidance" is max 60 words and required for steer, redirect and revert.`
 
 // TickState is batch-owned state the snapshot does not carry: the
-// meta-agent's last action on a scope and its age in ticks. The Batch that
-// owns it lands in yaah-3l34; until then a caller passes whatever it tracks,
-// and a missing entry (or a zero value) means "never acted".
+// meta-agent's last intervention on a scope and its age in ticks. The Batch
+// that owns it lands in yaah-3l34; until then a caller passes whatever it
+// tracks, and a missing entry (or a zero value) means "never acted".
 type TickState struct {
-	// LastAction is none|steer|redirect|revert — the action of the last
-	// intervention on this scope, empty or "none" when there was none.
-	LastAction string
+	// LastIntervention is none|steer|redirect|revert — the action of the
+	// last intervention the META-AGENT took on this scope, empty or "none"
+	// when there was none. It is deliberately not named LastAction:
+	// supervisionapi.AgentSnapshot.LastAction is the scope's OWN most recent
+	// tool call, a different fact that the supervisor tool's status view
+	// prints as "last:". (The paper calls this field "last action" and the
+	// loop keeps it as ticks_since_last_action; the RENDERED key is
+	// last_intervention for the same reason.)
+	LastIntervention string
 	// TicksAgo is the number of ticks since that intervention.
 	TicksAgo int
 }
@@ -87,17 +113,28 @@ type RenderOptions struct {
 	// Tick is the tick number rendered in the header. 0 renders the
 	// header without a tick number.
 	Tick int
-	// BudgetTokens bounds the estimated size of the DEGRADABLE part of the
-	// text. 0 means DefaultRenderBudgetTokens. There is a floor the budget
-	// cannot squeeze past: the header and the return instruction are
-	// irreducible (~65 estimated tokens between them), so a budget at or
-	// below that floor still renders non-empty text — header, omitted-agents
-	// footer, and instruction — rather than nothing. Termination is
-	// guaranteed at every budget.
+	// BudgetTokens bounds the estimated size of the WHOLE rendered text —
+	// header, agent blocks, and return instruction — because that is what
+	// the decider is charged for; Render compares estimateTokens of the
+	// complete text against it. 0 means DefaultRenderBudgetTokens.
+	//
+	// There is a floor the budget cannot squeeze past: the header and the
+	// return instruction are irreducible (about 110 estimated tokens, 125
+	// with the omission footer), so a budget at or below that floor still
+	// renders non-empty text — header, omitted-agents footer, and instruction
+	// — rather than nothing. Termination is guaranteed at every budget.
 	BudgetTokens int
 	// State is the batch's per-scope tick state, keyed by ScopeID. Nil is
-	// fine and renders every scope as last_action=none.
+	// fine and renders every scope as last_intervention=none.
 	State map[string]TickState
+	// Known seeds the label assignment from a previous render: ScopeID →
+	// the label it was given then. Nil means "assign from this snapshot
+	// alone" (ScopeID ascending, w1..wN).
+	//
+	// It exists so a caller that carries observations from one tick to the
+	// next keeps naming the same worker the same name; see the Render doc
+	// comment for what is and is not stable without it.
+	Known map[string]string
 }
 
 // Labeled binds a rendered short label to the scope it names, so a Decision
@@ -114,15 +151,21 @@ type labeledAgent struct {
 	snap  supervisionapi.AgentSnapshot
 }
 
-// limits are the degradation knobs one render attempt is made under.
+// limits are the degradation knobs one render attempt is made under. The
+// ladder in Render only ever TIGHTENS them, which is what makes each attempt
+// render no more text than its predecessor for any input.
 type limits struct {
 	// trail is the maximum number of trailing tool calls rendered per
 	// agent; -1 renders the whole (already capped) trail, 0 omits the
 	// section entirely.
 	trail int
-	// hideFinishedHeader drops the role/running line of a finished
-	// agent — it is redundant for one that has stopped.
+	// hideFinishedHeader replaces a finished agent's role/running line with
+	// a one-token "state: finished" marker: the role is redundant for one
+	// that has stopped, but the block must still say that it has.
 	hideFinishedHeader bool
+	// featureMax clips every agent's feature line to this many runes;
+	// 0 or less applies supervisionapi.MaxFeatureRunes.
+	featureMax int
 	// omitted counts the agents cut from this attempt, for the honest
 	// footer.
 	omitted int
@@ -132,20 +175,31 @@ type limits struct {
 // the text used.
 //
 // The returned labels cover EVERY agent in the snapshot, not just the ones
-// that survived budget degradation: the assignment is a pure function of the
-// snapshot's scope set (sorted by ScopeID ascending, w1..wN), so a label
-// never moves between ticks because a neighbour finished or was omitted.
-// Renumbering under budget pressure would silently re-point a decision.
+// that survived budget degradation, and degradation never renumbers them:
+// renumbering under budget pressure would silently re-point a decision.
+//
+// Label stability has two different scopes, and this comment used to over-claim
+// the second. WITHIN one snapshot a label is stable by construction — a pure
+// function of this scope set (ScopeID ascending, w1..wN) — so a neighbour
+// finishing does not move it. ACROSS ticks it is stable only when the caller
+// threads RenderOptions.Known: the assignment is recomputed from the current
+// scope set on every call, so a scope joining at a lower ScopeID, or a
+// finished scope leaving the bounded history, otherwise reshuffles the rest
+// and an agent-mode supervisor carrying observations across ticks associates
+// them with the wrong worker. A caller that does carry them — the Batch,
+// yaah-3l34 — must pass the previous call's labels back as Known.
 //
 // Budget degradation is tiered, cheapest information loss first, and each
 // tier is re-rendered until the estimate fits (see the tier comment on the
-// Render body).
+// Render body). The tiers are MONOTONE: each attempt renders no more text
+// than the attempt before it, for any input, so a tighter budget always
+// yields a shorter render and never a longer one.
 func Render(snap supervisionapi.Snapshot, opts RenderOptions) (text string, labels []Labeled) {
 	budget := opts.BudgetTokens
 	if budget <= 0 {
 		budget = DefaultRenderBudgetTokens
 	}
-	labels, ordered := labelAgents(snap.Agents)
+	labels, ordered := labelAgents(snap.Agents, opts.Known)
 	r := renderer{tick: opts.Tick, state: opts.State, dropped: snap.Dropped}
 	// The header's live/finished counts cover the WHOLE ordered set, before
 	// tier 4 omits anyone: the header states the true agent count and the
@@ -159,22 +213,38 @@ func Render(snap supervisionapi.Snapshot, opts RenderOptions) (text string, labe
 		}
 	}
 
+	// The ladder below is MONOTONE: every attempt renders no more text than
+	// the attempt before it, for any input, so the tiers are cumulative
+	// reductions and a tighter budget can never produce a longer render. The
+	// earlier shape restarted tier 2 at a 1-call trail after tier 1 had
+	// already reached 0, so a finished-heavy batch could render MORE text at
+	// tier 2 than at the tier-1 attempt that had just failed.
+	//
 	// Tier 1 — shorten each agent's trail from the OLDEST end (the newest
-	// calls are what a supervisor acts on). No tier trims any other field:
-	// the file list, the in-flight list, and the note are capped
+	// calls are what a supervisor acts on). No tier trims any other field
+	// here: the file list, the in-flight list, and the note are capped
 	// unconditionally in writeBlock, so there is nothing left to trade.
 	for _, trail := range []int{-1, 12, 6, 3, 1, 0} {
 		if txt := r.render(ordered, limits{trail: trail}); estimateTokens(txt) <= budget {
 			return txt, labels
 		}
 	}
-	// Tier 2/3 — drop the role/running line of finished agents, then drop
-	// their TRAIL too (trail 0), while still naming them and keeping their
-	// feature, stats, file list, and note. Only the trail goes: the block
-	// itself stays.
-	for _, trail := range []int{1, 0} {
-		lim := limits{trail: trail, hideFinishedHeader: true}
-		if txt := r.render(ordered, lim); estimateTokens(txt) <= budget {
+	// Tier 2 — hide the role/running line of finished agents, replacing it
+	// with a one-token "state: finished" marker, while still naming them and
+	// keeping their feature, stats, file list, note, and (already trimmed)
+	// trail section. Resumes at trail 0, where tier 1's last attempt ended.
+	mid := limits{trail: 0, hideFinishedHeader: true}
+	if txt := r.render(ordered, mid); estimateTokens(txt) <= budget {
+		return txt, labels
+	}
+	// Tier 3 — clip EVERY agent's feature line (350 → 120 → 60 runes) before
+	// any agent is dropped at all: a clipped feature keeps every scope named
+	// and placeable, where tier 4 loses the agent outright. The cut is
+	// visible (clipRunes ends a clipped field with an ellipsis) and the
+	// feature is the least actionable field in the block.
+	for _, featureMax := range []int{120, 60} {
+		mid.featureMax = featureMax
+		if txt := r.render(ordered, mid); estimateTokens(txt) <= budget {
 			return txt, labels
 		}
 	}
@@ -185,15 +255,16 @@ func Render(snap supervisionapi.Snapshot, opts RenderOptions) (text string, labe
 	// states the omission and the header keeps claiming the true agent
 	// count, so the decider can tell a quiet scope from an unrendered one.
 	for n := len(ordered) - 1; n >= 0; n-- {
-		lim := limits{trail: 0, hideFinishedHeader: true, omitted: len(ordered) - n}
-		txt := r.render(ordered[:n], lim)
+		cut := mid
+		cut.omitted = len(ordered) - n
+		txt := r.render(ordered[:n], cut)
 		if estimateTokens(txt) <= budget || n == 0 {
 			return txt, labels
 		}
 	}
 	// No agents at all: the header and footer are all that is left, and
 	// they always fit.
-	return r.render(nil, limits{hideFinishedHeader: true}), labels
+	return r.render(nil, mid), labels
 }
 
 // renderer carries the per-call state every render attempt shares.
@@ -255,6 +326,14 @@ func (r renderer) writeBlock(b *strings.Builder, a labeledAgent, lim limits) {
 			role = "(unknown)"
 		}
 		fmt.Fprintf(b, "role: %s   running: %s\n", role, yesNo(s.StillRunning))
+	} else {
+		// Tier 2 hides the role/running line of a finished agent, but the
+		// block must stay self-identifying: without this marker a finished
+		// block reads like a live one whose role line was cut, and the
+		// header's live/finished split would be the only liveness fact left.
+		// The marker is far shorter than the line it replaces, which is part
+		// of what keeps the degradation ladder monotone.
+		b.WriteString("state: finished\n")
 	}
 
 	// The note is disclosure, not decoration: an agent whose trace could not
@@ -266,20 +345,32 @@ func (r renderer) writeBlock(b *strings.Builder, a labeledAgent, lim limits) {
 		fmt.Fprintf(b, "note: %s\n", note)
 	}
 
-	feature := clipRunes(singleLine(s.Feature), supervisionapi.MaxFeatureRunes)
+	// The feature is clipped AFTER singleLine, and clipRunes never inserts a
+	// newline, so the collapse is what bounds this field to one line at every
+	// tier.
+	featureMax := lim.featureMax
+	if featureMax <= 0 {
+		featureMax = supervisionapi.MaxFeatureRunes
+	}
+	feature := clipRunes(singleLine(s.Feature), featureMax)
 	if feature == "" {
 		feature = emptyFeatureValue
 	}
 	fmt.Fprintf(b, "feature: %s\n", feature)
 
 	st := r.state[s.ScopeID]
-	lastAction := st.LastAction
-	if lastAction == "" {
-		lastAction = "none"
+	// last_intervention, never last_action: this is the META-AGENT's last
+	// action on the scope (Batch state), while AgentSnapshot.LastAction is
+	// the scope's own most recent tool call — a different fact, which the
+	// supervisor tool's status view prints as "last:". A shared label would
+	// let a decider read one as the other.
+	lastIntervention := st.LastIntervention
+	if lastIntervention == "" {
+		lastIntervention = "none"
 	}
-	fmt.Fprintf(b, "events=%d consecutive_errors=%d last_action=%s",
-		s.Calls, s.ConsecutiveErrors, lastAction)
-	if lastAction != "none" {
+	fmt.Fprintf(b, "events=%d consecutive_errors=%d last_intervention=%s",
+		s.Calls, s.ConsecutiveErrors, lastIntervention)
+	if lastIntervention != "none" {
 		fmt.Fprintf(b, " (ticks_ago=%d)", st.TicksAgo)
 	}
 	trail := trimTrail(s.Trail, lim.trail)
@@ -384,9 +475,10 @@ func trimTrail(trail []supervisionapi.ToolCallDigest, max int) []supervisionapi.
 	return trail[len(trail)-max:]
 }
 
-// labelAgents assigns w1..wN by ScopeID ascending over a copy of agents, and
-// returns the render order: live agents by ScopeID ascending, then finished
-// agents newest-first.
+// labelAgents assigns labels by ScopeID ascending over a copy of agents —
+// positionally when known is nil, from known when it is not (see
+// assignLabels) — and returns the render order: live agents by ScopeID
+// ascending, then finished agents newest-first.
 //
 // Label assignment deliberately ignores the caller's slice order — the
 // snapshot builder emits live registrations sorted by ScopeID and then
@@ -395,18 +487,12 @@ func trimTrail(trail []supervisionapi.ToolCallDigest, max int) []supervisionapi.
 // run incarnation is not this package's job: the snapshot type carries no
 // generation token, and the arbiter resolves a claimed label against the
 // registry's generation at claim time — yaah-3l34 / yaah-fy28.)
-func labelAgents(agents []supervisionapi.AgentSnapshot) ([]Labeled, []labeledAgent) {
+func labelAgents(agents []supervisionapi.AgentSnapshot, known map[string]string) ([]Labeled, []labeledAgent) {
 	byID := make([]supervisionapi.AgentSnapshot, len(agents))
 	copy(byID, agents)
 	sort.SliceStable(byID, func(i, j int) bool { return byID[i].ScopeID < byID[j].ScopeID })
 
-	labels := make([]Labeled, 0, len(byID))
-	labelOf := make(map[string]string, len(byID))
-	for i, a := range byID {
-		label := fmt.Sprintf("w%d", i+1)
-		labels = append(labels, Labeled{Label: label, ScopeID: a.ScopeID})
-		labelOf[a.ScopeID] = label
-	}
+	labelOf, labels := assignLabels(byID, known)
 
 	live := make([]supervisionapi.AgentSnapshot, 0, len(byID))
 	finished := make([]supervisionapi.AgentSnapshot, 0, len(byID))
@@ -429,6 +515,48 @@ func labelAgents(agents []supervisionapi.AgentSnapshot) ([]Labeled, []labeledAge
 		ordered = append(ordered, labeledAgent{label: labelOf[a.ScopeID], snap: a})
 	}
 	return labels, ordered
+}
+
+// assignLabels gives every scope in byID (ScopeID ascending) a label and
+// returns the label map plus the ordered assignment.
+//
+// With known == nil the assignment is w1..wN by position: a pure function of
+// this snapshot's scope set. With known != nil:
+//
+//   - a scope already in known KEEPS its label, so an unchanged worker keeps
+//     its name even when a lower-sorting scope joins the batch;
+//   - a scope unknown to the caller takes the smallest wN not already in
+//     use, so a newcomer never collides with a carried-over label;
+//   - a known scope absent from this snapshot is simply not rendered, and its
+//     label stays RESERVED for it — it is not handed to a newcomer this call,
+//     so a scope that reappears next call finds its own label free instead of
+//     pointing at a stranger.
+func assignLabels(byID []supervisionapi.AgentSnapshot, known map[string]string) (map[string]string, []Labeled) {
+	labelOf := make(map[string]string, len(byID))
+	used := make(map[string]bool, len(byID)+len(known))
+	for _, label := range known {
+		used[label] = true
+	}
+	next := 1
+	for _, a := range byID {
+		label := known[a.ScopeID] // nil-map read is the empty string
+		if label == "" {
+			for {
+				label = fmt.Sprintf("w%d", next)
+				next++
+				if !used[label] {
+					break
+				}
+			}
+		}
+		labelOf[a.ScopeID] = label
+		used[label] = true
+	}
+	labels := make([]Labeled, 0, len(byID))
+	for _, a := range byID {
+		labels = append(labels, Labeled{Label: labelOf[a.ScopeID], ScopeID: a.ScopeID})
+	}
+	return labelOf, labels
 }
 
 // estimateTokens mirrors internal/agent/context's chars/4 × 1.3 convention
