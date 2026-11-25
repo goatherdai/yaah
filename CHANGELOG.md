@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.217.0](https://github.com/goatherdai/yaah/compare/v0.216.0...v0.217.0) (2026-11-25)
+
+
+### Features
+
+* **supervision:** supervisor policy config + headless decider (yaah-0nbb) ([#417](https://github.com/goatherdai/yaah/issues/417)) ([326799f](https://github.com/goatherdai/yaah/commit/326799f872f87d45a285fb7223fdd4209bb821cc))
+
 ## [0.216.0](https://github.com/goatherdai/yaah/compare/v0.215.0...v0.216.0) (2026-11-25)
 
 
