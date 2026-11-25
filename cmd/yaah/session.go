@@ -510,8 +510,18 @@ func (s *agentSession) shutdown() {
 	// tool refuses later calls once closed, so a wake turn racing teardown cannot
 	// re-arm it.
 	if s.toolReg != nil {
-		if st, ok := s.toolReg.Get("supervise").(*tools.SuperviseTool); ok && st != nil {
+		// A type switch, not a checked assertion: the assertion form cannot tell
+		// "no supervise tool in this session" (nil — policy none, or the degraded
+		// no-snapshot-source path) from "the name is registered behind something
+		// else" (a wrapper, a rename), and silently skipping Close in the second
+		// case would leave the arbiter armed into shutdown (review L3-r2).
+		switch st := s.toolReg.Get("supervise").(type) {
+		case nil:
+			// Not registered — nothing to close.
+		case *tools.SuperviseTool:
 			st.Close()
+		default:
+			slog.Warn("session teardown: the supervise registry entry has an unexpected type; its Close was skipped", "type", fmt.Sprintf("%T", st))
 		}
 	}
 	// The advisory rules service drains INTO the registry below: stop it

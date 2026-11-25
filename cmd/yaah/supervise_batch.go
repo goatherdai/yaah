@@ -49,9 +49,15 @@ func registerSuperviseTool(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 		tr.belt.Know("supervise")
 		return
 	}
-	if snap == nil {
-		// policy: agent was configured and this session cannot serve it: the run
-		// registry or the trace store never came up (the nil-check note above).
+	if snap == nil || st.runs == nil || st.scopeMgr == nil {
+		// policy: agent was configured and this session cannot serve it: the
+		// trace store (snap), the run registry, or the scope manager never came
+		// up. The guard names all three because the batch binds on all three
+		// (NewBatch(st.runs, &DescendantSnapshot{Source: snap, Scopes:
+		// st.scopeMgr, ...}), NewSnapshotter(st.runs, st.scopeMgr, snap, ...)):
+		// a nil scope manager would build a snapshot source that sees no scope
+		// tree and answer every tick with the same silent empty-done batch a nil
+		// snap would (review L2-r2).
 		// A supervise tool over such a source would answer every tick with an
 		// empty, done batch and call that supervision, so it is not registered —
 		// and the degradation is RECORDED rather than left silent: the name rides
@@ -62,7 +68,7 @@ func registerSuperviseTool(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 		// operator asked for and did not get is a fact worth reading.
 		tr.belt.Know("supervise")
 		tr.omittedTools = append(tr.omittedTools, "supervise")
-		fmt.Fprintf(os.Stderr, "warning: supervisor.policy is %q but this session has no snapshot source (the run registry or the trace store did not start), so the supervise tool is unavailable\n", cfg.Agent.Default.Supervisor.PolicyMode())
+		fmt.Fprintf(os.Stderr, "warning: supervisor.policy is %q but this session has no snapshot source (the run registry, the scope manager, or the trace store did not start), so the supervise tool is unavailable\n", cfg.Agent.Default.Supervisor.PolicyMode())
 		return
 	}
 	// Admit widens the session's belt rather than trusting it, for the same

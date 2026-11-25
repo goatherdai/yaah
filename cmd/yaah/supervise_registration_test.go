@@ -14,6 +14,9 @@ import (
 	"slices"
 	"testing"
 
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+
 	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/agent/supervision"
 	"github.com/goatherdai/yaah/internal/config"
@@ -22,6 +25,23 @@ import (
 // liveSnapshot stands in for the session's Snapshotter: registration never
 // reads it, it only proves the source is wired.
 func liveSnapshot() *supervision.Snapshotter { return &supervision.Snapshotter{} }
+
+// liveInfra returns the loopInfraStage fields registerSuperviseTool's guard
+// requires beside the snapshotter: the run registry and the scope manager the
+// batch binds on. A real in-memory pair, because the guard checks them — an
+// empty stage would take the degraded path (review L2-r2).
+func liveInfra(t *testing.T) *loopInfraStage {
+	t.Helper()
+	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	return &loopInfraStage{
+		runs:     supervision.NewRegistry(),
+		scopeMgr: goatherd.NewScopeManager(store),
+	}
+}
 
 func TestSuperviseTool_RegisteredOnlyUnderAgentPolicy(t *testing.T) {
 	cases := []struct {
@@ -51,7 +71,7 @@ func TestSuperviseTool_RegisteredOnlyUnderAgentPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatalf("buildToolRegistry: %v", err)
 			}
-			registerSuperviseTool(&loopInfraStage{}, cfg, tr, tc.snap)
+			registerSuperviseTool(liveInfra(t), cfg, tr, tc.snap)
 
 			registered := tr.reg.Get("supervise") != nil
 			if registered != tc.want {
@@ -139,7 +159,7 @@ func TestSuperviseTool_AdmissionWidensAnExplicitToolList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildToolRegistry: %v", err)
 	}
-	registerSuperviseTool(&loopInfraStage{}, cfg, tr, liveSnapshot())
+	registerSuperviseTool(liveInfra(t), cfg, tr, liveSnapshot())
 
 	if tr.reg.Get("supervise") == nil {
 		t.Error("supervise must be registered under policy agent even when the explicit tools list omits it")
@@ -149,5 +169,39 @@ func TestSuperviseTool_AdmissionWidensAnExplicitToolList(t *testing.T) {
 	}
 	if !tr.belt.Allows("read") || !tr.belt.Allows("bash") {
 		t.Error("the explicit list's own tools must survive admission unchanged")
+	}
+}
+
+// TestSuperviseTool_DegradedWithoutRegistryOrScopeManager pins the extended
+// guard (review L2-r2): the batch binds on the run registry AND the scope
+// manager as well as the snapshotter, so a session missing any of the three
+// takes the same loud degraded path — tool absent, recorded as omitted —
+// instead of registering a tool whose every tick reports an empty, done batch.
+func TestSuperviseTool_DegradedWithoutRegistryOrScopeManager(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		breakIt func(*loopInfraStage)
+	}{
+		{"no run registry", func(st *loopInfraStage) { st.runs = nil }},
+		{"no scope manager", func(st *loopInfraStage) { st.scopeMgr = nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Agent.Default.Supervisor.Policy = config.SupervisorPolicyAgent
+			tr, err := buildToolRegistry(cfg, SessionOptions{}, &workspaceStage{cwd: t.TempDir()}, subagent.Persona{}, nil)
+			if err != nil {
+				t.Fatalf("buildToolRegistry: %v", err)
+			}
+			st := liveInfra(t)
+			tc.breakIt(st)
+			registerSuperviseTool(st, cfg, tr, liveSnapshot())
+
+			if tr.reg.Get("supervise") != nil {
+				t.Error("the tool must not register when a batch input is missing")
+			}
+			if !slices.Contains(tr.omittedTools, "supervise") {
+				t.Errorf("the degradation must be recorded as omitted (omittedTools = %v)", tr.omittedTools)
+			}
+		})
 	}
 }

@@ -252,14 +252,17 @@ func (t *SuperviseTool) Execute(ctx context.Context, args string) (string, error
 	// it: the text this reply carries is the text the caller's next decision
 	// list is made from, so no other call on this session may render (and
 	// repoint the labels) between the tick and the reply.
-	t.end(out.Done)
+	// One locked section ends the flight AND releases the arbiter when the call
+	// is not leaving a driven batch behind. Done is not the only way a supervise
+	// loop ends: a cancelled tick (Ctrl-C, an exhausted turn budget, a session
+	// shutting down) leaves the batch live but undriven, and leaving the rules
+	// engine routed into it would queue firings into a batch nothing ticks — so
+	// a call that did not complete releases too, and the next call re-arms
+	// (begin). The release rides inside end's critical section because the two
+	// apart are a race: a concurrent Execute could re-arm between them, and this
+	// call's release would then detach the OTHER call's arbiter (review M1-r2).
+	t.end(out.Done || err != nil)
 	if err != nil {
-		// A call that did not complete releases the arbiter. Done is not the only
-		// way a supervise loop ends: a cancelled tick (Ctrl-C, an exhausted turn
-		// budget, a session shutting down) leaves the batch live but undriven, and
-		// leaving the rules engine routed into it would queue firings into a batch
-		// nothing ticks. The next call re-arms (begin).
-		t.releaseArbiter()
 		return "", err
 	}
 	return encodeSuperviseResult(out)
@@ -479,15 +482,20 @@ func (t *SuperviseTool) begin(ctx context.Context) (SuperviseBatch, error) {
 	return t.batch, nil
 }
 
-// end closes the call's flight. A call that reported Done also RELEASES the
-// arbiter pairing: the loop is over, so the rules engine goes back to direct
-// delivery instead of queueing firings into a batch nothing ticks. The batch
-// itself is kept — the next call re-arms it — because Done is a statement
+// end closes the call's flight, and — in the SAME critical section — releases
+// the arbiter pairing when the call is not leaving a driven batch behind. Both
+// triggers release: a call that reported Done (the loop is over, so the rules
+// engine goes back to direct delivery instead of queueing firings into a batch
+// nothing ticks) and a call that failed or was cancelled (the batch is live but
+// undriven until the next call, which re-arms). One lock section for flight and
+// release is the point: two separate ones let a concurrent Execute re-arm in
+// between, and this call's release would detach the other call's arbiter. The
+// batch itself is kept — the next call re-arms it — because Done is a statement
 // about the scopes it can currently see, not about the session.
-func (t *SuperviseTool) end(done bool) {
+func (t *SuperviseTool) end(release bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if done {
+	if release {
 		t.releaseLocked()
 	}
 	t.inFlight = false
@@ -517,14 +525,6 @@ func (t *SuperviseTool) Close() {
 	defer t.mu.Unlock()
 	t.releaseLocked()
 	t.closed = true
-}
-
-// release restores the rules engine's direct delivery outside a call's flight
-// (the error and teardown paths).
-func (t *SuperviseTool) releaseArbiter() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.releaseLocked()
 }
 
 // armLocked routes the rules engine into the bound batch, if it is not
