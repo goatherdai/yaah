@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/goatherdai/yaah/internal/observability"
+	"github.com/goatherdai/yaah/internal/reportpage"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -39,32 +40,41 @@ type BackgroundJobStatus struct {
 	// World is the resolved dispatch world ("worktree", "container", or
 	// "shared") once the runner has reported it; empty while unresolved.
 	World string `json:"world,omitempty"`
-	// Result is the bounded runner output of a terminal job (yaah-was9.1).
-	// A status/wait read sees the head of the result; the full text is
-	// reachable through Result(id). ResultAvailable is true when a terminal
-	// job produced a non-empty result, so a caller can tell "empty output"
-	// from "no result yet".
+	// Result is the head of a terminal job's runner output (yaah-was9.1): the
+	// whole text when it fits the status window, otherwise that head plus a
+	// marker naming the total and the route that pages the rest (yaah-okcl).
+	// The FULL text is retained on the job record; ResultPage reads it back a
+	// page at a time. ResultAvailable is true when a terminal job produced a
+	// non-empty result, so a caller can tell "empty output" from "no result
+	// yet".
 	Result          string `json:"result,omitempty"`
 	ResultAvailable bool   `json:"result_available,omitempty"`
+	// ResultTotalBytes is the full length of the retained result in bytes.
+	ResultTotalBytes int `json:"result_total_bytes,omitempty"`
+	// ResultOffset is the byte offset Result starts at (absent means 0).
+	ResultOffset int `json:"result_offset,omitempty"`
+	// ResultLimit is the page window applied to this snapshot.
+	ResultLimit int `json:"result_limit,omitempty"`
+	// ResultNextOffset is where the next page starts, present when the
+	// snapshot does not reach the end. Passing it back as result_offset
+	// continues the read.
+	ResultNextOffset int `json:"result_next_offset,omitempty"`
 }
 
-// maxStatusResultBytes bounds the result text a BackgroundJobStatus carries.
-// The full text stays reachable through Result(id); the snapshot is a signal,
-// not the payload (yaah-was9.1).
-const maxStatusResultBytes = 4000
-
-// boundResult truncates a runner result to the status snapshot's bound on a
-// UTF-8 boundary, marking the cut so a truncated read is never mistaken for
-// the whole answer.
-func boundResult(s string) string {
-	if len(s) <= maxStatusResultBytes {
-		return s
+// ResultPage returns one page of a terminal job's FULL result. Unlike the
+// status snapshot's bounded head, a page carries no marker: the caller asked
+// for exact bytes, so consecutive pages concatenate to the original output.
+// The second value is false when no such job is known.
+func (m *BackgroundJobs) ResultPage(id string, offset, limit int) (reportpage.Page, bool) {
+	m.mu.Lock()
+	j, ok := m.jobs[id]
+	m.mu.Unlock()
+	if !ok {
+		return reportpage.Page{}, false
 	}
-	cut := maxStatusResultBytes
-	for cut > 0 && s[cut]&0xC0 == 0x80 {
-		cut--
-	}
-	return s[:cut] + "\n…[result truncated; full text via subagent_jobs status]"
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return reportpage.At(j.result, offset, limit), true
 }
 
 // backgroundJob is the live, mutable tracking record for one background
@@ -129,7 +139,20 @@ func (j *backgroundJob) snapshot() BackgroundJobStatus {
 	}
 	s.World = j.world.Resolved
 	if j.finished && j.result != "" {
-		s.Result = boundResult(j.result)
+		// The snapshot is a signal, not the payload: it carries a page of the
+		// retained result plus the facts needed to ask for the next one
+		// (yaah-okcl). A job's result is never discarded — Result(id) and
+		// ResultPage read the full text back.
+		page := reportpage.Head(j.result, reportpage.DefaultBytes)
+		s.Result = page.Text
+		s.ResultTotalBytes = page.Total
+		s.ResultLimit = page.Limit
+		if page.Truncated() {
+			s.ResultNextOffset = page.Next()
+			s.Result += reportpage.Marker(page, fmt.Sprintf(
+				`retrieve more with subagent_jobs status {"job_id":%q,"result_offset":%d,"result_limit":%d}`,
+				j.id, page.Next(), reportpage.DefaultBytes))
+		}
 		s.ResultAvailable = true
 	}
 	return s

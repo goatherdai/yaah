@@ -14,3 +14,5 @@ Required: `description` (3-5 word summary — also labels the dispatch in jobs a
 Use it for complex multi-step work, and for work whose raw tool calls would otherwise fill your context. Call several in one turn to run them in parallel.
 
 Unknown argument names are rejected with the list of accepted keys, so a typo fails instead of silently changing the dispatch. `description` must be non-empty, and `prompt` is capped at 64 KiB — split a larger task and pass the relevant context.
+
+A proposal- or background-lane report longer than the envelope's head window arrives as that head plus a marker naming the total byte count and the retrieval route: `proposal show` (with `report_offset`/`report_limit`) for a proposal, `subagent_jobs status` (with `result_offset`/`result_limit`) for a background job. The full report is retained on those lanes, so paging recovers every byte the envelope withheld; a report-lane or shared-lane result is inline with no retrieval path. `output_limit` still caps the report the runner produces and retains — paging recovers what the envelope withheld, not what that cap withheld.

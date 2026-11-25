@@ -29,7 +29,7 @@ func TestSubAgentJobs_StatusReportsStillRunning(t *testing.T) {
 	}
 
 	tool := &SubAgentJobsTool{Jobs: mgr}
-	out, err := tool.executeStatus(id)
+	out, err := tool.executeStatus(id, 0, 0)
 	if err != nil {
 		t.Fatalf("executeStatus: %v", err)
 	}
