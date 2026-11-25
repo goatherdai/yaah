@@ -97,6 +97,29 @@ func TestBashTool_rejectsDangerousCommands(t *testing.T) {
 	}
 }
 
+// TestBashTool_runsReadOnlyDataThatLooksDangerous is yaah-0lx8's headline: the
+// vocabulary of a read-only command's arguments is data, so the command runs
+// instead of being refused for containing deny-list words.
+func TestBashTool_runsReadOnlyDataThatLooksDangerous(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires sh")
+	}
+	bt := &BashTool{}
+	const payload = "rm -rf /; mkfs -t ext4 /dev/sda; shutdown -h now; halt"
+	result, err := bt.Execute(context.Background(), `{"command":"echo '`+payload+`'"}`)
+	if err != nil {
+		t.Fatalf("Execute() of a read-only command with scary arguments: %v", err)
+	}
+	if strings.TrimSpace(result) != payload {
+		t.Errorf("result = %q, want %q", result, payload)
+	}
+
+	// Print-only sed is a read: reading a file is not editing it.
+	if _, err := bt.Execute(context.Background(), `{"command":"sed -n 's|halt|x|p' /dev/null"}`); err != nil {
+		t.Fatalf("Execute() of print-only sed: %v", err)
+	}
+}
+
 func TestBashTool_returnsErrorForEmptyCommand(t *testing.T) {
 	bt := &BashTool{}
 	_, err := bt.Execute(context.Background(), `{"command":""}`)
