@@ -786,8 +786,9 @@ steering into the running sub-agent loops.
 agents:
   default:
     supervisor:
-      enabled: true          # master switch (default on when tracing is on)
+      enabled: true          # arms the SUPERVISED DISPATCH path only on explicit true (D5); the rules engine's default-on is separate
       halt_root: false       # allow halting the session's root scope
+      require_reversible: false  # refuse a supervised dispatch that cannot roll back
       rules:
         destructive_tool:
           enabled: true
@@ -802,15 +803,71 @@ agents:
           repeat_threshold: 3
 ```
 
+**`enabled: true` also turns on supervised dispatch.** An EXPLICIT
+`enabled: true` is what arms the supervised dispatch path for the `delegate`
+tool: a dispatch that lane routing would run directly on the shared workspace
+AND whose role can change it is upgraded to the isolated report lane, so its
+work can be reverted by construction, and a dispatch whose pre-run workspace
+snapshot cannot be captured fails at start instead of running unrevertable. A
+role that cannot mutate the workspace keeps the shared lane — there is nothing
+for a revert to undo, and a world forked at HEAD would only hide the session's
+live tree from a dispatch that just reads it.
+
+**The upgrade is a guard, not the everyday mechanism.** Today's role routing
+already isolates a workspace-mutating dispatch: it goes to the proposal lane or
+the report lane, both of which own a world, and it reaches the shared lane only
+when the role cannot write. So in practice the upgrade fires for a lane source
+that is not the role registry — a hand-built or plugin `LaneForRole` routing a
+workspace-mutating role to shared while a retained runtime exists (the nested
+seam is not one: a nested dispatch has no retained runtime and is refused under
+`require_reversible` instead) — and the promise supervision delivers in a
+default session is the second one: a snapshot that cannot be captured fails the
+dispatch instead of running it unrevertable, for a dispatch whose scope owns an
+isolated world; a dispatch on the session's shared sandbox was never revertable
+with or without the snapshot, so a capture failure there does not abort it. The default (key
+absent) does NOT arm any of this — the rules engine is on by default, and
+reading that as "supervise every dispatch" would change where every shared-lane
+dispatch runs for sessions that never asked. `supervisor.require_reversible:
+true` narrows the armed path further: a dispatched scope with no isolated
+workspace of its own then fails at start rather than run with `Reversible`
+false.
+
+The armed path covers `delegate` dispatches only (foreground and background).
+A workflow-hosted sub-agent dispatch goes through its own door
+(`internal/workflow/host`) and is not start-gated: it already runs on the
+report or proposal lane, both isolated when a retained runtime is configured,
+but a failed pre-run capture is still a warning there and
+`require_reversible` does not refuse it. Workflow supervision proper is the
+phase-2 `fanout`/workflow seam (design §4.11); until it lands, do not read
+`supervisor.enabled` as covering a workflow run's dispatches.
+
 | Key | Default | Meaning |
 |---|---|---|
-| `supervisor.enabled` | on (tracing-gated) | Master switch for the advisory rules engine |
+| `supervisor.enabled` | on (tracing-gated) | Master switch for the advisory rules engine, on by default whenever tracing is on. An EXPLICIT `true` ALSO arms the supervised dispatch path above, which moves a workspace-mutating dispatch off the shared lane; the rules engine cannot arm it, because an absent key reads as on-by-default. The `supervisor.policy` key (not in this release; tracked as yaah-0nbb) is what will own dispatch routing explicitly |
 | `supervisor.halt_root` | `false` | Allow a rule or the `supervisor` tool to halt the session's root scope |
+| `supervisor.require_reversible` | `false` | Refuse a SUPERVISED dispatch whose scope owns no isolated workspace (a pure-causal fork, a container session's shared root, a session with no retained runtime) instead of running it with `Reversible` false. Only ever narrows a supervised dispatch: with supervision off, or on an unsupervised dispatch, nothing reads it; and it reaches `delegate` dispatches only — a workflow-hosted dispatch is not on the supervised path yet (design §4.11). It therefore has NO effect without an explicit `supervisor.enabled: true`, and session startup warns when it is set alone. Set it for measurement; leave it off for interactive use |
 | `supervisor.rules.destructive_tool.enabled` | `true` | Advisory warning on destructive tool declarations; inject-only. A `write` is classified by what the tool observed: overwriting an existing file warns, first-time creation passes, and a missing observation warns conservatively. Shell and `delete` matches are unchanged. |
 | `supervisor.rules.destructive_guard.enabled` | `true` | Blocking pre-dispatch net for sub-agent `bash`/`powershell` and command-running `background_process` calls, with a synthesized denial result. Each denial stays legible afterwards: `supervisor status` lists the refused command with the reason beside the count, and the refused sub-agent's own trace gains a `yaah.supervisor.shell_guard.deny.v1` fact naming the rule, the tool, the command, and the reason |
 | `supervisor.rules.destructive_guard.allow_commands` | `[]` (deny every shell call) | Global default allowlist: shell commands a sub-agent may run, as anchored globs matched in full against the raw command (`*` crosses arguments, so `git status*` admits `git status -s` and refuses `echo git status`). A command carrying a shell control or redirection operator (`;`, `&&`, `||`, `|`, backtick, `$(`, `${`, `>`, `<`, newline) matches no pattern and is always denied, so a list cannot be escaped by chaining or redirecting. Empty stays deny-all. A role's own list — `agents.subagent.roles.<role>.allow_commands`, else the role file's `allow_commands` — replaces this list for that role; an explicit role-level `[]` is deny-all, not inherit |
 | `supervisor.rules.high_error_rate.{enabled,threshold,window}` | `true`, `0.5`, `10` | Guidance when a scope's recent tool error rate crosses the threshold |
 | `supervisor.rules.stuck_detection.{enabled,repeat_threshold}` | `true`, `3` | Guidance when a scope repeats the same tool call |
+
+**With `agents.subagent.mode: shared` there is no lane to upgrade to.** The
+supervised dispatch path upgrades a shared-lane dispatch whose role can change
+the workspace to the report lane, which needs a retained runtime to provision
+an isolated world. A session with no retained runtime therefore runs its
+supervised dispatches on the shared workspace with `Reversible` false, and
+`supervisor.require_reversible: true` refuses every dispatch after the scope is
+forked.
+
+`require_reversible: true` also refuses two model-reachable escapes: a per-call `supervise: false` on a supervised session (operator authority beats the opt-out — remove the argument or turn the key off), and a NESTED dispatch, i.e. a sub-agent calling `delegate` itself. A nested dispatch has no proposal runtime of its own, so its child runs on the session tree, outside the isolated world a revert of the parent rolls back; refusing it is what keeps the key's promise until nested dispatches inherit a lane (design §9). Without the key both run exactly as before.
+
+The keys compose as: `mode:
+shared` decides where dispatch runs, `enabled: true` decides whether the
+supervised path is armed, and `require_reversible` decides whether an armed
+dispatch that cannot roll back is allowed to run. All three reach
+`delegate` dispatches; a workflow-hosted dispatch is not on the armed path
+(see above, design §4.11).
 
 ## Sub-agent dispatch lane and confinement
 

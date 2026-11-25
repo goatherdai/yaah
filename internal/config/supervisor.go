@@ -21,6 +21,16 @@ type SupervisorConfig struct {
 	// (key unset) means on: tracing is already the opt-in, and the rules
 	// exist to make supervision automatic. Explicit false disables the
 	// whole engine — no rule fires, no intervention is bridged.
+	//
+	// An EXPLICIT true also turns on supervised dispatch (design §4.2,
+	// yaah-ugtl): a dispatch whose lane routing would run it on the shared
+	// workspace is upgraded to the isolated report lane, and a failed
+	// pre-run capture fails that dispatch at start instead of warning. That
+	// consequence is why only an explicit true counts — the documented
+	// default is on for the advisory rules, and reading the default as
+	// "supervise every dispatch" would upgrade every shared-lane dispatch
+	// for sessions that never asked (design D5). RequireReversible narrows
+	// it further; see docs/configuration.md.
 	Enabled *bool `yaml:"enabled"`
 
 	// HaltRoot opts into supervisor halt of the session's root scope: a
@@ -32,6 +42,15 @@ type SupervisorConfig struct {
 	// interactive session is a big hammer. Root inject needs no gate:
 	// steering the session is reversible.
 	HaltRoot *bool `yaml:"halt_root"`
+
+	// RequireReversible refuses a supervised dispatch whose workspace it
+	// cannot roll back (design §4.2): a scope that owns no isolated
+	// workspace — a container session, a shared root — fails at start
+	// instead of running with Reversible false. Off by default, so an
+	// unrevertable dispatch proceeds exactly as it did before; the
+	// measurement sets it (design §7). It only ever narrows a supervised
+	// dispatch: with supervision off nothing consults it.
+	RequireReversible bool `yaml:"require_reversible"`
 
 	// Rules configures the individual advisory rules. A nil rule is
 	// enabled with its defaults.
@@ -107,6 +126,22 @@ type SupervisorStuckDetectionConfig struct {
 // the master switch is off only when it was set to false explicitly.
 func (s SupervisorConfig) EngineEnabled() bool {
 	return s.Enabled == nil || *s.Enabled
+}
+
+// DispatchSupervised reports whether this session's DISPATCHES run supervised
+// (design §4.2 decision D5, yaah-ugtl): only an EXPLICIT enabled: true arms
+// the supervised dispatch path. The rules engine's default-on (EngineEnabled)
+// deliberately does NOT arm it, and until the `supervisor.policy` key lands
+// (yaah-0nbb) no other signal exists: reading the default as "supervise every
+// dispatch" would upgrade every shared-lane dispatch and make a failed pre-run
+// capture fatal for sessions that never asked for supervision — against D5,
+// whose whole claim is that the default is today's behavior.
+//
+// Like the other resolutions on this type, this is the single place the
+// decision is derived: cmd wiring calls it instead of re-deriving the pointer
+// test (review M-r5).
+func (s SupervisorConfig) DispatchSupervised() bool {
+	return s.Enabled != nil && *s.Enabled
 }
 
 // DestructiveRuleEnabled reports the advisory destructive rule's

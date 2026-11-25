@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime"
 	"slices"
@@ -1310,6 +1311,13 @@ func wireDispatchPosture(st *loopInfraStage, cfg *config.Config, opts SessionOpt
 // fallible: a store that would not open or a root scope that could not be
 // created already disabled the pieces this tool would have carried.
 func buildDelegateTool(st *loopInfraStage, cfg *config.Config, lc *sessionConfig, ws *workspaceStage, tr *toolRegistryStage, posture dispatchPosture, subs subAgentDefaults) {
+	// Diagnose the one supervisor posture that reads as a demand and enforces
+	// nothing before the tool is built (yaah-ugtl review M3): require_reversible
+	// set without an explicit enabled: true. Warned here because the two keys'
+	// precedence lives in this file (supervisedDispatches); a warning, not an
+	// error — see warnOnInertRequireReversible.
+	warnOnInertRequireReversible(cfg)
+
 	st.taskTool = runner.NewDelegateTool(runner.DelegateToolOpts{
 		Provider:              lc.provider,
 		ProviderName:          lc.providerName,
@@ -1346,8 +1354,16 @@ func buildDelegateTool(st *loopInfraStage, cfg *config.Config, lc *sessionConfig
 		// the runtime too, for report-lane sibling worlds; its proposal lane is
 		// routed shared below because there is no host worktree to settle into.
 		// agents.subagent.mode: shared remains the opt-out.
-		SubNetwork:           posture.network,
-		Retain:               posture.retainedLane,
+		SubNetwork: posture.network,
+		Retain:     posture.retainedLane,
+
+		// Supervised dispatch path (design §4.2, yaah-ugtl): with
+		// supervision on, a lane routing would send to the shared workspace
+		// is upgraded to the isolated report lane, a failed pre-run capture
+		// fails the dispatch at start, and require_reversible refuses a
+		// scope that cannot roll back.
+		Supervised:           supervisedDispatches(cfg),
+		RequireReversible:    requireReversibleDispatches(cfg),
 		RetainedRepoPath:     cfg.Agent.Default.RetainedRepoPath,
 		RetainedWorktreeRoot: cfg.Agent.Default.RetainedWorktreeRoot,
 		RetainedBootstrap:    cfg.Agent.Default.RetainedWorktreeBootstrap,
@@ -1410,6 +1426,58 @@ func wireLaneRouting(st *loopInfraStage) {
 			return tools.LaneProposal
 		}
 	}
+	// RoleMutatesWorkspace carries the same live-role fact the routing above
+	// decides on. The supervised lane upgrade (design §4.2, yaah-ugtl) reads
+	// it because a fork is only worth buying where a revert has something to
+	// undo: a read-only supervised dispatch keeps the shared lane, and the
+	// fresh reads that lane exists for.
+	st.taskTool.RoleMutatesWorkspace = func(role string) bool {
+		return subagent.RoleMutatesWorkspace(subagent.SubAgentRole(role))
+	}
+}
+
+// supervisedDispatches reports whether this session's dispatches run
+// supervised. A thin hop over config's own resolution — the D5 precedence and
+// its rationale live on SupervisorConfig.DispatchSupervised next to the other
+// supervisor resolutions (EngineEnabled and friends), so the wiring cannot
+// drift from them (review M-r5).
+func supervisedDispatches(cfg *config.Config) bool {
+	return cfg.Agent.Default.Supervisor.DispatchSupervised()
+}
+
+// requireReversibleDispatches reports whether supervisor.require_reversible
+// is on for this session. Extracted from buildDelegateTool so the config hop
+// itself is pinned by a test: the key gates two enforcement sites (the
+// delegate tool's refuse logic and the runner start gate), and a wiring
+// refactor that drops it must fail a test, not a measurement run.
+func requireReversibleDispatches(cfg *config.Config) bool {
+	return cfg.Agent.Default.Supervisor.RequireReversible
+}
+
+// requireReversibleWithoutSupervision reports the one combination that reads
+// as an operator demand but enforces nothing (yaah-ugtl review M3):
+// require_reversible is carried to the delegate tool and the runner
+// unconditionally, but every reader of it is behind supervisedDispatch — the
+// key only ever NARROWS a supervised dispatch, so with supervision disarmed it
+// refuses nothing.
+func requireReversibleWithoutSupervision(cfg *config.Config) bool {
+	return requireReversibleDispatches(cfg) && !supervisedDispatches(cfg)
+}
+
+// warnOnInertRequireReversible diagnoses that combination at session start.
+// A warning, not a refusal: a hard error would break existing configs over a
+// key that is harmless, and the fix is one line the operator can make at
+// leisure. It runs once per session build, which is once per session (a
+// multi-session process warns per session, as every other startup advisory
+// does).
+func warnOnInertRequireReversible(cfg *config.Config) {
+	if !requireReversibleWithoutSupervision(cfg) {
+		return
+	}
+	slog.Warn("supervisor.require_reversible has no effect without an explicit supervisor.enabled: true",
+		"key", "agents.default.supervisor.require_reversible",
+		"reason", "the key only narrows a SUPERVISED dispatch, and supervised dispatch is armed only by an explicit supervisor.enabled: true (the advisory rules engine's default-on does not arm it)",
+		"fix", "set agents.default.supervisor.enabled: true, or remove agents.default.supervisor.require_reversible")
 }
 
 // wireBackgroundJobs hands the job manager to the delegate tool, delivers

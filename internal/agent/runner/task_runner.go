@@ -24,6 +24,7 @@ import (
 	"github.com/goatherdai/yaah/internal/config"
 	"github.com/goatherdai/yaah/internal/memory"
 	"github.com/goatherdai/yaah/internal/permissions"
+	"github.com/goatherdai/yaah/internal/supervisionapi"
 	"github.com/goatherdai/yaah/internal/tools"
 	"github.com/goatherdai/yaah/internal/types"
 	"go.opentelemetry.io/otel/attribute"
@@ -172,6 +173,24 @@ type taskRunnerOpts struct {
 	// tick and prove the per-dispatch sequence keeps their scope keys
 	// apart.
 	now func() time.Time
+
+	// requireReversible refuses a SUPERVISED dispatch whose workspace it
+	// cannot roll back (supervisor.require_reversible, design §4.2): the
+	// scope owns no isolated sandbox, so a revert would roll other
+	// writers' work back or nothing at all. Whether a dispatch is
+	// supervised is per-dispatch (tools.SupervisedDispatch on the dispatch
+	// context); this flag is the session's demand, never a supervisor in
+	// its own right — with supervision off nothing consults it.
+	requireReversible bool
+
+	// supervised is THIS dispatch's RESOLVED supervision posture: the
+	// per-call `supervise` override over the session posture, resolved by
+	// the dispatching tool and read off the dispatch context at the start
+	// of the run. It is per-dispatch state rather than construction state
+	// so a nested delegate tool can be handed the same answer the dispatch
+	// that built it resolved (review M1) — the child of a supervised
+	// dispatch is supervised, the child of an opted-out one is not.
+	supervised bool
 }
 
 // dispatchClock returns the clock that stamps dispatch IDs: the test
@@ -335,6 +354,158 @@ func revertCanRollBack(subScope *goatherd.Scope, captured bool) bool {
 	return captured && revertOwnsSandbox(subScope)
 }
 
+// Refusals a supervised dispatch can fail at start with. They are values so a
+// caller can tell a supervision refusal from an ordinary dispatch failure
+// (design §4.2, yaah-ugtl), and they are DEFINED in supervisionapi so the
+// dispatch boundary can classify them without importing this package; these
+// aliases keep errors.Is identity on the runner side, where they are raised.
+var (
+	// ErrSupervisedCaptureFailed: the pre-run workspace capture failed, so
+	// the revert supervision promises has nothing to restore. Today's
+	// unsupervised behavior downgrades this to a warning. The dispatch
+	// boundary classifies it preflight_transient: a retry provisions a
+	// fresh world and takes a fresh capture in it.
+	ErrSupervisedCaptureFailed = supervisionapi.ErrSupervisedCaptureFailed
+
+	// ErrSupervisedCaptureSkipped: a dispatch that owns a workspace, with the
+	// runs registry that arms the capture present, never ATTEMPTED it. That
+	// is a wiring invariant violation, so the boundary classifies it
+	// configuration (final) — a retry would skip the capture again (yaah-ugtl
+	// review M4). A dispatch with no registry never had the seam; its refusal
+	// under require_reversible is ErrSupervisedNotReversible (review M2).
+	ErrSupervisedCaptureSkipped = supervisionapi.ErrSupervisedCaptureSkipped
+
+	// ErrSupervisedNotReversible: supervisor.require_reversible is on and
+	// this dispatch owns no isolated workspace, so a revert has nothing it
+	// could roll back without touching other writers' work.
+	ErrSupervisedNotReversible = supervisionapi.ErrSupervisedNotReversible
+)
+
+// supervisedStart is one dispatch's start posture, as the gate reads it
+// (design §4.2, yaah-ugtl). The struct exists because the deciding fields are
+// two bools that are easy to confuse at a call site — "a capture was
+// attempted" and "the capture succeeded" — and because the impossible
+// combination (a success AND an error) then has one stated reading.
+type supervisedStart struct {
+	// supervised is whether THIS dispatch runs under supervision. False
+	// switches the whole gate off before any other field is read.
+	supervised bool
+	// requireReversible is the session's supervisor.require_reversible:
+	// refuse a dispatch that can never roll back, rather than run it with
+	// Reversible false.
+	requireReversible bool
+	role              subagent.SubAgentRole
+	subScope          *goatherd.Scope
+	// runsAvailable records that the dispatch HAD the seam that arms the
+	// capture: capturePreRun is called from inside the supervision bridge
+	// block, which is entered only when the dispatch has both a scope and a
+	// runs registry. It is the fact rule 2 reads alongside captureAttempted
+	// (yaah-ugtl review M2): without the registry the capture was never
+	// armed, so "not attempted" says nothing about the wiring.
+	runsAvailable bool
+	// captureAttempted records that the pre-run capture actually ran.
+	// INVARIANT: a supervised dispatch that entered the bridge block — a
+	// scope with a sandbox AND a runs registry — always attempts it,
+	// because capturePreRun is called unconditionally right after the run
+	// registers, before anything else can start the loop. A false here with
+	// a sandbox and the registry present means an edit routed around that
+	// call, and the gate fails closed rather than start a run nothing
+	// snapshotted. A false with the registry ABSENT is not that: the seam
+	// never existed for this session, which rule 3 handles (Reversible is
+	// false with no capture, so require_reversible is what refuses it).
+	captureAttempted bool
+	// captured records that the capture succeeded; captureErr names why it
+	// did not. captureErr WINS if both are set: capturePreRun clears
+	// captured before it returns an error, so only a hand-assembled value
+	// can set both, and reading the success first would pass a failed
+	// capture.
+	captured   bool
+	captureErr error
+}
+
+// hasSandbox reports whether this dispatch's scope owns a workspace at all.
+func (in supervisedStart) hasSandbox() bool {
+	return in.subScope != nil && in.subScope.Sandbox() != nil
+}
+
+// supervisedStartRefusal decides whether a SUPERVISED dispatch may start
+// (design §4.2, yaah-ugtl): a supervised dispatch either can roll back or it
+// never starts.
+//
+// Three rules, in that order:
+//
+//  1. A failed pre-run capture is fatal WHERE THE CAPTURE DECIDES ANYTHING:
+//     a scope that owns an isolated sandbox. There, the run would otherwise
+//     proceed with Reversible false while the supervisor believes the revert
+//     capability it observed at dispatch start still holds — exactly the
+//     silent downgrade gap 7 of the design closes — and this applies with
+//     require_reversible off too: the flag is about scopes that can never
+//     roll back, not about snapshots that failed to land. A plain fork on
+//     the session's SHARED sandbox is the other case: it was never revertable
+//     with or without the snapshot (revertCanRollBack requires an isolated
+//     world), so a transient snapshot failure there breaks no guarantee and
+//     must not abort a dispatch deliberately kept shared (a read-only role,
+//     mode: shared). Rule 3 still refuses it under require_reversible, and
+//     without the flag it runs with Reversible false — capturePreRun's
+//     warning on the record (review M-r5).
+//
+//  2. A dispatch that HAS a workspace, HAD the seam that arms the capture
+//     (a runs registry — the supervision bridge), and never attempted it is
+//     refused for the same reason, read from the other side: the gate cannot
+//     tell a capture that was skipped from one that succeeded, so it treats
+//     "never asked" as "no snapshot" rather than assuming the better case.
+//     A scope with no sandbox at all (a pure-causal fork) is not this rule's
+//     case — it has nothing to capture, and rule 3 decides it.
+//
+//     The runsAvailable conjunct is what makes the rule honest (yaah-ugtl
+//     review M2). The capture is taken unconditionally ONLY inside the bridge
+//     block, which the runner enters when the dispatch has a scope AND a runs
+//     registry; a session with supervisor.enabled: true but no registry
+//     (tracing never came up, a non-session construction) has a sandboxed
+//     scope and a capture that was never ARMED. Reading that as a skipped
+//     capture made every such dispatch fail as a final configuration error —
+//     a wiring bug reported against the operator. With the registry absent
+//     the dispatch proceeds and reads Reversible false, which is the true
+//     statement: no snapshot was taken, so a revert has nothing to restore.
+//     Rule 3 is then the rule that refuses it under require_reversible,
+//     because revertCanRollBack is false without a capture.
+//
+//     This rule has its own sentinel (ErrSupervisedCaptureSkipped), and the
+//     message no longer has to name which refusal fired. Given the guard
+//     above, "never asked" can only mean the wiring that arms the capture did
+//     not run although the registry was there — a deterministic bug, which the
+//     dispatch boundary classifies `configuration` and does NOT retry. Rule
+//     1's failure is the opposite: a real capture against a world a fresh
+//     attempt may capture cleanly, so it is a retryable preflight transient.
+//
+//  3. With require_reversible on, a scope that owns no isolated sandbox (a
+//     container session's root is every sub-agent's workspace, a shared root
+//     is the session's, a pure-causal fork has none) is refused. Off, it
+//     proceeds with Reversible false, which is the honest report and the
+//     pre-yaah-ugtl behavior.
+//
+// An unsupervised dispatch returns nil before any rule, so the non-supervised
+// lane is byte-for-byte unaffected.
+func supervisedStartRefusal(in supervisedStart) error {
+	if !in.supervised {
+		return nil
+	}
+	if in.captureErr != nil && revertOwnsSandbox(in.subScope) {
+		return fmt.Errorf("sub-agent %s: %w: %v — without the snapshot a revert has nothing to restore, so the dispatch stops here rather than run unrevertable", in.role, ErrSupervisedCaptureFailed, in.captureErr)
+	}
+	if in.hasSandbox() && in.runsAvailable && !in.captureAttempted {
+		return fmt.Errorf("sub-agent %s: %w: the gate cannot prove this run is revertable, so it stops here", in.role, ErrSupervisedCaptureSkipped)
+	}
+	if in.requireReversible && !revertCanRollBack(in.subScope, in.captured) {
+		scopeID := ""
+		if in.subScope != nil {
+			scopeID = in.subScope.ID()
+		}
+		return fmt.Errorf("sub-agent %s: %w: scope %s runs on a workspace this dispatch does not own (a pure-causal fork, a container session's shared root, or a session with no retained runtime) — supervisor.require_reversible is on, so give the dispatch an isolated lane or turn the key off", in.role, ErrSupervisedNotReversible, scopeID)
+	}
+	return nil
+}
+
 // makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
 // iteration caps, and nesting depth.
 //
@@ -354,6 +525,20 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		opts := dispatchOpts(opts, ctx)
 		role := subagent.SubAgentRole(params.Role)
 		profile := subagent.RoleProfileFor(role)
+
+		// Is THIS dispatch supervised? (design §4.2, yaah-ugtl) The
+		// dispatching tool resolves it — the per-call supervise override over
+		// the session posture — and carries the answer on the dispatch
+		// context, because SubAgentParams has no supervision field and a
+		// dispatch parameter is not a caller decision. Read before the bridge
+		// derives its own context, so the answer is the caller's.
+		//
+		// The RESOLVED answer also goes into opts, which is the per-dispatch
+		// shadow copy (see dispatchOpts), so the nested delegate tool this
+		// run registers resolves the way this dispatch did instead of falling
+		// back to a zero posture (review M1).
+		supervisedDispatch := tools.SupervisedDispatch(ctx)
+		opts.supervised = supervisedDispatch
 
 		// Permission rulesets (parity W5.7): the role's own rules apply
 		// first, the parent's inherited ceiling appended AFTER so an
@@ -501,19 +686,39 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// surfaces a note instead of failing the run.
 		var preRunState kerneltrace.WorkspaceState
 		preRunOK := false
-		capturePreRun := func(captureCtx context.Context) {
+		captureAttempted := false
+		var captureErr error
+		// capturePreRun snapshots the workspace the current generation
+		// starts from. It returns the capture error instead of only warning,
+		// because a SUPERVISED dispatch treats it as fatal (design §4.2,
+		// yaah-ugtl): the caller decides, so an unsupervised dispatch keeps
+		// today's warn-and-continue behavior unchanged.
+		//
+		// A failed capture also CLEARS the snapshot it could not replace
+		// (review M4): the successor path re-captures on the same scope, so
+		// a stale state left behind by the prior generation is a tree some
+		// later read could apply — rolling the workspace back to a state an
+		// older incarnation started from. preRunOK already gates every
+		// reader, and the state is zeroed anyway so the flag is not the only
+		// thing standing between a stale snapshot and an Apply.
+		capturePreRun := func(captureCtx context.Context) error {
 			preRunOK = false
+			preRunState = kerneltrace.WorkspaceState{}
 			if subScope == nil || subScope.Sandbox() == nil {
-				return
+				return nil
 			}
+			// Counted even when it fails: "attempted" is what the start gate
+			// needs to tell a skipped capture from a successful one.
+			captureAttempted = true
 			state, err := subScope.Sandbox().Capture(captureCtx)
 			if err != nil {
 				slog.Warn("live revert: pre-run workspace capture failed; a revert handoff will have no snapshot to restore",
 					"scope", subScope.ID(), "err", err)
-				return
+				return err
 			}
 			preRunState = state
 			preRunOK = true
+			return nil
 		}
 
 		// The snapshot's feature description (yaah-k0x1): the dispatch
@@ -614,7 +819,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			ctx = registerBridge()
 			// Snapshot the workspace this generation starts from, so a
 			// revert claimed against THIS generation can restore it.
-			capturePreRun(ctx)
+			captureErr = capturePreRun(ctx)
 			// Reversibility is fixed once the capture succeeds (yaah-k0x1):
 			// the registry's mark is generation-checked, so a capture that
 			// lands after a successor registered cannot mark the replacement,
@@ -636,6 +841,35 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 					opts.runs.Unregister(bridgeScopeID)
 				}
 			}()
+		}
+
+		// Supervised start gate (design §4.2, yaah-ugtl): a supervised
+		// dispatch either owns a rollback substrate or it does not start. The
+		// capture above is the reversible half — fatal here, because running
+		// on would leave the supervisor's snapshot advertising a revert whose
+		// snapshot never landed — and require_reversible turns a scope that
+		// can never roll back (a container session, a shared root) into a
+		// refusal instead of an unrevertable run. An unsupervised dispatch
+		// returns nil here without reading either flag.
+		if gaterr := supervisedStartRefusal(supervisedStart{
+			supervised:        supervisedDispatch,
+			requireReversible: opts.requireReversible,
+			role:              role,
+			subScope:          subScope,
+			runsAvailable:     opts.runs != nil,
+			captureAttempted:  captureAttempted,
+			captured:          preRunOK,
+			captureErr:        captureErr,
+		}); gaterr != nil {
+			if bridgeLive {
+				// The end-of-sequence cut's order, so a redirect waiter that
+				// observes Done can still find the run: Done closes while the
+				// registration is live, then the generation-guarded removal.
+				close(quiesce)
+				opts.runs.UnregisterGeneration(bridgeScopeID, runGen)
+				bridgeLive = false
+			}
+			return "", gaterr
 		}
 
 		// Per-turn checkpointing is enabled per role (subagent.roles.<name>.
@@ -949,7 +1183,22 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			if revertFailed {
 				break
 			}
-			capturePreRun(ctx)
+			// The successor generation's own pre-run snapshot. Deliberately
+			// NOT fatal under supervision: the dispatch's start was already
+			// gated, and a redirect/revert claimed THIS generation and
+			// deposited its guidance — failing here would destroy the
+			// supervisor's decision. The successor simply reads Reversible
+			// false, which is the honest report; capturePreRun has already
+			// warned.
+			//
+			// The error is discarded on purpose, and nothing is lost: the
+			// closure maintains preRunOK itself (cleared on entry, set only on
+			// success), so the call REPLACES the first run's outcome — a stale
+			// failure cannot veto the mark below when this capture succeeded
+			// (review finding L5) — and the start gate that reads captureErr
+			// already ran, before the sequence. A second writer of preRunOK here
+			// would be two owners for one invariant.
+			_ = capturePreRun(ctx)
 			// The successor's own mark (yaah-k0x1): the same predicate the
 			// first run's mark used, so the flag stays honest across the
 			// handoff.

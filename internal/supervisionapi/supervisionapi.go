@@ -28,6 +28,52 @@ var (
 	// this caller arrived second at a run that is still live — and must
 	// not launch a second replacement loop for it.
 	ErrAlreadyClaimed = errors.New("the run is already claimed for redirect")
+
+	// ErrSupervisedCaptureFailed is a supervised dispatch's pre-run
+	// workspace capture failing, which stops the dispatch before it starts
+	// (design §4.2, yaah-ugtl): supervision promises a revert, and a
+	// revert whose snapshot never landed has nothing to restore.
+	//
+	// It lives HERE, not in the runner that returns it, so the dispatch
+	// boundary can classify it (internal/dispatch/failure_class.go) — and
+	// the shipped class is preflight_transient, NOT final. The capture was
+	// taken once against the world that attempt had just provisioned, and
+	// that world is not coming back; but a capture can fail for a transient
+	// host reason (a full disk, a lock another writer holds), and a RETRY
+	// provisions a FRESH world and takes a FRESH capture in it, so the same
+	// snapshot may well land. Nothing the attempt did survives the retry,
+	// which is what makes a re-provision the honest policy. What stays
+	// deterministic is the decision for THIS dispatch: under
+	// require_reversible the runner's start gate reads the snapshot as
+	// absent and refuses the same dispatch rather than run it unrevertable.
+	// The runner re-exports it, so errors.Is identity holds on both sides.
+	ErrSupervisedCaptureFailed = errors.New("supervised dispatch refused at start: the pre-run workspace capture failed")
+
+	// ErrSupervisedCaptureSkipped is the runner's start gate reading a
+	// dispatch that OWNS a workspace, had the seam that arms the capture (a
+	// runs registry), and never ATTEMPTED the capture at all (design §4.2,
+	// yaah-ugtl). That is not a capture that failed, it is a wiring invariant
+	// violation: inside the supervision bridge the capture is taken
+	// unconditionally for any scope with a sandbox, so "never asked" — with
+	// the registry present — means the seam that arms it did not run. A
+	// dispatch with no registry never had the seam, so the gate does not read
+	// its silence as a bug (review M2): it proceeds with Reversible false, and
+	// require_reversible is what refuses it, via ErrSupervisedNotReversible.
+	// It is therefore classified `configuration` (a final
+	// class, internal/dispatch/failure_class.go) — the same broken wiring
+	// would skip the capture again, so a retry policy must not re-provision
+	// a world for it. Keeping it distinct from ErrSupervisedCaptureFailed is
+	// the point: that one is a preflight transient a fresh world may clear,
+	// and conflating them would let a deterministic bug be retried as if it
+	// were a full disk.
+	ErrSupervisedCaptureSkipped = errors.New("supervised dispatch refused at start: no pre-run workspace capture was attempted for a dispatch that owns a workspace")
+
+	// ErrSupervisedNotReversible is supervisor.require_reversible refusing
+	// a supervised dispatch that owns no isolated workspace (design §4.2):
+	// a pure-causal fork, a container session's shared root, or a session
+	// running directly on the shared workspace has nothing this dispatch
+	// could roll back without touching other writers' work.
+	ErrSupervisedNotReversible = errors.New("supervised dispatch refused at start: this dispatch has no isolated workspace it can roll back")
 )
 
 // RedirectHandle is a successful Redirect claim: the scope and the

@@ -74,6 +74,53 @@ agents:
 	}
 }
 
+// TestSupervisorRequireReversibleParses pins the YAML hop for
+// supervisor.require_reversible (yaah-ugtl review m3). The key is read
+// directly off the struct by two enforcement sites, so a typo in the
+// `yaml:"require_reversible"` tag would leave it permanently false in
+// production while every struct-level test still passed — the neighbouring
+// halt_root key has the same coverage in TestSupervisorStanza. Both the
+// explicit true and the absent-key default are pinned, because a tag that
+// decoded the key into nothing would fail the first and pass the second.
+func TestSupervisorRequireReversibleParses(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		config string
+		want   bool
+	}{
+		{
+			name: "explicit true parses from the config file",
+			config: `
+agents:
+  default:
+    supervisor: {enabled: true, require_reversible: true}
+`,
+			want: true,
+		},
+		{
+			name: "absent key defaults to off",
+			config: `
+agents:
+  default:
+    supervisor:
+      enabled: true
+`,
+			want: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writeConfig(t, tc.config)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := cfg.Agent.Default.Supervisor.RequireReversible; got != tc.want {
+				t.Errorf("supervisor.require_reversible = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestSupervisorHaltRootPrecedence pins the A3 flat key's backward
 // compatibility and the stanza's win: unset in the stanza, the legacy
 // supervisor_halt_root keeps gating the same switch; an explicit
@@ -333,5 +380,28 @@ agents:
 	}
 	if !cfg.Agent.Default.Supervisor.DestructiveGuardEnabled() {
 		t.Error("allow_commands must not disturb the guard's own switch")
+	}
+}
+
+// TestSupervisorDispatchSupervised pins D5's dispatch resolution where the
+// decision lives (review M-r5): only an EXPLICIT enabled: true arms the
+// supervised dispatch path, and the rules engine's default-on does not.
+func TestSupervisorDispatchSupervised(t *testing.T) {
+	yes, no := true, false
+	for _, tc := range []struct {
+		name string
+		en   *bool
+		want bool
+	}{
+		{"key absent is NOT armed", nil, false},
+		{"explicit true is armed", &yes, true},
+		{"explicit false is not armed", &no, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := SupervisorConfig{Enabled: tc.en}
+			if got := s.DispatchSupervised(); got != tc.want {
+				t.Errorf("DispatchSupervised() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
