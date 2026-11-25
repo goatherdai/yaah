@@ -423,6 +423,21 @@ func (b *Batch) ShouldDecide() bool {
 	return b.cfg.Trigger != TriggerOnChange || b.changed
 }
 
+// Live reports whether the batch has any live member, WITHOUT the trigger
+// fold ShouldDecide applies. It is the liveness question a loop-lifecycle
+// caller asks (HeadlessHost.Settle): under TriggerOnChange a quiet tick makes
+// ShouldDecide false while workers are still running, so settling a dispatch
+// by that answer would stop supervision with siblings mid-flight (PR #417
+// review finding 1). Same bootstrap guarantee as ShouldDecide: the first call
+// ingests, so the answer is about real scopes, not the pre-first-render empty
+// universe.
+func (b *Batch) Live() bool {
+	b.ensureIngested()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.members) > 0
+}
+
 // SnapshotText renders the LAST INGESTED snapshot as meta-agent prompt text
 // (design §4.3), threading the batch's own per-scope ages and the previous
 // render's labels so a worker keeps its name across ticks. It stores the
@@ -779,15 +794,6 @@ func (b *Batch) generationLocked(scopeID string) (uint64, bool) {
 	return b.runs.Generation(scopeID)
 }
 
-// changedSince is the TriggerOnChange verdict (design §4.4): a scope advanced
-// its Through cursor, a scope's consecutive-error count grew, or two scopes in
-// the batch named the same modified file. The first two are compared against
-// the previous snapshot; the file overlap is a property of the current one
-// alone.
-//
-// A scope APPEARING is not a change by this definition: a brand new worker has
-// no work to react to yet, and its cursor only advances once it does
-// something. That keeps a quiet dispatch quiet.
 // changedSince reports whether the ingest that produced members saw a change
 // since prev (design §4.4, TriggerOnChange). Three things count:
 //

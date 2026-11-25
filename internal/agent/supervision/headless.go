@@ -517,10 +517,17 @@ func (h *HeadlessHost) Running() bool {
 // settles: the common case (the last worker finished) ends the loop at settle
 // instead of one interval later, and the concurrent case keeps supervising.
 //
+// Liveness is Batch.Live — NOT ShouldDecide, which folds in the trigger: under
+// TriggerOnChange a quiet tick makes ShouldDecide false while other workers are
+// still live, and stopping there would leave the settling dispatch's siblings
+// unsupervised with nothing logged (PR #417 review finding 1).
+//
 // The membership read and the slot claim happen under ONE lock, so a new
 // dispatch starting at that instant either sees a live loop (and settles into it
 // on its own) or starts a fresh one — it can never be left supervised by a loop
-// that is already being torn down.
+// that is already being torn down (PR #417 review finding 2). Only the cancel
+// and the join run outside the lock: they must not hold it while a goroutine
+// winds down.
 func (h *HeadlessHost) Settle() {
 	if h == nil {
 		return
@@ -531,12 +538,45 @@ func (h *HeadlessHost) Settle() {
 		h.mu.Unlock()
 		return
 	}
-	if run.batch.ShouldDecide() {
+	if run.batch.Live() {
 		h.mu.Unlock()
 		return
 	}
+	run = h.claimLocked()
 	h.mu.Unlock()
-	h.Stop()
+	h.join(run)
+}
+
+// claimLocked detaches the current run and releases the arbiter under the
+// caller's held lock: a concurrent Start then either sees this run or an
+// already-cleared slot it can arm cleanly, and the stopping goroutine's own
+// release is skipped (it no longer owns the slot). Nil means no loop ran.
+func (h *HeadlessHost) claimLocked() *headlessRun {
+	run := h.run
+	if run == nil {
+		return nil
+	}
+	h.run = nil
+	if h.Release != nil {
+		h.Release()
+	}
+	return run
+}
+
+// join cancels the run's loop context and waits for its goroutine to exit.
+// Nil is a no-op. Called OUTSIDE h.mu: the loop goroutine may touch the host
+// while winding down, and a bounded join must not hold the lock it needs.
+func (h *HeadlessHost) join(run *headlessRun) {
+	if run == nil {
+		return
+	}
+	run.cancel()
+	select {
+	case <-run.done:
+	case <-time.After(h.joinTimeout()):
+		h.log().Warn("supervision: the headless loop did not join within its timeout; its goroutine is still running",
+			"timeout", h.joinTimeout())
+	}
 }
 
 // Stop cancels the loop, joins its goroutine and releases the arbiter. It is
@@ -546,27 +586,9 @@ func (h *HeadlessHost) Stop() {
 		return
 	}
 	h.mu.Lock()
-	run := h.run
-	if run == nil {
-		h.mu.Unlock()
-		return
-	}
-	// Claim the slot and release UNDER the lock: a concurrent Start then arms a
-	// successor batch cleanly, and the stopping goroutine's own release is
-	// skipped (it no longer owns the slot).
-	h.run = nil
-	if h.Release != nil {
-		h.Release()
-	}
+	run := h.claimLocked()
 	h.mu.Unlock()
-
-	run.cancel()
-	select {
-	case <-run.done:
-	case <-time.After(h.joinTimeout()):
-		h.log().Warn("supervision: the headless loop did not join within its timeout; its goroutine is still running",
-			"timeout", h.joinTimeout())
-	}
+	h.join(run)
 }
 
 // Close is session teardown's entry point: it stops and joins any live loop. It

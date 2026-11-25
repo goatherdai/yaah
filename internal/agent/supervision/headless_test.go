@@ -457,3 +457,52 @@ func TestHeadlessHost_StopJoinsACancelledLoop(t *testing.T) {
 	// Idempotent: a second Stop (session teardown after a settle) does nothing.
 	host.Stop()
 }
+
+// TestHeadlessHost_SettleKeepsTheLoopUnderOnChangeWhileAWorkerLives pins the
+// finding-1 bug shape at the host level: under TriggerOnChange a QUIET tick
+// (nothing changed since the last ingest) made the old ShouldDecide-based
+// liveness check report "no live worker", so the first dispatch to settle
+// stopped the loop while its siblings were still running — silently
+// unsupervised, nothing logged. Live() is the liveness question; the trigger
+// is not.
+func TestHeadlessHost_SettleKeepsTheLoopUnderOnChangeWhileAWorkerLives(t *testing.T) {
+	var live atomic.Bool
+	live.Store(true)
+	src := &scriptedSource{agents: func(int64) []supervisionapi.AgentSnapshot {
+		if !live.Load() {
+			return nil
+		}
+		return []supervisionapi.AgentSnapshot{liveAgent("scope:sub-a")}
+	}}
+	host := &HeadlessHost{
+		NewBatch: func() *Batch { return newLoopBatch(src, TriggerOnChange) },
+		Decider: &HeadlessDecider{
+			Prompt:   "p",
+			Complete: func(context.Context, string, string) (string, error) { return noDecisionsReply, nil },
+		},
+		JoinTimeout: 5 * time.Second,
+	}
+	settle := host.RunHook(context.Background(), "scope:sub-a")
+	if !host.Running() {
+		t.Fatal("the run hook must start the loop")
+	}
+	// Let enough identical snapshots pass that the batch's changed flag is
+	// false — the exact state in which ShouldDecide said "not live" while the
+	// worker was still running (1ms cadence, so this is many quiet ticks).
+	time.Sleep(50 * time.Millisecond)
+	settle()
+	if !host.Running() {
+		t.Fatal("under on-change, Settle stopped the loop during a QUIET tick while the worker was still live: sibling dispatches would be silently unsupervised")
+	}
+	// The last worker finishes: settling now stops AND joins the loop.
+	live.Store(false)
+	deadline := time.Now().Add(5 * time.Second)
+	for host.Running() && time.Now().Before(deadline) {
+		settle()
+		time.Sleep(10 * time.Millisecond)
+	}
+	if host.Running() {
+		t.Fatal("Settle did not stop the loop after the last worker finished")
+	}
+	host.Stop()
+}

@@ -1595,7 +1595,12 @@ func registerWakeTools(st *loopInfraStage, tr *toolRegistryStage, oneShot bool) 
 // instead, so an allowlist mentioning it is not reported as a typo.
 func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegistryStage) {
 	// Goatherd-dependent tool surface: the supervisor and proposal tools
-	// register only when the infrastructure above came up.
+	// register only when the infrastructure above came up. The snapshot source
+	// is hoisted OUT of the guard because the headless registration below runs
+	// in both branches: a degraded session under policy: headless must reach
+	// registerHeadlessSupervisor's own loud warning rather than silently get
+	// no loop (PR #417 review finding 6).
+	var snapSrc *supervision.Snapshotter
 	if st.scopeMgr != nil {
 		// Effect-stream snapshot (yaah-1050.1.1): a read-only join of this
 		// session's run registry with the tool facts each agent already
@@ -1604,7 +1609,6 @@ func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 		// and cannot conjure a store at the default path. Left nil when
 		// either half is missing: the tool then reports the snapshot as
 		// unavailable instead of inventing agents.
-		var snapSrc *supervision.Snapshotter
 		if st.runs != nil && st.traceStore != nil {
 			snapSrc = &supervision.Snapshotter{Runs: st.runs, Store: st.traceStore}
 		}
@@ -1631,12 +1635,6 @@ func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 		// registered and belt-admitted only under supervisor.policy: agent,
 		// so an unconfigured session's tool surface is unchanged.
 		registerSuperviseTool(st, cfg, tr, snapSrc)
-
-		// headless (yaah-0nbb, design §4.8): the host-driven measurement loop.
-		// Built here because this is where the snapshot source exists; it
-		// registers NO tool (the two modes are exclusive by the policy key), and
-		// the delegate hook installed above picks it up through st.headless.
-		registerHeadlessSupervisor(st, cfg, snapSrc)
 
 		// Proposal tool (Plan 7 Phase 2): settles the sealed proposals the
 		// retained lane produces. Registered only when that lane is live — a
@@ -1674,6 +1672,16 @@ func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 		tr.belt.Know("supervisor", "supervise")
 
 	}
+
+	// headless (yaah-0nbb, design §4.8): the host-driven measurement loop. It
+	// registers NO tool (the two modes are exclusive by the policy key), and
+	// the delegate hook installed above picks it up through st.headless.
+	// Called in BOTH branches of the guard: the function's own nil-input
+	// warning is the only signal a degraded session under policy: headless
+	// gets, and a call gated behind st.scopeMgr would never reach it — a
+	// configured measurement loop that silently never runs is the exact
+	// failure the warning exists to prevent (PR #417 review finding 6).
+	registerHeadlessSupervisor(st, cfg, snapSrc)
 
 	tr.reg.Register(&tools.ListSubAgentsTool{
 		Delegatable: subagent.DelegatableRole,

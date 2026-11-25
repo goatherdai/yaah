@@ -181,7 +181,6 @@ func CheckModel(cfg *config.Config, cfgErr error) Check {
 	return Check{Label: "Default model", Status: "OK", Detail: cfg.Agent.Default.Model}
 }
 
-// CheckSubAgents reports the sub-agent provider/model configuration.
 // CheckSupervisor reports the supervisor posture (yaah-0nbb, design §4.9):
 // the policy mode and what that mode is configured with, plus the two
 // dispatch-path switches. Mode validity is guaranteed at load
@@ -237,6 +236,7 @@ func CheckSupervisor(cfg *config.Config, cfgErr error) Check {
 	return Check{Label: "Supervisor", Status: status, Detail: strings.Join(parts, " · ")}
 }
 
+// CheckSubAgents reports the sub-agent provider/model configuration.
 func CheckSubAgents(cfg *config.Config, cfgErr error) Check {
 	if cfgErr != nil {
 		return Check{Label: "Sub-agents", Status: "WARN", Detail: "config not loaded"}

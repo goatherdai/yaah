@@ -764,7 +764,14 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		var bridgeScopeID string
 		var runGen uint64
 		var registerBridge func() context.Context
-		var superviseCtx context.Context
+		// The host-supervision hook's context: the dispatch's own, captured
+		// before any generation replaces it, so a halt or a redirect handoff
+		// (both of which cancel the CURRENT generation's context) never stops
+		// host-side supervision for the workers still running. Captured
+		// unconditionally at its declaration (PR #417 review finding 7): the
+		// bridge guard below decides WHETHER supervision happens, not what its
+		// context is, and the hook call site has its own bridgeLive check.
+		superviseCtx := ctx
 		bridgeLive := false
 		if subScope != nil && opts.runs != nil {
 			// The sequence's root context: every generation's cancellable
@@ -773,11 +780,6 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			// context — WithCancel, never WithoutCancel (finding #8) —
 			// and still answers to halt, deadline, and interrupts.
 			baseCtx := ctx
-			// The host-supervision hook's context: the dispatch's own, captured
-			// before any generation replaces it, so a halt or a redirect handoff
-			// (both of which cancel the CURRENT generation's context) never stops
-			// host-side supervision for the workers still running.
-			superviseCtx = baseCtx
 			// Quiesce is a property of the SEQUENCE (finding #2): one
 			// channel for every generation, created here and closed ONCE
 			// at the end of the sequence while the last registration is
