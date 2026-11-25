@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.214.0](https://github.com/goatherdai/yaah/compare/v0.213.0...v0.214.0) (2026-11-25)
+
+
+### Features
+
+* **supervision:** revert by construction for supervised dispatches (yaah-ugtl) ([#411](https://github.com/goatherdai/yaah/issues/411)) ([b9edc87](https://github.com/goatherdai/yaah/commit/b9edc876999e42d1828a2e90006313e099aee813))
+
 ## [0.213.0](https://github.com/goatherdai/yaah/compare/v0.212.0...v0.213.0) (2026-11-25)
 
 
