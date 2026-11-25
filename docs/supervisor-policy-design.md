@@ -159,14 +159,18 @@ Field-for-field with Appendix E, per agent:
 | cumulative event count | `Calls` | exists |
 | consecutive-error count | derived from `Trail` statuses | new, derived |
 | modified-file set | `ModifiedFiles` | exists |
-| last action, and how many ticks ago | `LastAction` plus `Batch` state | age is new |
+| last action, and how many ticks ago | `Batch` state: `TickState.LastIntervention` and its age (`ticks_ago`) | new |
 | trailing 25 tool calls (about 150 B each) | `Trail`, 160 B of args | exists |
 | in-flight calls | the host's tool-start events, held in memory by the `Batch` | new |
 | — | `Reversible`, `Redirectable` per scope | new |
 
 Age is ticks since this batch last acted on the scope, kept by the `Batch`,
 exactly as the released loop keeps `ticks_since_last_action`. No kernel
-timestamp is needed for parity. A per-effect timestamp, which would tell
+timestamp is needed for parity. The row's "last action" is therefore the
+META-AGENT's last intervention on the scope, never `AgentSnapshot.LastAction`:
+that field is the scope's own most recent tool call, a different fact, which
+the supervisor tool's status view prints as `last:` and which the rendered
+text does not carry (§4.3). A per-effect timestamp, which would tell
 "working" from "wedged", remains the declared future work in
 `internal/supervisionapi` and is not a prerequisite here.
 
@@ -193,8 +197,10 @@ true by construction:
 
 - `internal/supervision/render.go` turns a `Snapshot` into text under a
   token budget (default 3K, configurable) covering the snapshot alone —
-  headless mode pairs it with a ~1.05K-token system prompt, so a caller that
-  sends both reserves that share and passes a reduced budget. The tool and
+  headless mode pairs it with a ~1.4K-token system prompt (the 4200-byte
+  asset under this package's chars/4 × 1.3 estimator, ≈ 1365; a bare chars/4
+  understates it by about a third), so a caller that sends both reserves that
+  share and passes a reduced budget, ~4.4K together. The tool and
   the headless decider use the same renderer. Scope labels are short (`w1`,
   `w2`, …) so decisions can name them: within one snapshot a label is a pure
   function of the scope set (ScopeID ascending), never of the snapshot's

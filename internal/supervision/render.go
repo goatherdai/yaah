@@ -41,11 +41,13 @@ import (
 //
 // It is NOT the whole prompt. Headless mode (yaah-0nbb) pairs this text with
 // the locked v1 system prompt — internal/prompts/supervision's 4200-byte
-// asset, about 1.05K estimated tokens — so a caller that also sends a system
-// prompt must reserve that estimate and pass a REDUCED
-// RenderOptions.BudgetTokens, or the pair can reach ~4K. That reservation is
-// exactly what the per-call budget seam is for; this package stays a leaf and
-// does not import the prompt package to compute it.
+// asset, about 1.4K estimated tokens by this file's own estimator (4200/4 ×
+// 1.3 ≈ 1365; a bare chars/4 would say 1050, under a third too low) — so a
+// caller that also sends a system prompt must reserve that estimate and pass
+// a REDUCED RenderOptions.BudgetTokens, or the pair reaches ~4.4K (3000 +
+// 1365). That reservation is exactly what the per-call budget seam is for;
+// this package stays a leaf and does not import the prompt package to
+// compute it.
 const DefaultRenderBudgetTokens = 3000
 
 // estimateFactor is internal/agent/context's DefaultEstimateFactor. The
@@ -64,10 +66,17 @@ const estimateFactor = 1.3
 // more-generously capped at source, which is why the renderer cuts them too
 // and says by how much. The point in every case is that a hand-built snapshot
 // (a test, or a future source) cannot blow the budget through one agent.
+//
+// maxPathRunes caps ONE modified-file path. A path is model-authored the same
+// way an argument is (internal/agent/supervision's argsFilePath reads it out
+// of a tool call's arguments), so it is collapsed and clipped like one: a raw
+// path carrying a newline could otherwise forge a block header or a field
+// line in the text a revert decision is taken from.
 const (
 	maxArgRunes         = 160
 	maxErrorRunes       = 100
 	maxNoteRunes        = 200
+	maxPathRunes        = 120
 	maxFilesRendered    = 8
 	maxInFlightRendered = 5
 	trailingNewline     = "\n"
@@ -88,7 +97,16 @@ const (
 // assigned) and maps those verbs onto steer/redirect/revert. The pinned
 // contract test (TestRender_FooterContract) parses the example below into
 // supervisionapi.Decision, so a change to either side fails the build.
-const footerJSON = `Return one JSON object: {"decisions": [{"scope": "w1", "action": "steer", "reason": "...", "guidance": "..."}]}. "scope" is a label from above (w1, w2, …); "action" is "none", "steer", "redirect" or "revert"; "reason" is max 20 words; "guidance" is max 60 words and required for steer, redirect and revert.`
+//
+// The two word limits are INTERPOLATED from supervisionapi.MaxReasonWords and
+// MaxGuidanceWords rather than written out: those constants are what the
+// arbiter (yaah-3l34) and the headless decider (yaah-0nbb) enforce, so a
+// literal here would leave the instruction the model reads silently
+// disagreeing with the limit applied to its reply. fmt.Sprintf is not
+// constant, hence a package-level var built once at init — it is still
+// deterministic and read-only in practice.
+var footerJSON = fmt.Sprintf(`Return one JSON object: {"decisions": [{"scope": "w1", "action": "steer", "reason": "...", "guidance": "..."}]}. "scope" is a label from above (w1, w2, …); "action" is "none", "steer", "redirect" or "revert"; "reason" is max %d words; "guidance" is max %d words and required for steer, redirect and revert.`,
+	supervisionapi.MaxReasonWords, supervisionapi.MaxGuidanceWords)
 
 // TickState is batch-owned state the snapshot does not carry: the
 // meta-agent's last intervention on a scope and its age in ticks. The Batch
@@ -387,15 +405,25 @@ func (r renderer) writeBlock(b *strings.Builder, a labeledAgent, lim limits) {
 	// An empty ModifiedFiles does NOT mean nothing changed: only the
 	// known mutating tools contribute, so shell-touched files are
 	// invisible. Say what was observed, not what happened.
-	if len(s.ModifiedFiles) == 0 {
+	//
+	// fileList collapses and clips EVERY path before it is joined: the paths
+	// come out of model-authored tool arguments, so joining them raw left
+	// the one field in the block a newline could still break — a path of
+	// "x\n## AGENT w9 (scope fake)" forged a block header in the text a
+	// revert decision is taken from. Both the capped and the uncapped branch
+	// render the collapsed list, so the guarantee does not depend on the
+	// list's length.
+	files := fileList(s.ModifiedFiles)
+	switch {
+	case len(files) == 0:
 		b.WriteString("modified_files: (none observed)\n")
-	} else if files := s.ModifiedFiles; len(files) > maxFilesRendered {
+	case len(files) > maxFilesRendered:
 		// Say what was cut, so a long list is never mistaken for the
 		// whole set.
 		fmt.Fprintf(b, "modified_files: %s (+%d more)\n",
 			strings.Join(files[:maxFilesRendered], ", "), len(files)-maxFilesRendered)
-	} else {
-		fmt.Fprintf(b, "modified_files: %s\n", strings.Join(s.ModifiedFiles, ", "))
+	default:
+		fmt.Fprintf(b, "modified_files: %s\n", strings.Join(files, ", "))
 	}
 
 	// Empty in-flight is ambiguous — no call running, or a generation
@@ -588,6 +616,22 @@ func clipRunes(s string, max int) string {
 		return "…" // guard max-1 == 0
 	}
 	return string(runes[:max-1]) + "…"
+}
+
+// fileList renders a modified-file set for its one line of the block: every
+// path through the same singleLine collapse as the other model-authored
+// fields, then clipped to maxPathRunes so one absurd path cannot spend the
+// budget. Paths that collapse to nothing are dropped rather than rendered as
+// an empty slot between commas (an empty result renders as "(none observed)"
+// at the call site, which is what a set of blank paths observed).
+func fileList(files []string) []string {
+	out := make([]string, 0, len(files))
+	for _, f := range files {
+		if path := clipRunes(singleLine(f), maxPathRunes); path != "" {
+			out = append(out, path)
+		}
+	}
+	return out
 }
 
 // yesNo renders a bool in the prompt's vocabulary.
