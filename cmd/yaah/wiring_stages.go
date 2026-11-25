@@ -1355,7 +1355,7 @@ func buildDelegateTool(st *loopInfraStage, cfg *config.Config, lc *sessionConfig
 		// fails the dispatch at start, and require_reversible refuses a
 		// scope that cannot roll back.
 		Supervised:           supervisedDispatches(cfg),
-		RequireReversible:    cfg.Agent.Default.Supervisor.RequireReversible,
+		RequireReversible:    requireReversibleDispatches(cfg),
 		RetainedRepoPath:     cfg.Agent.Default.RetainedRepoPath,
 		RetainedWorktreeRoot: cfg.Agent.Default.RetainedWorktreeRoot,
 		RetainedBootstrap:    cfg.Agent.Default.RetainedWorktreeBootstrap,
@@ -1431,6 +1431,15 @@ func wireLaneRouting(st *loopInfraStage) {
 func supervisedDispatches(cfg *config.Config) bool {
 	s := cfg.Agent.Default.Supervisor
 	return s.Enabled != nil && *s.Enabled
+}
+
+// requireReversibleDispatches reports whether supervisor.require_reversible
+// is on for this session. Extracted from buildDelegateTool so the config hop
+// itself is pinned by a test: the key gates two enforcement sites (the
+// delegate tool's refuse logic and the runner start gate), and a wiring
+// refactor that drops it must fail a test, not a measurement run.
+func requireReversibleDispatches(cfg *config.Config) bool {
+	return cfg.Agent.Default.Supervisor.RequireReversible
 }
 
 // wireBackgroundJobs hands the job manager to the delegate tool, delivers

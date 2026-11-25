@@ -76,3 +76,19 @@ func TestSupervisedDispatches(t *testing.T) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// TestRequireReversibleDispatches pins the config hop for
+// supervisor.require_reversible: buildDelegateTool reads the key through this
+// helper, so a wiring refactor that drops it fails here instead of silently
+// disarming both enforcement sites (the tool's refusals and the runner start
+// gate).
+func TestRequireReversibleDispatches(t *testing.T) {
+	cfg := &config.Config{}
+	if got := requireReversibleDispatches(cfg); got {
+		t.Error("requireReversibleDispatches on a zero config = true, want false")
+	}
+	cfg.Agent.Default.Supervisor.RequireReversible = true
+	if got := requireReversibleDispatches(cfg); !got {
+		t.Error("requireReversibleDispatches with the key on = false, want true")
+	}
+}
