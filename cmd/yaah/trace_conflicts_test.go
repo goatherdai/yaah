@@ -87,8 +87,8 @@ func TestTraceConflictsAggregate(t *testing.T) {
 	if got.Sessions != 2 || got.Conflicts != 2 || got.ConflictSessions != 2 {
 		t.Errorf("sessions/conflicts = %d/%d/%d, want 2/2/2 (report %+v)", got.Sessions, got.Conflicts, got.ConflictSessions, got)
 	}
-	if got.Dispatches["retained"] != 1 || got.Dispatches["shared"] != 4 {
-		t.Errorf("dispatches = %+v, want retained=1 shared=4", got.Dispatches)
+	if got.Dispatches["retained"] != 1 || got.Dispatches["shared"] != 3 {
+		t.Errorf("dispatches = %+v, want retained=1 shared=3 (the unmapped owner counts under unresolved, not a lane)", got.Dispatches)
 	}
 	if got.UnresolvedDispatches != 1 {
 		t.Errorf("unresolved dispatches = %d, want 1", got.UnresolvedDispatches)
@@ -144,5 +144,70 @@ func TestTraceConflictsSessionWindow(t *testing.T) {
 	}
 	if !bytes.Contains(buf.Bytes(), []byte("session sess-only")) || !bytes.Contains(buf.Bytes(), []byte("dispatches")) {
 		t.Errorf("windowed report = %s", buf.String())
+	}
+}
+
+// TestTraceConflictsRedirectedDispatchNotFanout pins PR #400 review
+// finding 4: usage facts are per GENERATION now, so one owner carries a
+// fact per generation of the same dispatch. A redirected dispatch must
+// still count as ONE dispatch — never a manufactured second dispatch
+// that turns a single-dispatch session into a fan-out session.
+func TestTraceConflictsRedirectedDispatchNotFanout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("YAAH_HOME", home)
+	dir := filepath.Join(home, "traces")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setTestTraceConfig(t, home, dir)
+
+	path := filepath.Join(dir, "trace.sqlite")
+	store, err := kerneltrace.NewSQLiteTraceStore(path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close(context.Background())
+
+	// One redirected dispatch: two generations, two usage facts, one owner.
+	for _, gen := range []string{"g1", "g2"} {
+		_, err := store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
+			AppendIntentID: "sub-r1:usage:" + gen,
+			Groups: []kerneltrace.AppendGroup{{
+				TraceOwnerID: "sub-r1",
+				FactDrafts: []kerneltrace.RecordDraft{{
+					Mode:      kerneltrace.Capture,
+					SchemaRef: "yaah.subagent.usage.v1",
+					KindLabel: "subagent:usage",
+					Payload: map[string]any{
+						"lane": "retained", "parent_session": "sess-r",
+					},
+				}},
+			}},
+		})
+		if err != nil {
+			t.Fatalf("append usage %s: %v", gen, err)
+		}
+	}
+
+	var buf bytes.Buffer
+	cmd := newGoatherdTraceConflictsCmd()
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var got conflictAggregate
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("report is not JSON: %v\n%s", err, buf.String())
+	}
+	if got.Dispatches["retained"] != 1 {
+		t.Errorf("dispatches = %+v, want retained=1 (two facts, one dispatch)", got.Dispatches)
+	}
+	if got.Sessions != 1 {
+		t.Errorf("sessions = %d, want 1", got.Sessions)
+	}
+	if got.FanoutSessions != 0 || got.FanoutSessionsWithConflicts != 0 {
+		t.Errorf("fanout = %d/%d, want 0/0 — a redirect is not a fan-out", got.FanoutSessions, got.FanoutSessionsWithConflicts)
 	}
 }

@@ -357,6 +357,13 @@ func executeRedirect(mgr *goatherd.ScopeManager, runs runBridge, scopeID, guidan
 	case err == nil:
 	case errors.Is(err, supervisionapi.ErrAlreadyClaimed):
 		return fmt.Sprintf("A handoff is already claimed and in progress for %s; nothing was claimed. Let the current handoff finish, or use halt to stop the run.", scopeID), nil
+	case errors.Is(err, supervisionapi.ErrNoRun):
+		// The inspected generation finished (or was superseded, or passed
+		// its final adoption check) between the generation read and the
+		// claim: the race is a normal inspection-to-claim gap, not a
+		// fault (PR #400 review finding 1). Report it as an outcome so
+		// the supervisor re-inspects instead of taking a tool failure.
+		return fmt.Sprintf("No active run on %s to hand off — the run inspected finished or was replaced before it could be claimed; nothing was claimed. Re-inspect the scope (list_scopes) and redirect again if a new run is executing.", scopeID), nil
 	default:
 		return "", fmt.Errorf("supervisor: redirect claim failed: %w", err)
 	}

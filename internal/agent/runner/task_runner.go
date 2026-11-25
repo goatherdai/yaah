@@ -776,6 +776,19 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// (finding #1) — a cancelled predecessor's report never leaks out.
 		var result string
 		var runErr error
+		// A supervisor halt that lands after runOnce captured its stop
+		// fact — between the capture and a redirect-adoption check —
+		// would otherwise surface as the predecessor's own outcome: a
+		// successful result reported as completion, or the Handoff
+		// cancellation and trace dump read as an ordinary, retryable
+		// failure, while the recorded stop fact still denies the halt
+		// (PR #400 review finding 5). Re-capture the stop honestly and
+		// report the deliberate stop; never hand back the stale result.
+		lateHalt := func() {
+			result = ""
+			runErr = fmt.Errorf("sub-agent %s halted by supervisor", role)
+			tools.CaptureSubAgentStop(context.WithoutCancel(ctx), tools.SubAgentStop{HaltedBySupervisor: true})
+		}
 		for {
 			result, runErr = runOnce(ctx, prompt)
 			if !bridgeLive {
@@ -799,6 +812,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			// they hand off through Run.Handoff, so the flag now means
 			// exactly "a supervisor halted this sequence".
 			if haltedBySupervisor.Load() {
+				lateHalt()
 				break
 			}
 			// The successor gets a fresh steerCh (the old generation's
@@ -817,16 +831,19 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			// targeted the superseded generation): re-check once the
 			// fresh registration is live and end the sequence if so.
 			if haltedBySupervisor.Load() {
+				lateHalt()
 				break
 			}
 			// Live revert (yaah-1050.1.3): roll the workspace back to the
 			// PREVIOUS generation's pre-run snapshot BEFORE the successor
 			// loop starts — the rollback that separates revert from plain
-			// redirect (the LLM-side handoff above is identical). Then
-			// re-capture, so the successor's own pre-run snapshot is the
-			// rolled-back workspace. A missing substrate or snapshot
-			// skips the rollback with a note: a revert must never fail
-			// the run it handsoff.
+			// redirect (the LLM-side handoff above is identical). A missing
+			// substrate or snapshot skips the rollback with a note: the
+			// successor starts on the workspace as it is. A FAILED rollback
+			// is different: it leaves the workspace possibly half-reset, so
+			// the dispatch ends without a successor for explicit inspection
+			// before retrying. Then re-capture, so the successor's own
+			// pre-run snapshot is the rolled-back workspace.
 			revertFailed := false
 			if req.Revert {
 				// Ownership of the workspace this rollback would touch

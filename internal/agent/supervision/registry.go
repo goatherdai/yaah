@@ -44,14 +44,12 @@ var ErrNotHaltable = supervisionapi.ErrNotHaltable
 // not launch a second replacement loop for it.
 var ErrAlreadyClaimed = supervisionapi.ErrAlreadyClaimed
 
-// steerBuffer bounds one run's undelivered guidance. Steering is
-// between-turn delivery; a healthy run drains this every step.
-// SteerBuffer is the per-run steering channel capacity, exported for
-// the composition sites that create the channels the registry borrows.
-// ErrRedirectNotClaimed is the pre-claim counterpart: a handoff whose
-// generation no longer names a live run was never claimed.
-var ErrRedirectNotClaimed = supervisionapi.ErrRedirectNotClaimed
+// ErrAlreadyClaimed = errors.New("the run is already claimed for redirect")
 
+// SteerBuffer is the per-run steering channel capacity, exported for the
+// composition sites that create the channels the registry borrows. Steering
+// is between-turn delivery: a healthy run drains this buffer every step;
+// a full buffer means the run is wedged between turns.
 const SteerBuffer = 8
 
 // Run is one registered execution's bridge surface: the steering channel
@@ -383,13 +381,9 @@ func (r *Registry) clock() time.Time {
 	return r.now()
 }
 
-// Inject delivers guidance to the run's steering channel. The send
-// happens under the registry lock, and Unregister must be called before
-// the channel is closed, so a send can never land on a closed channel.
-// Non-blocking: a full buffer means the run is not consuming guidance.
 // MarkReturned records that the generation's loop has returned. The
 // registration stays live — the redirect machinery (claim, consume,
-// close) works exactly through the adoption window — but Inject must
+// close) works exactly through the adoption window — but steering must
 // stop claiming delivery: a buffered injection the returned loop will
 // never drain is a false "delivered" (PR #398 review finding).
 func (r *Registry) MarkReturned(scopeID string, gen uint64) {
@@ -428,6 +422,13 @@ func (r *Registry) CancelGeneration(scopeID string, gen uint64) (<-chan struct{}
 	return run.entry.Done, nil
 }
 
+// Inject delivers guidance to the run's steering channel. The send
+// happens under the registry lock, and Unregister must be called before
+// the channel is closed, so a send can never land on a closed channel.
+// Non-blocking: a full buffer means the run is not consuming guidance. A
+// run whose loop has returned (MarkReturned) is reported undelivered —
+// the caller's trace-side fallback is the honest outcome (PR #398 review
+// finding).
 func (r *Registry) Inject(scopeID, guidance string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

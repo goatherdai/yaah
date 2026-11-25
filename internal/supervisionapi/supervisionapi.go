@@ -25,12 +25,6 @@ var (
 	// this caller arrived second at a run that is still live — and must
 	// not launch a second replacement loop for it.
 	ErrAlreadyClaimed = errors.New("the run is already claimed for redirect")
-	// ErrRedirectNotClaimed reports a DepositRedirect at a live,
-	// generation-matching registration that carries no claim: guidance
-	// must never ride a slot the single-winner discipline did not open,
-	// so the deposit is refused rather than queued against a run nobody
-	// redirected.
-	ErrRedirectNotClaimed = errors.New("no redirect claim to deposit guidance onto")
 )
 
 // RedirectHandle is a successful Redirect claim: the scope and the
