@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -28,6 +29,21 @@ import (
 // a leading `(`, a verb it does not know — falls back to scanning the whole
 // line, which is precisely the previous behaviour. A classification failure can
 // therefore only keep a denial, never create an escape from one.
+//
+// Three rules keep the exemption honest, each added after review found an escape
+// through it (yaah-0lx8 review round 1). An exemption covers ONE segment, so a
+// segment whose verb is an interpreter or a wrapper withdraws every other
+// segment's exemption and the raw whole line is scanned instead: `echo 'rm -rf
+// /' | sh` runs the echo's argument as a command. An interpreter fed by a pipe
+// with no script of its own (`cat notes.txt | bash`) is refused outright,
+// because its input IS the program and nothing in the line can show otherwise.
+// A read-only verb counts as read-only only while its own flags keep it so —
+// sort's --compress-program and -o, tree's -o, git's -c and --output, sed's
+// write and execute commands — so an exemption is narrowed in the classifier
+// rather than trusted from the verb's name. And a device path is refused
+// wherever a scanned segment names one (`sort -o /dev/sda`, `sed 'w /dev/sda'`
+// write a disk with no shell redirect for checkRedirects to see), which is also
+// the rule that covers a line the tokenizer cannot classify at all.
 //
 // Known residual (deliberately out of scope here): a here-document body is not
 // modelled, so prose inside `cat > f <<'EOF' ... EOF` is still scanned as a
@@ -114,11 +130,19 @@ func clipSegment(seg string) string {
 func denyShellCommand(cmd string) (shellDenial, bool) {
 	segs, ok := splitShellSegments(cmd)
 	if !ok {
-		// Unclassifiable line: fail closed with exactly the old substring scan.
+		// Unclassifiable line: fail closed with the old substring scan, plus the
+		// device rule, which grouping would otherwise hide — `{ echo hi >
+		// /dev/sda; }` tokenizes as nothing at all.
 		if pattern, bad := scanDenyPatterns(cmd); bad {
 			return shellDenial{Pattern: pattern}, true
 		}
+		if device, bad := unsafeDeviceInLine(cmd); bad {
+			return shellDenial{Rule: fmt.Sprintf("device path %q", device)}, true
+		}
 		return shellDenial{}, false
+	}
+	if denial, bad := checkCodeVerbs(cmd, segs); bad {
+		return denial, true
 	}
 	for _, seg := range segs {
 		if denial, bad := classifySegment(seg); bad {
@@ -373,6 +397,102 @@ func wordTexts(toks []shTok) []string {
 	return words
 }
 
+// codeVerbs are the verbs that run something they are handed rather than
+// treating it as data: shells and language interpreters, whose argument or
+// standard input is a program, and wrappers, whose arguments are another
+// command. A line containing one cannot be cleared segment by segment, because
+// the data fed to it is exactly where the code hides.
+var codeVerbs = map[string]bool{
+	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "fish": true,
+	"python": true, "python3": true, "perl": true, "ruby": true, "node": true,
+	"awk": true, "gawk": true,
+	"xargs": true, "env": true, "eval": true, "exec": true, "source": true, ".": true,
+}
+
+// stdinCodeVerbs are the code verbs that read their program from standard input
+// when they are given no program of their own.
+var stdinCodeVerbs = map[string]bool{
+	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "fish": true,
+	"python": true, "python3": true, "perl": true, "ruby": true, "node": true,
+	"awk": true, "gawk": true,
+}
+
+// checkCodeVerbs refuses a line that hands code to an interpreter or wrapper. A
+// code verb withdraws the data exemption from every other segment — `echo 'rm
+// -rf /' | sh` is a command line whatever the echo's argument looks like — so
+// the RAW line is scanned, and an interpreter fed by a pipe with no program of
+// its own (`cat notes.txt | bash`) is refused outright, because its input is the
+// program.
+func checkCodeVerbs(cmd string, segs []shellSegment) (shellDenial, bool) {
+	for i, seg := range segs {
+		verbIdx := segmentVerb(seg.toks)
+		if verbIdx < 0 {
+			continue
+		}
+		verb := seg.toks[verbIdx].text
+		if !codeVerbs[verb] {
+			continue
+		}
+		if pattern, bad := scanDenyPatterns(cmd); bad {
+			return shellDenial{Pattern: pattern, Verb: verb, Segment: clipSegment(seg.raw)}, true
+		}
+		if i > 0 && feedsInterpreter(verb, wordTexts(seg.toks[verbIdx+1:])) && pipedInto(cmd, segs, i) {
+			return shellDenial{
+				Rule:    fmt.Sprintf("data piped into interpreter %q", verb),
+				Verb:    verb,
+				Segment: clipSegment(seg.raw),
+			}, true
+		}
+	}
+	return shellDenial{}, false
+}
+
+// feedsInterpreter reports whether the invocation reads its program from
+// standard input: an interpreter given no program of its own, or a wrapper whose
+// last word is such an interpreter (`env bash`, `xargs perl`).
+func feedsInterpreter(verb string, args []string) bool {
+	if stdinCodeVerbs[verb] {
+		for _, arg := range args {
+			if isEnvAssignment(arg) {
+				continue
+			}
+			if !strings.HasPrefix(arg, "-") {
+				return false // a positional argument supplies the program
+			}
+			for _, flag := range []string{"-c", "-e", "--eval", "-m", "--module"} {
+				if strings.HasPrefix(arg, flag) {
+					return false // the flag supplies the program
+				}
+			}
+		}
+		return true
+	}
+	// A wrapper hands its arguments to another command; the last word that is
+	// not a flag or an assignment is the command it will run.
+	for i := len(args) - 1; i >= 0; i-- {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") || isEnvAssignment(arg) {
+			continue
+		}
+		return stdinCodeVerbs[arg]
+	}
+	return false
+}
+
+// pipedInto reports whether the segment at index i is fed by a pipe rather than
+// started by a chain operator.
+func pipedInto(cmd string, segs []shellSegment, i int) bool {
+	if i <= 0 || i >= len(segs) {
+		return false
+	}
+	prev, cur := segs[i-1], segs[i]
+	end := prev.start + len(prev.raw)
+	if end < 0 || end > len(cmd) || cur.start > len(cmd) || end > cur.start {
+		return false
+	}
+	return strings.Contains(cmd[end:cur.start], "|")
+}
+
 // classifySegment refuses one segment or clears it.
 func classifySegment(seg shellSegment) (shellDenial, bool) {
 	// Redirect targets are checked for every segment, read-only ones included:
@@ -392,8 +512,22 @@ func classifySegment(seg shellSegment) (shellDenial, bool) {
 		// never commands, so the deny-list does not apply to them.
 		return shellDenial{}, false
 	}
-	if pattern, bad := scanDenyPatterns(redactMessageArgs(seg, verb, seg.toks[verbIdx+1:])); bad {
+	// Message values are prose, so they are blanked before anything scans the
+	// segment: a pattern or a device path quoted in a commit message is neither
+	// a command nor a write.
+	scanned := redactMessageArgs(seg, verb, seg.toks[verbIdx+1:])
+	if pattern, bad := scanDenyPatterns(scanned); bad {
 		return shellDenial{Pattern: pattern, Verb: verb, Segment: clipSegment(seg.raw)}, true
+	}
+	// A device path is a write whichever argument carries it: `sort -o
+	// /dev/sda` and `sed 'w /dev/sda'` reach the disk without a redirect for
+	// checkRedirects to see.
+	if device, bad := unsafeDeviceInLine(scanned); bad {
+		return shellDenial{
+			Rule:    fmt.Sprintf("device path %q", device),
+			Verb:    verb,
+			Segment: clipSegment(seg.raw),
+		}, true
 	}
 	if denial, bad := checkDDTargets(verb, args, seg); bad {
 		return denial, true
@@ -452,6 +586,25 @@ func unsafeDevicePath(p string) bool {
 		}
 	}
 	return true
+}
+
+// devicePathRE matches a candidate device path anywhere in a shell line: the
+// token starts at /dev/ and runs to a shell, flag or path delimiter.
+var devicePathRE = regexp.MustCompile(`/dev/[^\s;&|<>"'=:,()]+`)
+
+// unsafeDeviceInLine returns the first device node named anywhere in text that
+// must not be written to. It is the whole-text form of checkRedirects: it does
+// not care whether a shell operator marks the write, because a read-only verb's
+// own output flag (`sort -o /dev/sda`) and a sed write command (`sed 'w
+// /dev/sda'`) reach the same disk, and a line the tokenizer refuses outright is
+// still checked with it.
+func unsafeDeviceInLine(text string) (string, bool) {
+	for _, p := range devicePathRE.FindAllString(text, -1) {
+		if unsafeDevicePath(p) {
+			return p, true
+		}
+	}
+	return "", false
 }
 
 // checkRedirects refuses a redirect into a device node: `> /dev/sda` truncates a
@@ -548,13 +701,43 @@ func redactMessageArgs(seg shellSegment, verb string, args []shTok) string {
 				// Attached form: `--message="..."`
 				blank(tok)
 			case !strings.HasPrefix(flag, "--") && strings.HasPrefix(tok.text, flag) && len(tok.text) > len(flag):
-				// Cluster form: `-m"..."`, `-mseparate-word`. The flag itself
+				// Attached form: `-m"..."`, `-mseparate-word`. The flag itself
 				// carries no pattern, so the whole token is blanked.
 				blank(tok)
+			case isShortFlagCluster(tok.text, flag):
+				// Cluster form with the value in the next argument: `-am "..."`,
+				// `-anm "..."`. Without this the message is scanned and its prose
+				// mistaken for a command.
+				if i+1 < len(args) && args[i+1].isWord() {
+					blank(args[i+1])
+					i++
+				}
 			}
 		}
 	}
 	return string(redacted)
+}
+
+// isShortFlagCluster reports whether word is a single-dash cluster of letters
+// whose last letter is a value-taking short flag (`-am`, `-anm` for `-m`), the
+// form in which the flag's value arrives as the next argument.
+func isShortFlagCluster(word, flag string) bool {
+	if len(flag) != 2 || flag[0] != '-' || flag[1] == '-' {
+		return false
+	}
+	if len(word) < 3 || word[0] != '-' || word[1] == '-' {
+		return false
+	}
+	if word[len(word)-1] != flag[1] {
+		return false
+	}
+	for i := 1; i < len(word); i++ {
+		c := word[i]
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
+			return false
+		}
+	}
+	return true
 }
 
 // protectedPushRefs are the refs a force push may never target: rewriting the
@@ -661,12 +844,32 @@ func hasAnyFlag(args []string, flags map[string]bool) bool {
 	return false
 }
 
+// gitRiskySubFlags are the subcommand options that let a subcommand that
+// otherwise only reads run a program or write a file: --ext-diff loads an
+// external differ, --open-files-in-pager runs a program over the matches, and
+// --output writes the report to a path.
+var gitRiskySubFlags = map[string]bool{
+	"--ext-diff": true, "--open-files-in-pager": true, "--output": true,
+}
+
 // gitReadOnly reports whether a git invocation only reads. Mutating subcommands
 // fall through to false and are scanned; their message arguments are blanked
 // separately (messageArgs).
 func gitReadOnly(args []string) bool {
 	sub, rest, ok := gitSubcommand(args)
 	if !ok {
+		return false
+	}
+	// A global option before the subcommand can make a reading subcommand run a
+	// program: -c sets configuration (core.pager, core.sshCommand, alias.*) and
+	// --exec-path moves the helper lookup. Only the prefix counts — after the
+	// subcommand, -c means something else entirely (`git grep -c halt` counts).
+	for _, arg := range args[:len(args)-len(rest)-1] {
+		if strings.HasPrefix(arg, "-c") || arg == "--exec-path" || strings.HasPrefix(arg, "--exec-path=") {
+			return false
+		}
+	}
+	if hasAnyFlag(rest, gitRiskySubFlags) {
 		return false
 	}
 	switch sub {
@@ -692,18 +895,132 @@ func gitReadOnly(args []string) bool {
 	return false
 }
 
-// sedReadOnly reports whether sed only prints. `sed -i` edits in place and stays
-// gated, so its script is scanned like any other argument.
+// sedReadOnly reports whether sed only prints. `sed -i` edits in place, a script
+// that writes a file (`w`, `W`), runs a command (`e`) or reads a file into the
+// pattern space (`r`, `R`) does the same work a program would, and a script held
+// in a file this gate does not read cannot be cleared at all — every one of them
+// stays gated, so the whole invocation is scanned like any other segment.
 func sedReadOnly(args []string) bool {
-	for _, arg := range args {
-		if arg == "--in-place" || strings.HasPrefix(arg, "--in-place=") {
+	var scripts []string
+	explicit := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--in-place" || strings.HasPrefix(arg, "--in-place="):
 			return false
+		case len(arg) > 1 && arg[0] == '-' && arg[1] != '-' && strings.ContainsRune(arg, 'i'):
+			return false
+		case strings.HasPrefix(arg, "-f") || strings.HasPrefix(arg, "--file"):
+			// The script lives in a file: an unread script is not a read.
+			return false
+		case arg == "-e" || arg == "--expression":
+			if i+1 < len(args) {
+				scripts = append(scripts, args[i+1])
+				explicit = true
+				i++
+			}
+		case strings.HasPrefix(arg, "--expression="):
+			scripts = append(scripts, strings.TrimPrefix(arg, "--expression="))
+			explicit = true
+		case strings.HasPrefix(arg, "-e") && len(arg) > 2:
+			scripts = append(scripts, arg[2:])
+			explicit = true
+		case arg == "-l" || arg == "--line-length":
+			i++ // its value is a width, not a script
 		}
-		if len(arg) > 1 && arg[0] == '-' && arg[1] != '-' && strings.ContainsRune(arg, 'i') {
+	}
+	if !explicit {
+		// Without -e the first positional argument is the script.
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "-") && arg != "-" {
+				continue
+			}
+			scripts = append(scripts, arg)
+			break
+		}
+	}
+	for _, script := range scripts {
+		if sedScriptRunsCode(script) {
 			return false
 		}
 	}
 	return true
+}
+
+// sedScriptRunsCode reports whether a sed script can write a file or run a
+// command. A "w" inside an address regex or a replacement is text, so the script
+// is walked command by command: skip the address, read the command letter, and
+// skip that command's own text.
+func sedScriptRunsCode(script string) bool {
+	for i := 0; i < len(script); {
+		switch c := script[i]; {
+		case c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
+			c == ';' || c == '{' || c == '}' || c == '!' || c == ',' || c == '=' ||
+			c == '$' || (c >= '0' && c <= '9'):
+			i++
+		case c == '/':
+			// An address regex: its text is data.
+			next, ok := skipSedDelimited(script, i+1, '/')
+			if !ok {
+				return true // an unterminated field cannot be cleared
+			}
+			i = next
+		case c == 's' || c == 'y':
+			next, flags, ok := skipSedSubstitution(script, i)
+			if !ok {
+				return true
+			}
+			if strings.ContainsAny(flags, "we") {
+				return true
+			}
+			i = next
+		case c == 'w' || c == 'W' || c == 'e' || c == 'r' || c == 'R':
+			return true
+		default:
+			// Any other command's argument runs to the next separator.
+			for i < len(script) && script[i] != ';' && script[i] != '\n' {
+				i++
+			}
+		}
+	}
+	return false
+}
+
+// skipSedDelimited returns the index just past the next unescaped delim found
+// while scanning s from pos. ok is false when the field is unterminated.
+func skipSedDelimited(s string, pos int, delim byte) (int, bool) {
+	for i := pos; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			i++
+		case delim:
+			return i + 1, true
+		}
+	}
+	return 0, false
+}
+
+// skipSedSubstitution returns the index just past a substitution's replacement
+// field, plus the flags that follow it. ok is false when the command is
+// unterminated, which keeps the invocation on the scanned side.
+func skipSedSubstitution(s string, start int) (int, string, bool) {
+	if start+1 >= len(s) {
+		return 0, "", false
+	}
+	delim := s[start+1]
+	pos := start + 2
+	for field := 0; field < 2; field++ {
+		next, ok := skipSedDelimited(s, pos, delim)
+		if !ok {
+			return 0, "", false
+		}
+		pos = next
+	}
+	begin := pos
+	for pos < len(s) && !strings.ContainsRune(" \t\r\n;}", rune(s[pos])) {
+		pos++
+	}
+	return pos, s[begin:pos], true
 }
 
 // findReadOnly reports whether find only walks the tree. The traversal actions
@@ -714,6 +1031,47 @@ func findReadOnly(args []string) bool {
 		case arg == "-delete", arg == "-exec", arg == "-execdir", arg == "-ok", arg == "-okdir", arg == "-fls":
 			return false
 		case strings.HasPrefix(arg, "-fprint"):
+			return false
+		}
+	}
+	return true
+}
+
+// outputFlag reports whether args carries an output flag: one of the given long
+// names, or a single-dash cluster containing the given short letter.
+func outputFlag(args []string, short byte, longs ...string) bool {
+	for _, arg := range args {
+		for _, long := range longs {
+			if arg == long || strings.HasPrefix(arg, long+"=") {
+				return true
+			}
+		}
+		if len(arg) > 1 && arg[0] == '-' && arg[1] != '-' && strings.ContainsRune(arg[1:], rune(short)) {
+			return true
+		}
+	}
+	return false
+}
+
+// sortReadOnly reports whether sort only reads. --compress-program runs a
+// command and -o/--output writes a file, so neither invocation is a read.
+func sortReadOnly(args []string) bool {
+	for _, arg := range args {
+		if arg == "--compress-program" || strings.HasPrefix(arg, "--compress-program=") {
+			return false
+		}
+	}
+	return !outputFlag(args, 'o', "--output")
+}
+
+// treeReadOnly reports whether tree only reads: -o/--output writes its listing
+// to a file.
+func treeReadOnly(args []string) bool { return !outputFlag(args, 'o', "--output") }
+
+// dateReadOnly reports whether date only reads: -s/--set sets the system clock.
+func dateReadOnly(args []string) bool {
+	for _, arg := range args {
+		if arg == "-s" || arg == "--set" || strings.HasPrefix(arg, "--set=") {
 			return false
 		}
 	}
@@ -794,23 +1152,25 @@ var readOnlyInvocations = map[string]func([]string) bool{
 	// Search: the pattern is data, however violent its vocabulary looks.
 	"grep": alwaysReadOnly, "egrep": alwaysReadOnly, "fgrep": alwaysReadOnly,
 	"rg": alwaysReadOnly, "ag": alwaysReadOnly, "ack": alwaysReadOnly,
-	// Text filters and readers.
+	// Text filters and readers. Pagers are deliberately absent: `less` and
+	// `more` run `!command` at their own prompt, so a file argument does not
+	// make the invocation a read.
 	"cat": alwaysReadOnly, "bat": alwaysReadOnly, "head": alwaysReadOnly,
-	"tail": alwaysReadOnly, "less": alwaysReadOnly, "more": alwaysReadOnly,
-	"nl": alwaysReadOnly, "cut": alwaysReadOnly, "tr": alwaysReadOnly,
+	"tail": alwaysReadOnly,
+	"nl":   alwaysReadOnly, "cut": alwaysReadOnly, "tr": alwaysReadOnly,
 	"column": alwaysReadOnly, "fold": alwaysReadOnly, "paste": alwaysReadOnly,
-	"uniq": alwaysReadOnly, "sort": alwaysReadOnly, "comm": alwaysReadOnly,
+	"uniq": alwaysReadOnly, "comm": alwaysReadOnly,
 	"diff": alwaysReadOnly, "cmp": alwaysReadOnly, "wc": alwaysReadOnly,
 	"od": alwaysReadOnly, "xxd": alwaysReadOnly, "strings": alwaysReadOnly,
 	"jq": alwaysReadOnly, "yq": alwaysReadOnly, "printf": alwaysReadOnly,
 	"echo": alwaysReadOnly,
 	// Inspection.
-	"ls": alwaysReadOnly, "dir": alwaysReadOnly, "tree": alwaysReadOnly,
+	"ls": alwaysReadOnly, "dir": alwaysReadOnly,
 	"stat": alwaysReadOnly, "file": alwaysReadOnly, "du": alwaysReadOnly,
 	"df": alwaysReadOnly, "which": alwaysReadOnly, "whereis": alwaysReadOnly,
 	"type": alwaysReadOnly, "basename": alwaysReadOnly, "dirname": alwaysReadOnly,
 	"realpath": alwaysReadOnly, "id": alwaysReadOnly, "whoami": alwaysReadOnly,
-	"hostname": alwaysReadOnly, "uname": alwaysReadOnly, "date": alwaysReadOnly,
+	"hostname": alwaysReadOnly, "uname": alwaysReadOnly,
 	"ps": alwaysReadOnly, "md5sum": alwaysReadOnly, "sha1sum": alwaysReadOnly,
 	"sha256sum": alwaysReadOnly, "cksum": alwaysReadOnly,
 	// Verbs with a read/write split: the classifier reads the arguments.
@@ -818,4 +1178,7 @@ var readOnlyInvocations = map[string]func([]string) bool{
 	"find": findReadOnly,
 	"git":  gitReadOnly,
 	"curl": curlReadOnly,
+	"sort": sortReadOnly,
+	"tree": treeReadOnly,
+	"date": dateReadOnly,
 }

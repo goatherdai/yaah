@@ -82,7 +82,6 @@ func TestDenyShellCommand_ReadOnlyDataIsNotScanned(t *testing.T) {
 		`cat .scratch/notes-halt-kill-sudo.txt`,
 		`head -20 'a file named rm -rf .txt'`,
 		`tail -5 shutdown.log`,
-		`less reboot-history.txt`,
 		`ls -la .scratch/halt`,
 		`find . -name 'halt*.go'`,
 		`wc -l internal/agent/supervision/batch.go`,
@@ -103,6 +102,8 @@ func TestDenyShellCommand_ReadOnlyDataIsNotScanned(t *testing.T) {
 		`git branch --list 'feat/*'`,
 		`git rev-parse --short HEAD`,
 		`git ls-files 'internal/tools/*halt*'`,
+		`git grep -c halt`,
+		`git log -c -3`,
 		// curl in its GET/HEAD forms.
 		`curl -s https://example.invalid/halt`,
 		`curl -sI https://example.invalid/reboot`,
@@ -116,6 +117,22 @@ func TestDenyShellCommand_ReadOnlyDataIsNotScanned(t *testing.T) {
 		`git commit -F .scratch/commit-msg-halt.txt`,
 		`gh pr create --title "deny gate" --body "grep 'halt' runs; rm -rf / does not"`,
 		`bd update yaah-0lx8 --description "grep 'halt' must run"`,
+		// Review round 1 (M2): narrowing an exemption must not refuse the
+		// ordinary use of the verb it narrows.
+		`sort file`,
+		`sort -u -k1,1 halt-threats.txt`,
+		`sed -n '1,10p' f`,
+		`sed 's/error/warn/g' build.log`,
+		`sed -e 's/reboot/x/' -e 's/halt/y/' f`,
+		`tree -L 2`,
+		`tree -L 2 --dirsfirst internal`,
+		`git log --oneline`,
+		`git diff --stat HEAD`,
+		// Review round 1 (L2): a short-flag cluster still carries its message
+		// value in the next argument.
+		`git commit -am "stop scanning halt here"`,
+		`git commit -anm "stop scanning halt here"`,
+		`git commit -sm "stop scanning halt here"`,
 		// A read-only head with a read-only tail, and env prefixes.
 		`FOO=bar grep halt internal/tools/helpers.go`,
 		`ls; cat halt.txt`,
@@ -171,6 +188,52 @@ func TestDenyShellCommand_DangerousSegmentsStillRefused(t *testing.T) {
 		`echo hi > /dev/sda`,
 		`grep halt /etc/hosts > /dev/sda`,
 		`dd of=/dev/sda`,
+	}
+	for _, cmd := range cases {
+		t.Run(cmd, func(t *testing.T) {
+			if denial, refused := denyShellCommand(cmd); !refused {
+				t.Errorf("denyShellCommand(%q) = allowed, want refused", cmd)
+			} else if denial.String() == "" {
+				t.Errorf("denyShellCommand(%q) refused without a reason", cmd)
+			}
+		})
+	}
+}
+
+// TestDenyShellCommand_ReviewRoundOneEscapes is the refusal table for review
+// round 1 on this bead: every line here was allowed by the verb classifier while
+// a segment's exemption covered data that the line then ran, wrote, or hid from
+// the scan. The group comments name the finding each entry pins.
+func TestDenyShellCommand_ReviewRoundOneEscapes(t *testing.T) {
+	cases := []string{
+		// M1: a pipeline into an interpreter runs the upstream data as code, and
+		// an interpreter fed by a pipe has its program in that pipe.
+		`echo 'rm -rf /' | sh`,
+		`cat notes.txt | bash`,
+		`printf '%s\n' 'mkfs.ext4 /dev/sdb1' | sh`,
+		`grep -h '.*' f | sh`,
+		`git log --oneline | bash`,
+		`echo 'mkfs.ext4 /dev/sdb1' | python3`,
+		`cat f | env bash`,
+		// M2: read-only verbs whose own flags write a file or run a program.
+		`sort --compress-program='sh -c "rm -rf /tmp/x"'`,
+		`sort --compress-program "sh -c 'mkfs.ext4 /dev/sdb1'"`,
+		`sort -o /dev/sda`,
+		`tree -o /dev/sda`,
+		`sed -n 'w /dev/sda' /dev/null`,
+		`sed '1e rm -rf /tmp/x' f`,
+		`git -c core.pager='rm -rf /' log`,
+		`git -c core.sshCommand='mkfs.ext4 /dev/sdb1' fetch`,
+		`git grep --open-files-in-pager='sh -c "rm -rf /tmp/x"'`,
+		`git log --output=/dev/sda`,
+		`date -s '12:00:00; rm -rf /tmp/x'`,
+		// A pager runs `!command` at its own prompt, so its file argument buys
+		// no exemption.
+		`less reboot-history.txt`,
+		`more shutdown.log`,
+		// L1: grouping does not hide the device rule from the fail-closed branch.
+		`{ echo hi > /dev/sda; }`,
+		`(echo hi > /dev/sda)`,
 	}
 	for _, cmd := range cases {
 		t.Run(cmd, func(t *testing.T) {
