@@ -4,6 +4,8 @@ Status: **revised design** — direction decided 2026-11-24, implementation not
 started. Supersedes the dedicated-supervisor-loop design of aeee7543.
 Amended 2026-11-24: revert by construction and in-flight calls are folded
 in; intent in the trace and a restrict action are recorded as follow-ups.
+Amended 2026-11-25: bead references added. Steps 1–7 of §6 are seven
+children of yaah-1050.1.4; every follow-up in §9 is filed.
 
 Reference: Shepherd (arXiv:2605.10913v3, §5.1 + Appendix E) and its released
 loop, `shepherd-agents/shepherd-experiments`,
@@ -13,7 +15,7 @@ with `exp/live-intervention/prompts/meta_prompt_v1.txt`.
 Companion reading: `docs/cooperbench-parity-audit.md` (gap #4),
 `docs/supervision-parity.md`, `docs/live-redirect-redesign.md` (its
 "current state" section predates the generation CAS and the redirect/revert
-tools).
+tools). Terms are defined in `docs/glossary.md`.
 
 ## 1. Actors and target
 
@@ -52,8 +54,8 @@ Decisions:
   upgraded to an isolated lane and fails if its pre-run capture fails, so a
   supervised scope either can roll back or never starts. Enforced by
   `require_reversible`, which the measurement sets.
-- **D9 — in-flight calls are visible.** Intent in the trace and a restrict
-  action are follow-ups (owner decision, 2026-11-24).
+- **D9 — in-flight calls are visible.** Intent in the trace (yaah-4nsi) and
+  a restrict action (yaah-b1ko) are follow-ups (owner decision, 2026-11-24).
 
 ## 2. The protocol being reproduced
 
@@ -101,7 +103,7 @@ not.
 | Revert preconditions | rollback happens only when the scope has an isolated sandbox and a pre-run snapshot; otherwise it is skipped with a warning and the successor starts on the workspace as it is | `task_runner.go` |
 | Guidance | redirect and revert require non-empty guidance | `internal/tools/supervisor.go` |
 | Rules engine | acts per effect event: injects guidance, can stop. On by default with tracing, even when the stanza is absent. Drops every intervention type except inject and stop. | `internal/agent/supervision/service.go`, `internal/config/supervisor.go` |
-| Supervisor tool | seven free-text verbs (list scopes, inject, stop, redirect, revert, status, snapshot), registered on the root session's registry only. A 6000-byte cap bounds the tool's rendered string, not the `Snapshotter`. | `internal/tools/supervisor.go`, `cmd/yaah/wiring_stages.go` |
+| Supervisor tool | seven free-text verbs (list scopes, inject, halt, redirect, revert, status, snapshot), registered on the root session's registry only. A 6000-byte cap bounds the tool's rendered string, not the `Snapshotter`. | `internal/tools/supervisor.go`, `cmd/yaah/wiring_stages.go` |
 | Envelope | carries the final run's result, guard denials and `SubAgentStop`. No record of interventions. | `internal/jobs/context.go`, `task_runner.go` |
 | Policy | no `policy` key, no decision type, no ticker | — |
 
@@ -356,9 +358,9 @@ cooldown and caps, same prompt.
 Residuals:
 
 - **A call that is still running** is now in the snapshot (§4.2). Recording
-  it in the trace before it returns is a follow-up, and so is letting the
-  policy tighten the guard at a tick. The blocking shell guard stays the
-  pre-execution net.
+  it in the trace before it returns is a follow-up (yaah-4nsi), and so is
+  letting the policy tighten the guard at a tick (yaah-b1ko). The blocking
+  shell guard stays the pre-execution net.
 - **Revert everywhere** holds by construction under `require_reversible`
   (§4.2). Two cases still differ from Shepherd's overlay scopes: a container
   session gives a sub-agent no scope of its own to roll back, and the git
@@ -394,22 +396,22 @@ Residuals:
 ## 6. Sequencing
 
 1. Types (`Decision`, `TickResult`, `InterventionRecord`, `Decider`) and
-   tests — `internal/supervisionapi`.
+   tests — `internal/supervisionapi` (yaah-k0x1).
 2. Snapshot additions: dispatch label, consecutive-error count,
    reversibility flags, in-flight calls — `internal/supervisionapi`,
-   `internal/agent/runner`.
+   `internal/agent/runner` (yaah-k0x1).
 3. Renderer with budget, and the prompt asset — `internal/supervision`,
-   `internal/prompts/supervision`.
-4. `Batch` with the arbiter; rules routed through it; the lane upgrade and
-   the fatal capture for supervised dispatches —
+   `internal/prompts/supervision` (yaah-wego).
+4. `Batch` with the arbiter; rules routed through it (yaah-3l34); the lane
+   upgrade and the fatal capture for supervised dispatches (yaah-ugtl) —
    `internal/agent/supervision`, `internal/agent/runner`,
    `internal/tools/delegate.go`.
 5. `supervise` tool, tool doc, belt admission — `internal/tools`,
-   `cmd/yaah`.
+   `cmd/yaah` (yaah-fy28).
 6. Envelope records — `internal/jobs`, `internal/agent/runner`,
-   `internal/dispatch`.
+   `internal/dispatch` (yaah-vaxv).
 7. Config and the headless decider — `internal/config/supervisor.go`,
-   `cmd/yaah`.
+   `cmd/yaah` (yaah-0nbb).
 8. yaah-1050.1.5.
 
 ## 7. Measurement notes for yaah-1050.1.5
@@ -441,23 +443,23 @@ Residuals:
   policy from §4.2. Writing a call's declaration to the trace before it
   returns is a follow-up: every trace consumer must then tolerate
   declarations without a result. Read why the pair is written together
-  before changing it.
+  before changing it (yaah-4nsi).
 - **A `restrict` action.** Tighten the blocking guard for one scope at a
   tick (deny shell, or deny writes outside a path, for N ticks), enforced
   before execution with no model call in the hot path. Owner decision,
-  2026-11-24: a follow-up, not part of this task.
+  2026-11-24: a follow-up, not part of this task (yaah-b1ko).
 - **A model gate on individual tool calls.** Possible through the approval
   middleware's pattern; not planned. It adds latency to every call and is
-  not what the paper measured.
+  not what the paper measured (yaah-s40c).
 - **Container sessions.** A sub-agent there has no scope of its own, so
   there is nothing to roll back. Closing that means a worktree per sub-agent
-  inside the container.
-- **Ignored files** survive a restore on the git worktree backend.
+  inside the container (yaah-04fp, with the next bullet).
+- **Ignored files** survive a restore on the git worktree backend (yaah-04fp).
 - **Scope-handoff.** Deterministic in the reference code: when two agents'
   modified-file sets overlap, fork the leader's scope once. A candidate for
-  the rules engine, not for this task.
-- **Per-effect timestamps.**
+  the rules engine, not for this task (yaah-qdhk).
+- **Per-effect timestamps** (yaah-k1qd): see §4.2.
 - **Incremental cursor reads.** `on-change` uses `Through` only as a change
-  signal.
-- **A worker-to-worker relay** for the coop arm of yaah-1050.1.5.
-- **Interactive interval and headless model choice.**
+  signal (yaah-m3o3).
+- **A worker-to-worker relay** for the coop arm of yaah-1050.1.5 (yaah-cny5).
+- **Interactive interval and headless model choice** (yaah-dlrk).
