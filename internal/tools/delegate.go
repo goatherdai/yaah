@@ -14,6 +14,7 @@ import (
 	"github.com/goatherdai/yaah/internal/jobs"
 	"github.com/goatherdai/yaah/internal/permissions"
 	"github.com/goatherdai/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/supervisionapi"
 )
 
 // DelegateTool spawns a sub-agent with a restricted tool set to complete a task.
@@ -106,6 +107,23 @@ type DelegateTool struct {
 	// it for one dispatch. False (the default) changes nothing: lane routing
 	// and every lane's behavior are exactly the unsupervised ones.
 	Supervised bool
+
+	// RequireReversible is the session's supervisor.require_reversible: every
+	// supervised dispatch must be revertable, not merely watched. The runner
+	// enforces it for the workspace it can see (it refuses a scope that owns
+	// no isolated sandbox); this tool enforces the two escapes only IT can
+	// see — the per-call `supervise: false` opt-out, and a NESTED dispatch,
+	// whose writes land on the session tree rather than inside the parent's
+	// isolated world. Off (the default) reads nothing and changes nothing.
+	RequireReversible bool
+
+	// Nested marks a delegate tool registered INSIDE a dispatch — a
+	// sub-agent's own delegate tool, built by the runner — rather than the
+	// session's. The distinction matters only under
+	// supervisor.require_reversible: the session's tool dispatches into a
+	// world the supervisor can roll back, a nested one has no proposal
+	// runtime of its own and so sends its grandchild to the session tree.
+	Nested bool
 }
 
 func (t *DelegateTool) Name() string { return "delegate" }
@@ -263,6 +281,13 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	supervised, serr := t.supervisedDispatch(params.Supervise)
 	if serr != nil {
 		return "", serr
+	}
+	// supervisor.require_reversible is the operator's demand and it outranks
+	// the model: neither the per-call opt-out nor a nested dispatch may spend
+	// it. Both refusals fire here, before a lane is resolved or a world is
+	// provisioned.
+	if rerr := t.requireReversibleRefusal(params.Supervise, supervised); rerr != nil {
+		return "", rerr
 	}
 
 	// Resolve the lane once: LaneForRole reads the live role registry, so a
@@ -493,6 +518,37 @@ func (t *DelegateTool) supervisedDispatch(override *bool) (bool, error) {
 		return false, fmt.Errorf("delegate: supervise: true needs supervision enabled for the session (an explicit supervisor.enabled: true) — one dispatch can choose an isolated, revertable lane, but it cannot start the host-side supervision that would watch it; omit supervise or set it to false to keep this dispatch unsupervised")
 	}
 	return true, nil
+}
+
+// requireReversibleRefusal holds the line supervisor.require_reversible draws
+// against the two escapes a model can reach from inside a session, both
+// refused at the dispatch boundary so no world is provisioned for them.
+//
+// The opt-out first: the operator turned the key on to make every dispatch in
+// the session revertable, so a per-call `supervise: false` may not walk around
+// it. The refusal names the key and both ways out, because the model cannot
+// change config and needs the other one.
+//
+// Then the nested dispatch, refused for a reason the code establishes rather
+// than a policy it prefers: a delegate tool registered inside a dispatch has
+// no proposal runtime, so its grandchild runs on the SESSION tree — the
+// parent's file tools are rooted at its isolated world, a nested tool's are
+// not. Reverting the parent's scope rolls back the parent's world and never
+// the session tree, so a grandchild's writes would survive the revert
+// supervision promises. Until nested dispatches inherit a lane of their own
+// (docs/supervisor-policy-design.md §9), refusing them is the honest answer
+// under the key.
+func (t *DelegateTool) requireReversibleRefusal(override *bool, supervised bool) error {
+	if !t.RequireReversible {
+		return nil
+	}
+	if t.Supervised && override != nil && !*override {
+		return fmt.Errorf("delegate: %w: supervisor.require_reversible is on for this session, so no dispatch may opt out of supervision — remove \"supervise\": false (the dispatch then runs in an isolated, revertable world) or turn supervisor.require_reversible off", supervisionapi.ErrSupervisedNotReversible)
+	}
+	if supervised && t.Nested {
+		return fmt.Errorf("delegate: %w: this delegate tool belongs to a sub-agent running inside a supervised dispatch, so its child would run on the session tree — outside the isolated world a revert of that parent rolls back; supervisor.require_reversible is on, so the nested dispatch is refused. Do this subtask in the current dispatch, or turn supervisor.require_reversible off", supervisionapi.ErrSupervisedNotReversible)
+	}
+	return nil
 }
 
 // supervisedLane upgrades the lane routing chose for a supervised dispatch

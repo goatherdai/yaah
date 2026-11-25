@@ -232,11 +232,12 @@ func (s RetainedFailureStage) failureClass() string {
 //	                        outranks whatever the failing call reported.
 //	typed stage          -> preflight_transient (provisioning only) or
 //	                        configuration (a permanent refusal).
-//	supervision refusal  -> configuration, read before the provider layer:
-//	                        a supervised dispatch refused at start (a failed
-//	                        pre-run capture, a workspace it can never roll
-//	                        back) is fixed by config or a lane change, never
-//	                        by re-running it.
+//	supervision refusal  -> configuration or preflight_transient, read before
+//	                        the provider layer: a supervised dispatch whose
+//	                        scope can never roll back is fixed by config or a
+//	                        lane change, never by re-running it, while a failed
+//	                        pre-run capture can be transient and a retry
+//	                        provisions a fresh world to take it in.
 //	unclassified failure -> the provider layer's classification of the cause,
 //	                        so a terminal auth/billing/model-not-found/
 //	                        content-policy failure is not retried as if it
@@ -262,19 +263,28 @@ func failedAttemptClass(ctx context.Context, stage RetainedFailureStage, res Dis
 // layer's taxonomy. Without it every unclassified failure would read as
 // provider_transient and be retried, including the ones no retry can fix.
 func causeFailureClass(err error) string {
-	// Supervision refusals are configuration, like RetainedStageRefused above
-	// (yaah-ugtl review M3). A supervised dispatch stopped at start for a
-	// failed pre-run capture or for a workspace it can never roll back is
-	// deterministic: the lane routing or supervisor.require_reversible has to
-	// change, and a re-run hits the identical refusal. Left to the provider
-	// layer they classify as an unknown error — retryable by default — so a
-	// report-lane retry policy would re-provision a world per attempt for a
-	// dispatch that can never start.
+	// A workspace that can never roll back is configuration, like
+	// RetainedStageRefused above (yaah-ugtl review M3): the lane routing or
+	// supervisor.require_reversible has to change, and a re-run hits the
+	// identical refusal. Left to the provider layer it classifies as an
+	// unknown error — retryable by default — so a report-lane retry policy
+	// would re-provision a world per attempt for a dispatch that can never
+	// start.
+	//
+	// A failed pre-run CAPTURE is not that case (yaah-ugtl review: capture
+	// failure misclassified as final). It can fail for transient host
+	// reasons — a full disk, a lock held by another writer — and a retry
+	// provisions a fresh world from scratch, so the same capture may well
+	// land. It is therefore preflight_transient: the attempt failed before
+	// its body ran, and nothing it did survives the retry.
 	//
 	// The sentinels live in supervisionapi (a leaf package) so this boundary
 	// can name them without importing the runner, which imports this package.
-	if errors.Is(err, supervisionapi.ErrSupervisedCaptureFailed) || errors.Is(err, supervisionapi.ErrSupervisedNotReversible) {
+	if errors.Is(err, supervisionapi.ErrSupervisedNotReversible) {
 		return FailureClassConfiguration
+	}
+	if errors.Is(err, supervisionapi.ErrSupervisedCaptureFailed) {
+		return FailureClassPreflightTransient
 	}
 	var classified *errorclassify.ClassifiedError
 	c := errorclassify.Classify(err, errorclassify.ErrorMeta{})

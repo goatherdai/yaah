@@ -103,19 +103,25 @@ func TestRetryCandidate(t *testing.T) {
 	}
 }
 
-// TestSupervisionRefusalIsConfiguration pins the classification of a supervised
-// dispatch's start refusals (yaah-ugtl review M3): a failed pre-run capture and
-// a workspace that can never roll back are deterministic config or lane
-// outcomes. Left to the provider layer they read as an unknown error --
-// retryable by default -- so a report-lane retry policy would re-provision a
-// world per attempt for a dispatch that can never start.
-func TestSupervisionRefusalIsConfiguration(t *testing.T) {
+// TestSupervisionRefusalClassification pins the classification of a supervised
+// dispatch's start refusals (yaah-ugtl review M3, revised): the two sentinels
+// are NOT the same kind of failure.
+//
+// A scope that can never roll back is configuration — the lane routing or
+// supervisor.require_reversible has to change, and a re-run hits the identical
+// refusal. Left to the provider layer it would read as an unknown error.
+//
+// A failed pre-run CAPTURE can be transient (a full disk, a lock another
+// writer holds), and a retry provisions a fresh world to take it in, so it is
+// preflight_transient: nothing the attempt did survives the retry.
+func TestSupervisionRefusalClassification(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		sentinel error
+		want     string
 	}{
-		{"capture failed", supervisionapi.ErrSupervisedCaptureFailed},
-		{"not reversible", supervisionapi.ErrSupervisedNotReversible},
+		{"capture failed", supervisionapi.ErrSupervisedCaptureFailed, FailureClassPreflightTransient},
+		{"not reversible", supervisionapi.ErrSupervisedNotReversible, FailureClassConfiguration},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// The shape the runner returns: the role, the sentinel via %w, the
@@ -124,42 +130,55 @@ func TestSupervisionRefusalIsConfiguration(t *testing.T) {
 			if !errors.Is(err, tc.sentinel) {
 				t.Fatalf("the wrapped refusal lost its sentinel: %v", err)
 			}
-			if got := causeFailureClass(err); got != FailureClassConfiguration {
-				t.Errorf("causeFailureClass(%v) = %q, want %q", err, got, FailureClassConfiguration)
+			if got := causeFailureClass(err); got != tc.want {
+				t.Errorf("causeFailureClass(%v) = %q, want %q", err, got, tc.want)
 			}
 			// The attempt boundary reads the same answer with the stage a
 			// report-lane body failure carries: the child never ran.
-			if got := failedAttemptClass(context.Background(), RetainedStageBody, DispatchResult{Status: DispatchFailed}, err); got != FailureClassConfiguration {
-				t.Errorf("failedAttemptClass = %q, want %q", got, FailureClassConfiguration)
+			if got := failedAttemptClass(context.Background(), RetainedStageBody, DispatchResult{Status: DispatchFailed}, err); got != tc.want {
+				t.Errorf("failedAttemptClass = %q, want %q", got, tc.want)
 			}
 		})
 	}
 }
 
-// TestSupervisionRefusalIsNotRetried pins the consequence at the retry boundary:
-// a report-lane dispatch whose body fails with a supervision refusal runs
-// exactly once under a three-attempt policy, and its envelope class says
-// configuration.
-func TestSupervisionRefusalIsNotRetried(t *testing.T) {
-	err := fmt.Errorf("sub-agent developer: %w: %v", supervisionapi.ErrSupervisedCaptureFailed, errors.New("no space left on device"))
-	refused := DispatchResult{
-		Status:       DispatchFailed,
-		Role:         "developer",
-		Err:          err,
-		FailureClass: causeFailureClass(err),
-		Meta:         EnvelopeMeta{DispatchID: "developer#1", Role: "developer", Lane: string(LaneReport)},
-	}
-	fn, seen := fakeAttempt(refused)
-	res := runAttempts(context.Background(), retryTestRequest(0), LaneReport, time.Time{},
-		newRetryPolicy(config.RetryConfig{MaxAttempts: 3}), fn)
-	if len(*seen) != 1 {
-		t.Fatalf("attempts = %d, want 1: a deterministic start refusal must not be re-provisioned", len(*seen))
-	}
-	env := res.Envelope()
-	if env.Attempts != 1 || env.Retried {
-		t.Errorf("attempts = %d retried = %v, want a single attempt", env.Attempts, env.Retried)
-	}
-	if env.FailureClass != FailureClassConfiguration {
-		t.Errorf("failure_class = %q, want %q", env.FailureClass, FailureClassConfiguration)
+// TestSupervisionRefusalRetrySplit pins the consequence at the retry boundary,
+// in both directions: a report-lane dispatch whose body failed a pre-run
+// capture is re-provisioned (up to the policy's attempt cap, because the next
+// world may capture cleanly), while one refused for a workspace it can never
+// roll back runs exactly once.
+func TestSupervisionRefusalRetrySplit(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		sentinel     error
+		wantAttempts int
+		wantClass    string
+	}{
+		{"capture failed is retryable", supervisionapi.ErrSupervisedCaptureFailed, 3, FailureClassPreflightTransient},
+		{"not reversible is final", supervisionapi.ErrSupervisedNotReversible, 1, FailureClassConfiguration},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := fmt.Errorf("sub-agent developer: %w: %v", tc.sentinel, errors.New("no space left on device"))
+			refused := DispatchResult{
+				Status:       DispatchFailed,
+				Role:         "developer",
+				Err:          err,
+				FailureClass: causeFailureClass(err),
+				Meta:         EnvelopeMeta{DispatchID: "developer#1", Role: "developer", Lane: string(LaneReport)},
+			}
+			fn, seen := fakeAttempt(refused)
+			res := runAttempts(context.Background(), retryTestRequest(0), LaneReport, time.Time{},
+				newRetryPolicy(config.RetryConfig{MaxAttempts: 3}), fn)
+			if len(*seen) != tc.wantAttempts {
+				t.Fatalf("attempts = %d, want %d", len(*seen), tc.wantAttempts)
+			}
+			env := res.Envelope()
+			if env.Attempts != tc.wantAttempts {
+				t.Errorf("envelope attempts = %d, want %d", env.Attempts, tc.wantAttempts)
+			}
+			if env.FailureClass != tc.wantClass {
+				t.Errorf("failure_class = %q, want %q", env.FailureClass, tc.wantClass)
+			}
+		})
 	}
 }

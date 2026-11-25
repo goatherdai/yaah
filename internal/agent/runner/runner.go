@@ -208,6 +208,10 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 		RoleDescriptions: RoleDescriptionsFor(opts.RoleNames),
 		Tracker:          opts.Tracker,
 		Supervised:       opts.Supervised,
+		// The tool enforces the half of supervisor.require_reversible the
+		// runner cannot see: the per-call `supervise: false` opt-out
+		// (yaah-ugtl review, finding M2). Same value, one wiring site.
+		RequireReversible: opts.RequireReversible,
 	}
 	// Retained mode (Plan 7 Phase 2): route delegate through the
 	// retained-run lane. It needs a scope manager and a root scope to fork from;

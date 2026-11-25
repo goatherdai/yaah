@@ -831,7 +831,10 @@ supervised dispatch path upgrades a shared-lane dispatch to the report lane,
 which needs a retained runtime to provision an isolated world. A session with
 no retained runtime therefore runs its supervised dispatches on the shared
 workspace with `Reversible` false, and `supervisor.require_reversible: true`
-refuses every dispatch after the scope is forked. The keys compose as: `mode:
+
+`require_reversible: true` also refuses two model-reachable escapes: a per-call `supervise: false` on a supervised session (operator authority beats the opt-out — remove the argument or turn the key off), and a NESTED dispatch, i.e. a sub-agent calling `delegate` itself. A nested dispatch has no proposal runtime of its own, so its child runs on the session tree, outside the isolated world a revert of the parent rolls back; refusing it is what keeps the key's promise until nested dispatches inherit a lane (design §9). Without the key both run exactly as before.
+
+The keys compose as: `mode:
 shared` decides where dispatch runs, `enabled: true` decides whether the
 supervised path is armed, and `require_reversible` decides whether an armed
 dispatch that cannot roll back is allowed to run.
