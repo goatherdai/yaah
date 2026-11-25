@@ -667,6 +667,218 @@ func TestSuperviseTool_RefusesWithoutCallerOrFactory(t *testing.T) {
 	}
 }
 
+// stubToolWithHooks is stubTool with the binding's arbiter hooks wired, so a
+// test can see the tool arm and release the rules engine.
+func stubToolWithHooks(batch SuperviseBatch, hooks *arbiterHooks) *SuperviseTool {
+	return &SuperviseTool{
+		CallerScopeID: "scope:root",
+		NewBatch: func(string) *SuperviseBinding {
+			return &SuperviseBinding{
+				Batch:   batch,
+				Arm:     func() { hooks.arms++ },
+				Release: func() { hooks.releases++ },
+			}
+		},
+	}
+}
+
+// TestSuperviseTool_CloseReleasesArbiterAndRefusesCalls pins the teardown seam
+// (finding 1). A loop the model ABANDONS — an abandoned plan, an exhausted turn
+// budget, a session ending with workers live — leaves the rules engine routed
+// into a batch nothing ticks unless teardown releases it: firings would queue
+// and then drop past the batch's queue cap. Close is that release; it is
+// idempotent, and a call arriving afterwards refuses instead of re-arming a
+// batch the session has already detached. In production Release is
+// svc.SetArbiter(nil), whose direct-delivery behavior is pinned by
+// TestService_RoutesRuleFiringsThroughArbiter (internal/agent/supervision).
+func TestSuperviseTool_CloseReleasesArbiterAndRefusesCalls(t *testing.T) {
+	batch := &stubBatch{
+		next: func(context.Context, []supervisionapi.Decision) (supervisionapi.TickResult, error) {
+			return supervisionapi.TickResult{Done: false}, nil
+		},
+		text: "w1 ...",
+	}
+	hooks := &arbiterHooks{}
+	tool := stubToolWithHooks(batch, hooks)
+
+	if _, err := executeSupervise(t, tool, `{}`); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if hooks.arms != 1 || hooks.releases != 0 {
+		t.Fatalf("arms/releases = %d/%d, want 1/0: a live batch keeps the rules engine routed into it", hooks.arms, hooks.releases)
+	}
+
+	tool.Close()
+	if hooks.releases != 1 {
+		t.Fatalf("releases = %d, want 1: teardown must hand the rules engine back to direct delivery", hooks.releases)
+	}
+	tool.Close()
+	if hooks.releases != 1 {
+		t.Errorf("releases = %d, want 1: Close is idempotent", hooks.releases)
+	}
+
+	if _, err := executeSupervise(t, tool, `{}`); err == nil || !strings.Contains(err.Error(), "torn down") {
+		t.Fatalf("err = %v, want the teardown refusal", err)
+	}
+	if hooks.arms != 1 {
+		t.Errorf("arms = %d, want 1: a closed tool must not re-arm a detached batch", hooks.arms)
+	}
+	if batch.calls != 1 {
+		t.Errorf("batch.Next calls = %d, want 1: the refused call must not tick", batch.calls)
+	}
+}
+
+// TestSuperviseTool_CancelledCallReleasesArbiter pins the other abandonment
+// (finding 1): a call the ctx cancels mid-tick (Ctrl-C, an exhausted turn
+// budget) leaves the batch live but undriven, so the call releases the rules
+// engine rather than leaving it queueing into a batch nothing drives. Both wait
+// modes are covered because both block on Next.
+func TestSuperviseTool_CancelledCallReleasesArbiter(t *testing.T) {
+	for _, args := range []string{`{}`, `{"wait":"settled"}`} {
+		t.Run(args, func(t *testing.T) {
+			batch := &stubBatch{
+				next: func(context.Context, []supervisionapi.Decision) (supervisionapi.TickResult, error) {
+					return supervisionapi.TickResult{}, context.Canceled
+				},
+				text: "w1 ...",
+			}
+			hooks := &arbiterHooks{}
+			tool := stubToolWithHooks(batch, hooks)
+			if _, err := tool.Execute(context.Background(), args); err == nil {
+				t.Fatal("err = nil, want the cancellation reported")
+			}
+			if hooks.arms != 1 {
+				t.Fatalf("arms = %d, want 1", hooks.arms)
+			}
+			if hooks.releases != 1 {
+				t.Errorf("releases = %d, want 1: a cancelled call must hand the rules engine back", hooks.releases)
+			}
+		})
+	}
+}
+
+// TestSuperviseTool_SettleBusyIsTheBusyReply pins finding 3: a settle call that
+// arrives while another tick driver holds the batch applied nothing, so it must
+// report the busy reply — not a failure that reads as an internal error and
+// tells the model to wait for the very call it just made.
+func TestSuperviseTool_SettleBusyIsTheBusyReply(t *testing.T) {
+	batch := &stubBatch{
+		next: func(context.Context, []supervisionapi.Decision) (supervisionapi.TickResult, error) {
+			return supervisionapi.TickResult{}, supervisionapi.ErrBatchBusy
+		},
+		text: "w1 ...",
+	}
+	res, err := executeSupervise(t, stubTool(batch), `{"wait":"settled"}`)
+	if err != nil {
+		t.Fatalf("Execute(settled): %v, want the busy reply rather than a failed call", err)
+	}
+	if !res.Busy {
+		t.Fatal("busy = false, want true: nothing of a refused settle ran")
+	}
+	if res.Ticks != 0 || len(res.Applied) != 0 || len(res.Results) != 0 {
+		t.Errorf("ticks/applied/results = %d/%+v/%+v, want 0/nothing/nothing", res.Ticks, res.Applied, res.Results)
+	}
+	if !strings.Contains(res.Note, "in flight") {
+		t.Errorf("note = %q, want the busy note saying what to do next", res.Note)
+	}
+}
+
+// TestSuperviseTool_SettleIsBoundedByTheTickCap pins finding 2: a batch that
+// never settles must still give the turn back. The cap is a RESULT — the
+// partial payload an interrupted settle would have reported, done:false, with
+// the cap in the note — not an error, because nothing went wrong; and the
+// retained tick records are bounded while `ticks` still reports the work done.
+func TestSuperviseTool_SettleIsBoundedByTheTickCap(t *testing.T) {
+	batch := &stubBatch{
+		next: func(context.Context, []supervisionapi.Decision) (supervisionapi.TickResult, error) {
+			return supervisionapi.TickResult{
+				Done:    false,
+				Results: []supervisionapi.InterventionRecord{{Scope: "scope:w", Outcome: "dropped"}},
+			}, nil
+		},
+		text: "w1 ...",
+	}
+	res, err := executeSupervise(t, stubTool(batch), `{"wait":"settled"}`)
+	if err != nil {
+		t.Fatalf("Execute(settled): %v, want the capped partial reply rather than an error", err)
+	}
+	if res.Done {
+		t.Error("done = true, want false: the batch never settled")
+	}
+	if res.Ticks != maxSettleTicks {
+		t.Errorf("ticks = %d, want the cap %d", res.Ticks, maxSettleTicks)
+	}
+	if batch.calls != maxSettleTicks {
+		t.Errorf("batch.Next calls = %d, want the cap %d: the loop must stop at the cap", batch.calls, maxSettleTicks)
+	}
+	if len(res.Results) != maxReportedTicks {
+		t.Errorf("results retained = %d, want the window %d", len(res.Results), maxReportedTicks)
+	}
+	if !strings.Contains(res.Note, "settle cap") || !strings.Contains(res.Note, "earlier tick(s) are not repeated") {
+		t.Errorf("note = %q, want both the cap and the truncation stated", res.Note)
+	}
+}
+
+// TestSuperviseTool_RanksDuplicateScopesAndTruncatesWordCaps pins finding 5 at
+// the boundary where it is actually enforced: the decoder validates SHAPE and
+// leaves these two invariants to the arbiter, which ranks two decisions on one
+// scope by action (revert > redirect > steer) and reports the loser as duplicate
+// rather than silently last-winning, and truncates reason/guidance to
+// supervisionapi.MaxReasonWords / MaxGuidanceWords whole words before anything
+// is recorded or delivered.
+func TestSuperviseTool_RanksDuplicateScopesAndTruncatesWordCaps(t *testing.T) {
+	f := newSuperviseFixture(t)
+	root := f.root("root")
+	worker := f.fork(root, "sub-a")
+	chatty := f.fork(root, "sub-b")
+	workerCh := make(chan string, supervision.SteerBuffer)
+	// Redirectable so the revert passes the handoff precondition and drops on
+	// the fact the test is about: the run registered no pre-run capture, so
+	// Reversible is false and the honest drop reason is not_reversible.
+	f.runs.Register(worker, supervision.Run{SteerCh: workerCh, Redirectable: true})
+	chattyCh := make(chan string, supervision.SteerBuffer)
+	f.runs.Register(chatty, supervision.Run{SteerCh: chattyCh})
+
+	long := strings.Repeat("word ", supervisionapi.MaxGuidanceWords+40)
+	args, err := json.Marshal(map[string]any{"decisions": []map[string]string{
+		{"scope": worker, "action": "steer", "reason": "drift", "guidance": "cheap"},
+		{"scope": worker, "action": "revert", "reason": "corrupt", "guidance": "rollback"},
+		{"scope": chatty, "action": "steer", "reason": "drift", "guidance": long},
+	}})
+	if err != nil {
+		t.Fatalf("marshal decisions: %v", err)
+	}
+	res, err := executeSupervise(t, f.tool(root), string(args))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	drops := map[string]string{}
+	for _, rec := range res.Results {
+		if rec.DropReason != "" {
+			drops[rec.Scope+"/"+rec.Action] = rec.DropReason
+		}
+	}
+	if got := drops[worker+"/steer"]; got != supervisionapi.DropReasonDuplicate {
+		t.Errorf("the lower-ranked steer on %s dropped as %q, want %q: two decisions on one scope are ranked, not last-won", worker, got, supervisionapi.DropReasonDuplicate)
+	}
+	if got := drops[worker+"/revert"]; got != supervisionapi.DropReasonNotReversible {
+		t.Errorf("the revert dropped as %q, want not_reversible (the scope has no pre-run capture)", got)
+	}
+	if len(workerCh) != 0 {
+		t.Errorf("a steer reached %s %d time(s) from a decision the ranking rejected", worker, len(workerCh))
+	}
+
+	select {
+	case got := <-chattyCh:
+		if words := len(strings.Fields(got)); words != supervisionapi.MaxGuidanceWords {
+			t.Errorf("delivered guidance carries %d words, want it truncated to the cap %d", words, supervisionapi.MaxGuidanceWords)
+		}
+	default:
+		t.Fatal("the oversized steer was never delivered")
+	}
+}
+
 // TestDescendantSnapshot_FailsClosed pins the filter's conservative failure:
 // without a scope tree nothing is provably a descendant, so the batch sees an
 // empty membership instead of the whole session's workers.

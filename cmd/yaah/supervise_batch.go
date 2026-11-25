@@ -19,6 +19,9 @@ package yaah
 //     it and drop past its queue cap.
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/goatherdai/yaah/internal/agent/supervision"
 	"github.com/goatherdai/yaah/internal/config"
 	"github.com/goatherdai/yaah/internal/tools"
@@ -37,10 +40,44 @@ import (
 // register a tool whose every tick reports an empty, done batch — the opposite
 // of the honest refusal.
 func registerSuperviseTool(st *loopInfraStage, cfg *config.Config, tr *toolRegistryStage, snap *supervision.Snapshotter) {
-	if !cfg.Agent.Default.Supervisor.PolicyAgent() || snap == nil {
+	if !cfg.Agent.Default.Supervisor.PolicyAgent() {
+		// Under policy none — the default — the tool is never registered, so an
+		// unconfigured session's tool surface is unchanged. Nothing is recorded
+		// as omitted: the session is exactly what the operator asked for, and
+		// the belt is told the name only so a persona listing it is not
+		// reported as a typo.
 		tr.belt.Know("supervise")
 		return
 	}
+	if snap == nil {
+		// policy: agent was configured and this session cannot serve it: the run
+		// registry or the trace store never came up (the nil-check note above).
+		// A supervise tool over such a source would answer every tick with an
+		// empty, done batch and call that supervision, so it is not registered —
+		// and the degradation is RECORDED rather than left silent: the name rides
+		// the belt (an explicit tools list mentioning it is not a typo), it is
+		// appended to omittedTools so the session's workspace record and the
+		// isolated-mode prompt delta name it (registerWakeTools' pattern: "couldn't",
+		// not "didn't"), and a startup warning says so once, because a policy the
+		// operator asked for and did not get is a fact worth reading.
+		tr.belt.Know("supervise")
+		tr.omittedTools = append(tr.omittedTools, "supervise")
+		fmt.Fprintf(os.Stderr, "warning: supervisor.policy is %q but this session has no snapshot source (the run registry or the trace store did not start), so the supervise tool is unavailable\n", cfg.Agent.Default.Supervisor.PolicyMode())
+		return
+	}
+	// Admit widens the session's belt rather than trusting it, for the same
+	// reason the MCP seam and the workflow pair do: the policy stanza is itself
+	// the opt-in, and a curation pass must not silently drop the one tool the
+	// operator asked for by configuring `policy: agent`.
+	//
+	// The consequence is stated because it is otherwise invisible: an EXPLICIT
+	// agents.default.tools list is WIDENED by this one name — that list still
+	// decides everything else the session holds, but "supervise" is admitted
+	// whether or not it names it. Belt.Admit is the substrate's only widening
+	// operation and it lives at the registration site for exactly this case; the
+	// alternative (adding supervise to the curated defaultOrchestratorBelt) would
+	// raise the per-call floor for EVERY orchestrator session, including the ones
+	// that never enable a policy.
 	tr.reg.Admit("supervise")
 	tr.reg.Register(&tools.SuperviseTool{
 		// The dispatching agent in agent mode is the session's own loop, so

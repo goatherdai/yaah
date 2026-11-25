@@ -47,6 +47,28 @@ const (
 	superviseWaitSettled = "settled"
 )
 
+// A wait:"settled" call's bounds (design §4.7). "Settled" means settled, but a
+// settle that cannot finish must still return: Batch.Next never fails on scope
+// state — only a cancelled ctx ends it — so one worker that never finishes would
+// make every settle call an unbounded block that spends the model's whole tool
+// budget on a single turn, and its tick list would grow without limit beside it.
+const (
+	// maxSettleTicks bounds how many ticks one settle call runs. The bound is
+	// stated in TICKS rather than in seconds so it is deterministic and needs no
+	// clock seam; a tick is one Batch interval (5 seconds at the documented
+	// default), so this is about ten minutes of wall clock — long enough for a
+	// real dispatch batch, short enough that an abandoned one gives the turn back.
+	maxSettleTicks = 120
+
+	// maxReportedTicks bounds the per-tick records a reply retains. A settle
+	// accumulates one TickResult per tick, and a reply carrying all of them plus
+	// the snapshot would spend the caller's context on history it can no longer
+	// act on. The most RECENT ticks are kept — those are what a caller deciding
+	// its next move reads — and the reply's `ticks` count still reports every tick
+	// the call ran, with a note stating how many earlier records were dropped.
+	maxReportedTicks = 32
+)
+
 // superviseSchema is the tool's argument schema. It is a function rather than
 // a constant so the property list exists in exactly one place a test can
 // read; the embedded doc names every property (doc_parity_test.go).
@@ -180,6 +202,11 @@ type SuperviseTool struct {
 	arm     func()
 	release func()
 	armed   bool
+	// closed reports that the session tore the tool down (Close). A closed tool
+	// refuses calls instead of re-arming an arbiter the teardown already
+	// released: a wake-initiated turn racing session shutdown must not route the
+	// rules engine back into a batch no call will ever tick again.
+	closed bool
 }
 
 func (*SuperviseTool) Name() string { return "supervise" }
@@ -227,6 +254,12 @@ func (t *SuperviseTool) Execute(ctx context.Context, args string) (string, error
 	// repoint the labels) between the tick and the reply.
 	t.end(out.Done)
 	if err != nil {
+		// A call that did not complete releases the arbiter. Done is not the only
+		// way a supervise loop ends: a cancelled tick (Ctrl-C, an exhausted turn
+		// budget, a session shutting down) leaves the batch live but undriven, and
+		// leaving the rules engine routed into it would queue firings into a batch
+		// nothing ticks. The next call re-arms (begin).
+		t.releaseArbiter()
 		return "", err
 	}
 	return encodeSuperviseResult(out)
@@ -253,18 +286,21 @@ func (t *SuperviseTool) tick(ctx context.Context, batch SuperviseBatch, decision
 		}
 		return superviseResult{}, fmt.Errorf("supervise: the tick did not complete: %w", err)
 	}
-	return t.result(batch, []supervisionapi.TickResult{res}), nil
+	return t.result(batch, []supervisionapi.TickResult{res}, 1), nil
 }
 
 // settle applies the decisions and then ticks until the batch reports Done.
 // Every tick is recorded, so the reply is the whole intervention history —
 // the accounting a caller makes a decision about afterwards.
 //
-// The loop is bounded by ctx, not by a tick count: "settled" means settled,
-// and a tick budget that expired would have to report a batch it is still
-// responsible for as if it had finished. A cancelled ctx returns the error
+// The loop is bounded by ctx and by the settle cap, not by the model's
+// patience: "settled" means settled, but a batch that cannot settle must still
+// hand the turn back (see maxSettleTicks). A cancelled ctx returns the error
 // with the records already collected named in it, so nothing that happened is
-// lost from the report.
+// lost from the report; a tripped cap returns the same partial payload as a
+// RESULT, done:false, with the cap stated in its note — the batch is still live
+// and nothing went wrong, so an error would blame the call for the batch's
+// shape.
 //
 // The counts folded into that error are the partial payload's, honestly: an
 // interrupted settle is still an error (the loop did not finish), and the
@@ -275,24 +311,47 @@ func (t *SuperviseTool) tick(ctx context.Context, batch SuperviseBatch, decision
 func (t *SuperviseTool) settle(ctx context.Context, batch SuperviseBatch, decisions []supervisionapi.Decision) (superviseResult, error) {
 	ticks := make([]supervisionapi.TickResult, 0, 4)
 	next := decisions
+	// ran is how many ticks this call ran, which is not len(ticks) once the
+	// retained window truncates.
+	ran := 0
 	for {
+		// Cancellation between ticks: the batch refused nothing, so this is the
+		// same interruption as a cancelled wait, reported with the records the
+		// completed ticks really made.
+		if err := ctx.Err(); err != nil {
+			return superviseResult{}, settleInterrupted(t.result(batch, ticks, ran), err)
+		}
 		res, err := batch.Next(ctx, next)
 		if err != nil {
+			if errors.Is(err, supervisionapi.ErrBatchBusy) && ran == 0 {
+				// Nothing of this call ran: another tick driver already holds the
+				// batch. That is the scheduling fact the plain-tick path reports as
+				// the busy reply, so report it the same way — as a failure it would
+				// read as an internal error and tell the model to wait for the very
+				// call it just made. A busy AFTER a completed tick is different: the
+				// external driver took the batch between this call's ticks, so it is
+				// an interruption and the records already made are kept.
+				return superviseBusyResult(), nil
+			}
 			// Only count a tick that actually carries something: a refused
-			// Next (ErrBatchBusy — an external tick driver on the same batch)
-			// returns the zero TickResult and did no work, so counting it as a
+			// Next returns the zero TickResult and did no work, so counting it as a
 			// tick of this call would inflate the report.
 			if len(res.Results) > 0 || res.Done {
-				ticks = append(ticks, res)
+				ran++
+				ticks = retainTick(ticks, res)
 			}
-			partial := t.result(batch, ticks)
-			return superviseResult{}, fmt.Errorf(
-				"supervise: waiting for the batch to settle was interrupted after %d tick(s) with %d decision record(s) and %d applied intervention(s)%s: %w",
-				partial.Ticks, len(partial.Results), len(partial.Applied), appliedSummary(partial.Applied), err)
+			return superviseResult{}, settleInterrupted(t.result(batch, ticks, ran), err)
 		}
-		ticks = append(ticks, res)
+		ran++
+		ticks = retainTick(ticks, res)
 		if res.Done {
-			return t.result(batch, ticks), nil
+			return t.result(batch, ticks, ran), nil
+		}
+		if ran >= maxSettleTicks {
+			out := t.result(batch, ticks, ran)
+			out.Done = false
+			out.addNote(fmt.Sprintf("wait:\"settled\" stopped at the settle cap of %d ticks with the batch still live; the records above are what this call saw — call again with wait:\"settled\" to keep waiting, or wait:\"tick\" to decide from this snapshot", maxSettleTicks))
+			return out, nil
 		}
 		// Only the first tick carries decisions: the rest are pure waits, and
 		// the caller's decision for a later tick arrives on its next call.
@@ -300,16 +359,43 @@ func (t *SuperviseTool) settle(ctx context.Context, batch SuperviseBatch, decisi
 	}
 }
 
+// settleInterrupted states an interrupted settle: an error, because the loop
+// did not finish, naming the ticks that ran, the records they made and what
+// took effect so the model still sees what its decisions triggered.
+func settleInterrupted(partial superviseResult, err error) error {
+	return fmt.Errorf(
+		"supervise: waiting for the batch to settle was interrupted after %d tick(s) with %d decision record(s) and %d applied intervention(s)%s: %w",
+		partial.Ticks, len(partial.Results), len(partial.Applied), appliedSummary(partial.Applied), err)
+}
+
+// retainTick appends one tick's result to the retained history, keeping the most
+// recent maxReportedTicks. It drops the OLDEST because a settle reply is read to
+// learn what just happened: the records that matter for the caller's next
+// decision are the latest ones, and the reply's `ticks` count still reports every
+// tick the call ran (result).
+func retainTick(ticks []supervisionapi.TickResult, res supervisionapi.TickResult) []supervisionapi.TickResult {
+	if len(ticks) < maxReportedTicks {
+		return append(ticks, res)
+	}
+	copy(ticks, ticks[1:])
+	ticks[len(ticks)-1] = res
+	return ticks
+}
+
 // result projects the ticks into the tool's reply shape. The snapshot text is
 // rendered ONCE here, after the last tick, which is the render-once-per-tick
 // convention of design §4.5 read from the other end: the text this reply
 // carries is the text the caller's next decision list is made from, and the
 // next Next call resolves labels against that same render.
-func (t *SuperviseTool) result(batch SuperviseBatch, ticks []supervisionapi.TickResult) superviseResult {
+//
+// ran is how many ticks the call ran — Ticks reports that, not len(ticks), so a
+// reply whose retained window dropped the earliest ticks still reports the work
+// the call actually did, and says so in its note.
+func (t *SuperviseTool) result(batch SuperviseBatch, ticks []supervisionapi.TickResult, ran int) superviseResult {
 	out := superviseResult{
 		Applied: make([]superviseApplied, 0, 4),
 		Results: make([]superviseRecord, 0, 4),
-		Ticks:   len(ticks),
+		Ticks:   ran,
 	}
 	for _, tick := range ticks {
 		for _, rec := range tick.Applied {
@@ -323,6 +409,9 @@ func (t *SuperviseTool) result(batch SuperviseBatch, ticks []supervisionapi.Tick
 		out.Done = tick.Done
 	}
 	out.Snapshot = batch.SnapshotText(t.BudgetTokens)
+	if dropped := ran - len(ticks); dropped > 0 {
+		out.addNote(fmt.Sprintf("%d earlier tick(s) are not repeated here: a reply keeps the most recent %d ticks' records (of %d run)", dropped, maxReportedTicks, ran))
+	}
 	return out
 }
 
@@ -355,6 +444,12 @@ func (t *SuperviseTool) begin(ctx context.Context) (SuperviseBatch, error) {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.closed {
+		// A closed tool must not re-arm: a wake-initiated turn racing session
+		// teardown would otherwise route the rules engine back into a batch no
+		// call will ever tick again.
+		return nil, fmt.Errorf("supervise: this session's supervision was torn down (the session is closing), so no tick can be run")
+	}
 	if t.inFlight {
 		return nil, errSuperviseBusy
 	}
@@ -396,6 +491,40 @@ func (t *SuperviseTool) end(done bool) {
 		t.releaseLocked()
 	}
 	t.inFlight = false
+}
+
+// Close is the tool's teardown seam: it hands the session's rules engine back to
+// direct delivery, and refuses every later call.
+//
+// It exists because Done is not the only way a supervise loop ends. A model can
+// simply stop calling the tool — an abandoned plan, an exhausted turn budget, a
+// session shutting down with workers still live — and Service.SetArbiter(batch)
+// routing would then persist forever: rule firings queue into a batch nothing
+// ticks and drop past its queue cap (the failure supervise_batch.go documents),
+// silently degrading the session's rules surface. The session teardown calls
+// this before it closes the rules service, so the service's own drain delivers
+// directly instead of queueing into a dead batch.
+//
+// It releases the routing and nothing else: it does not wait for an in-flight
+// call (the flight holds no lock across a tick, so there is nothing to wait on)
+// and it does not close the batch (a batch has no Close, and its scopes belong
+// to the session). Idempotent.
+func (t *SuperviseTool) Close() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.releaseLocked()
+	t.closed = true
+}
+
+// release restores the rules engine's direct delivery outside a call's flight
+// (the error and teardown paths).
+func (t *SuperviseTool) releaseArbiter() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.releaseLocked()
 }
 
 // armLocked routes the rules engine into the bound batch, if it is not
@@ -453,6 +582,20 @@ func superviseBusyResult() superviseResult {
 		Results: make([]superviseRecord, 0),
 		Note:    "another supervise call was already in flight for this session, so this call applied nothing and ran no tick; use the snapshot from the reply that was in flight and call again on your next turn",
 	}
+}
+
+// addNote joins one line of context onto the reply's note, so two facts that
+// both need stating — a retained-window truncation and a settle cap — do not
+// overwrite each other.
+func (out *superviseResult) addNote(line string) {
+	if line == "" {
+		return
+	}
+	if out.Note == "" {
+		out.Note = line
+		return
+	}
+	out.Note += " — " + line
 }
 
 // maxErrAppliedDetails caps how many applied interventions an interrupted
@@ -530,6 +673,25 @@ func superviseRecords(recs []supervisionapi.InterventionRecord) []superviseRecor
 // ("guidence") would otherwise reach the arbiter with empty guidance and be
 // dropped as empty_guidance — the drop blamed on the action rather than on the
 // argument that was actually wrong.
+//
+// It validates SHAPE — keys and types — and deliberately leaves the prompt's
+// remaining invariants to the one implementation that already enforces them, the
+// arbiter:
+//
+//   - "at most one decision per scope": two decisions naming one scope are
+//     resolved by ACTION RANK (revert > redirect > steer), and the loser is
+//     recorded as a duplicate rather than dropped in silence — the same
+//     precedence rule the tick's two halves use (design §4.6). Refusing the list
+//     here would turn a ranked, reported outcome into a failed turn and take a
+//     capability away from a caller that meant to escalate.
+//   - the word caps on reason and guidance: the arbiter truncates both to whole
+//     words at the record and delivery boundary (batch.go truncateWords, bounded
+//     by supervisionapi.MaxReasonWords and MaxGuidanceWords), so an oversized
+//     string never reaches a worker or a record verbatim.
+//
+// A scope id, an action verb and a missing guidance are likewise the arbiter's to
+// judge (stale, unknown_action, empty_guidance): a decoder cannot know which
+// names resolve against the render the model read.
 func decodeSuperviseDecisions(raw json.RawMessage) ([]supervisionapi.Decision, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil

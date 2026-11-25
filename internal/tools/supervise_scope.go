@@ -19,10 +19,13 @@ import (
 	"github.com/goatherdai/yaah/internal/supervisionapi"
 )
 
-// maxScopeDepth bounds the parent walk. A scope tree is finite by
-// construction; the bound only stops a corrupted parent pointer from spinning
-// a snapshot read, which is a poll on the model's turn path.
-const maxScopeDepth = 64
+// The parent walk is bounded by supervisionapi.MaxScopeDepth — a scope tree is
+// finite by construction, and the bound only stops a corrupted parent pointer
+// from spinning a snapshot read, which is a poll on the model's turn path. The
+// constant is shared with the reaper's depth sweep (the other parent walk in
+// the tree) because both read the same tree: it lives in supervisionapi, the
+// one package on both sides of the boundary, since this package must not import
+// the agent family back.
 
 // DescendantSnapshot restricts a snapshot source to one scope's descendants:
 // a source that says which scopes the calling loop may supervise.
@@ -89,7 +92,7 @@ func (d *DescendantSnapshot) descendants() map[string]bool {
 		if id == d.Caller {
 			continue
 		}
-		for parent, depth := scope.Parent(), 0; parent != nil && depth < maxScopeDepth; parent, depth = parent.Parent(), depth+1 {
+		for parent, depth := scope.Parent(), 0; parent != nil && depth < supervisionapi.MaxScopeDepth; parent, depth = parent.Parent(), depth+1 {
 			if parent.ID() == d.Caller {
 				out[id] = true
 				break

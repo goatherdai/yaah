@@ -160,6 +160,19 @@ type ToolCallDigest struct {
 // summary.
 const MaxFeatureRunes = 350
 
+// MaxScopeDepth bounds a scope-tree parent walk. A scope tree is finite by
+// construction, so the bound only stops a corrupted parent pointer from
+// spinning the walker: the snapshot source's descendant filter runs on the
+// model's turn path, and the reaper's depth sweep runs on a timer.
+//
+// It lives here, in the vocabulary both sides already import, because the
+// bound is a property of the TREE and not of either reader: internal/tools
+// deliberately does not import the agent family that owns the reaper
+// (supervise_scope.go's header), so a constant exported from the supervision
+// package would be unreachable from the tool side and the two copies would
+// drift.
+const MaxScopeDepth = 64
+
 // InFlightCall is a tool call that has started and has not returned.
 type InFlightCall struct {
 	Name string

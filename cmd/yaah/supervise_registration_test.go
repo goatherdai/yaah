@@ -11,6 +11,7 @@ package yaah
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/goatherdai/yaah/internal/agent/subagent"
@@ -24,10 +25,11 @@ func liveSnapshot() *supervision.Snapshotter { return &supervision.Snapshotter{}
 
 func TestSuperviseTool_RegisteredOnlyUnderAgentPolicy(t *testing.T) {
 	cases := []struct {
-		name   string
-		policy string
-		snap   *supervision.Snapshotter
-		want   bool
+		name        string
+		policy      string
+		snap        *supervision.Snapshotter
+		want        bool
+		wantOmitted bool
 	}{
 		{name: "unconfigured session", policy: "", snap: liveSnapshot(), want: false},
 		{name: "policy none", policy: config.SupervisorPolicyNone, snap: liveSnapshot(), want: false},
@@ -35,8 +37,11 @@ func TestSuperviseTool_RegisteredOnlyUnderAgentPolicy(t *testing.T) {
 		// A nil snapshotter means the session's run registry or trace store
 		// never came up. The tool is then NOT registered: a supervise tool
 		// over a source that can never report an agent would answer every
-		// tick with an empty, done batch and call it supervision.
-		{name: "policy agent without a snapshot source", policy: config.SupervisorPolicyAgent, snap: nil, want: false},
+		// tick with an empty, done batch and call it supervision. The
+		// degradation is RECORDED (omittedTools, so the session's workspace
+		// record and the prompt delta name it) — a policy the operator asked
+		// for and did not get must not be silent.
+		{name: "policy agent without a snapshot source", policy: config.SupervisorPolicyAgent, snap: nil, want: false, wantOmitted: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,6 +66,9 @@ func TestSuperviseTool_RegisteredOnlyUnderAgentPolicy(t *testing.T) {
 			if !tc.want && tr.belt.Allows("supervise") {
 				t.Error("under policy none the belt must not admit supervise")
 			}
+			if omitted := slices.Contains(tr.omittedTools, "supervise"); omitted != tc.wantOmitted {
+				t.Errorf("supervise recorded as omitted = %v, want %v (omittedTools = %v)", omitted, tc.wantOmitted, tr.omittedTools)
+			}
 		})
 	}
 }
@@ -70,7 +78,10 @@ func TestSuperviseTool_RegisteredOnlyUnderAgentPolicy(t *testing.T) {
 // SELECTOR (negative), never zero: zero disables the cooldown outright, so a
 // zero-valued field here would silently drop the `cooldown_ticks: 1` brake that
 // design §4.9 and the tool's doc both promise. supervision tests pin that a
-// negative value normalizes to supervision.DefaultCooldownTicks.
+// negative value normalizes to supervision.DefaultCooldownTicks
+// (internal/agent/supervision/batch_test.go TestBatch_Cooldown, which asserts
+// the batch's own cfg after BatchConfig.normalized runs) — this test pins the
+// CONFIG, that one pins what it becomes, so neither duplicates the other.
 func TestSuperviseBatchConfig_PinsProductionDefaults(t *testing.T) {
 	stopCalled := false
 	stop := func(_ context.Context, _, _ string) (bool, error) {
@@ -80,10 +91,7 @@ func TestSuperviseBatchConfig_PinsProductionDefaults(t *testing.T) {
 	cfg := superviseBatchConfig("scope:root", stop)
 
 	if cfg.CooldownTicks != -1 {
-		t.Errorf("CooldownTicks = %d, want -1 (the documented default selector; 0 would disable the cooldown)", cfg.CooldownTicks)
-	}
-	if cfg.CooldownTicks >= 0 {
-		t.Fatalf("CooldownTicks = %d: the production batch would run with no cooldown", cfg.CooldownTicks)
+		t.Fatalf("CooldownTicks = %d, want -1 (the documented default selector; 0 would disable the cooldown, so the production batch would run with no brake)", cfg.CooldownTicks)
 	}
 	if cfg.RootScopeID != "scope:root" {
 		t.Errorf("RootScopeID = %q, want the caller's scope (never a member, never a target)", cfg.RootScopeID)
@@ -111,5 +119,35 @@ func TestNewSuperviseBatchFactory_NilServiceHasNoHooks(t *testing.T) {
 	}
 	if binding.Arm != nil || binding.Release != nil {
 		t.Errorf("Arm/Release = %v/%v, want nil with no supervision service wired", binding.Arm != nil, binding.Release != nil)
+	}
+}
+
+// TestSuperviseTool_AdmissionWidensAnExplicitToolList pins the finding-7
+// posture: under policy agent, registration goes through Belt.Admit, which
+// WIDENS the session belt by the single name "supervise" even when the
+// operator set an explicit agents.default.tools list that does not mention
+// it. The policy stanza is itself the opt-in (like a configured MCP server);
+// the explicit list still decides every other tool. Pinning the widening
+// keeps a future belt refactor from silently dropping the one tool the
+// operator asked for by configuring the policy.
+func TestSuperviseTool_AdmissionWidensAnExplicitToolList(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Agent.Default.Supervisor.Policy = config.SupervisorPolicyAgent
+	cfg.Agent.Default.Tools = []string{"read", "bash"}
+
+	tr, err := buildToolRegistry(cfg, SessionOptions{}, &workspaceStage{cwd: t.TempDir()}, subagent.Persona{}, nil)
+	if err != nil {
+		t.Fatalf("buildToolRegistry: %v", err)
+	}
+	registerSuperviseTool(&loopInfraStage{}, cfg, tr, liveSnapshot())
+
+	if tr.reg.Get("supervise") == nil {
+		t.Error("supervise must be registered under policy agent even when the explicit tools list omits it")
+	}
+	if !tr.belt.Allows("supervise") {
+		t.Error("Admit must widen the explicit belt by supervise under policy agent")
+	}
+	if !tr.belt.Allows("read") || !tr.belt.Allows("bash") {
+		t.Error("the explicit list's own tools must survive admission unchanged")
 	}
 }

@@ -501,6 +501,19 @@ func (s *agentSession) shutdown() {
 	if joined && s.wakeHooks != nil {
 		s.wakeHooks.Close()
 	}
+	// The supervise tool (yaah-fy28) releases the rules engine's routing BEFORE
+	// the rules service closes. An armed batch is that service pointed at a batch
+	// no call will ever tick again, so its remaining firings would queue and then
+	// drop past the batch's queue cap instead of being delivered. Releasing first
+	// puts the service back on direct delivery for the firings its own Close still
+	// makes — the same reason a tick reporting Done releases it mid-session. The
+	// tool refuses later calls once closed, so a wake turn racing teardown cannot
+	// re-arm it.
+	if s.toolReg != nil {
+		if st, ok := s.toolReg.Get("supervise").(*tools.SuperviseTool); ok && st != nil {
+			st.Close()
+		}
+	}
 	// The advisory rules service drains INTO the registry below: stop it
 	// first and join its drain goroutine, so no delivery is mid-flight
 	// when the registry entries it addresses start going away.
