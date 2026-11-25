@@ -117,13 +117,42 @@ const (
 	// scope, or a run that registered no cancellation. Nothing was halted,
 	// so nothing was claimed stopped and no pending claim was voided.
 	DropReasonStopRefused = "stop_refused"
+	// DropReasonNotDelivered means the DIRECT-delivery rules path (no batch
+	// bound, so no tick arbitrated the action) could not hand the action to
+	// anything: the scope was not addressable in the kernel, its own guidance
+	// buffer refused the write, or the run bridge failed with an error it
+	// could not classify. There is no tick to name and no claim behind it, so
+	// the record says exactly that instead of leaving the firing silent.
+	DropReasonNotDelivered = "not_delivered"
+	// DropReasonQueueFull means the arbiter's rule queue was full when the
+	// rules engine fired: the newest firing was discarded because the caller
+	// stopped ticking (see maxQueuedRules). The drop happens on the rules
+	// engine's goroutine, between ticks, which is why its record carries
+	// Tick 0.
+	DropReasonQueueFull = "queue_full"
 )
 
 // InterventionRecord is one decision with its outcome.
+//
+// It is the record the batch accumulates and the dispatch envelope carries
+// beside the sub-agent's typed stop outcome (yaah-vaxv, design §4.10): every
+// decision and every rules action gets one, executed or not, so a dispatching
+// agent knows what happened to a run before it settles that run's proposal.
+// An empty Guidance is "there was none to deliver".
 type InterventionRecord struct {
-	// At is the wall clock when the tick recorded the outcome.
+	// At is the wall clock when the record was made — inside a tick for a
+	// decision the arbiter executed, and OUTSIDE one for everything else the
+	// record still has to carry: a rules action the Service delivered directly
+	// (no batch arbitrated it), a firing the full rule queue discarded, an
+	// applied stop recorded at the cancel that delivers it, and the dispatching
+	// agent's own root action through the supervisor tool. It is when the
+	// intervention was recorded, and never a claim about the tick loop.
 	At time.Time
-	// Tick is the batch tick that produced the decision.
+	// Tick is the batch tick that produced the decision. ZERO means the action
+	// came from outside the tick loop: a rules action the Service delivered
+	// directly (no batch arbitrated it), a firing the full rule queue
+	// discarded, or the dispatching agent's own root action through the
+	// supervisor tool. A reader orders by Tick and reads 0 as "between ticks".
 	Tick int
 	// Scope is the scope the decision named.
 	Scope string
@@ -138,7 +167,7 @@ type InterventionRecord struct {
 	// Outcome is OutcomeApplied, OutcomeClaimed or OutcomeDropped.
 	Outcome string
 	// DropReason is set only when Outcome is OutcomeDropped, for example
-	// "not_reversible".
+	// "not_reversible"; it names the ONE question that failed.
 	DropReason string
 	// Generation is the scope registration generation the intervention
 	// targeted — the RedirectHandle.Gen type, so a claim and its record

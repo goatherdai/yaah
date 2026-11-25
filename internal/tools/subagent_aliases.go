@@ -7,6 +7,7 @@ import (
 	"context"
 
 	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/supervisionapi"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -126,4 +127,22 @@ func WithSubAgentHeartbeat(ctx context.Context, hb chan struct{}) context.Contex
 
 func SendHeartbeat(ctx context.Context) {
 	jobs.SendHeartbeat(ctx)
+}
+
+// SubAgentIntervention is one supervision intervention the settling run was
+// subject to — a decision or a rules action, taken or dropped, in tick order
+// (aliased from the supervision vocabulary so the envelope and the batch name
+// one record shape; yaah-vaxv).
+type SubAgentIntervention = supervisionapi.InterventionRecord
+
+// WithSubAgentInterventions installs the per-run sink the runner reports its
+// scope's intervention records through.
+func WithSubAgentInterventions(ctx context.Context, ptr *[]SubAgentIntervention) context.Context {
+	return jobs.WithSubAgentInterventions(ctx, ptr)
+}
+
+// CaptureSubAgentInterventions reports the run's intervention records through
+// the sink in ctx, if one was installed.
+func CaptureSubAgentInterventions(ctx context.Context, records []SubAgentIntervention) {
+	jobs.CaptureSubAgentInterventions(ctx, records)
 }

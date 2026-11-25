@@ -889,6 +889,14 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		denials := newDenialLog()
 		guardCheck, guardDenyRec := denials.wrap(opts.guardCheck, opts.guardDenyRec)
 
+		// captured accumulates every generation's supervision records, because
+		// the envelope carries ONE account of the whole sequence and a drain is
+		// destructive: a redirect successor that recorded its own (or nothing)
+		// must add to its predecessor's records, never replace them
+		// (PR #415 review finding 1). The single capture happens after the
+		// sequence loop, below.
+		var captured []tools.SubAgentIntervention
+
 		// Inner per-run segment: builds ONE loop on the shared bridge,
 		// runs it, and performs that run's complete post-run accounting
 		// gauntlet — transcript/stop/denials capture, usage and
@@ -977,6 +985,21 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			// what the envelope carries (yaah-938). WithoutCancel keeps the write
 			// alive when a timeout ended the run.
 			tools.CaptureSubAgentDenials(context.WithoutCancel(ctx), denials.list())
+			// Hand this run the supervisor's account of it: every decision and
+			// rules action that named this scope, in tick order (yaah-vaxv,
+			// design §4.10). The trace already holds each record as a fact
+			// (supervision.ScopeRecordSink writes it where it is made); this is
+			// the envelope half, the only half the orchestrator reads. Drained
+			// rather than read: the run that just returned is the run those
+			// records were about, and a redirect successor opens its own
+			// account on the same scope. ACCUMULATED, not assigned — the
+			// capture itself is once per sequence, below, because a
+			// destructive drain whose result is overwritten loses those
+			// records from the log and the envelope alike. WithoutCancel keeps
+			// the drain alive when a timeout ended the run: a halted dispatch
+			// is exactly the one whose interventions matter, and a halt's own
+			// record is appended BEFORE the cancel that settled this run.
+			captured = append(captured, opts.runs.DrainInterventions(bridgeScopeID)...)
 			recordSubAgentUsage(context.WithoutCancel(ctx), opts.traceStore, subTraceID, opts.parentSession, string(role), subModel, params.Lane, runGen, subLoop.OwnUsage())
 			// Record the jail the body actually ran under, not just the one the
 			// previous fact resolved: a backend can pass its availability check and
@@ -1216,6 +1239,11 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// the run — then the generation-guarded removal, so this run's
 		// teardown can never remove a successor's registration.
 		if bridgeLive {
+			// The sequence's one capture, after every generation has drained: the
+			// envelope states what the supervisor did to the dispatch as a whole,
+			// in the order it happened. WithoutCancel keeps the write alive when
+			// a timeout ended the run.
+			tools.CaptureSubAgentInterventions(context.WithoutCancel(ctx), captured)
 			close(quiesce)
 			opts.runs.UnregisterGeneration(bridgeScopeID, runGen)
 			bridgeLive = false

@@ -109,7 +109,7 @@ func TestSuperviseTool_RegisteredOnlyUnderAgentPolicy(t *testing.T) {
 // CONFIG, that one pins what it becomes, so neither duplicates the other.
 func TestSuperviseBatchConfig_PinsProductionDefaults(t *testing.T) {
 	stopCalled := false
-	stop := func(_ context.Context, _, _ string) (bool, error) {
+	stop := func(_ context.Context, _, _ string, _ func()) (bool, error) {
 		stopCalled = true
 		return true, nil
 	}
@@ -124,7 +124,7 @@ func TestSuperviseBatchConfig_PinsProductionDefaults(t *testing.T) {
 	if cfg.Stop == nil {
 		t.Fatal("Stop = nil, want the Service's stop delivery so a queued rules stop can land")
 	}
-	if _, err := cfg.Stop(context.Background(), "scope:sub-a", "reason"); err != nil || !stopCalled {
+	if _, err := cfg.Stop(context.Background(), "scope:sub-a", "reason", nil); err != nil || !stopCalled {
 		t.Errorf("Stop did not reach the injected delivery function (called=%v, err=%v)", stopCalled, err)
 	}
 }

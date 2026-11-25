@@ -264,6 +264,11 @@ type Registry struct {
 	// ends: the entry leaves runs (so Inject and Has stop claiming a live
 	// bridge) while the metadata stays readable here.
 	finished []Registration
+	// records is the session's intervention log (yaah-vaxv): every decision
+	// and every rules action, per scope, drained by the run it names at
+	// settle. It is a value so a zero Registry still records safely, and it
+	// carries its own mutex — nothing here takes r.mu to append.
+	records interventionLog
 	// now stamps FinishedAt. A field, not a direct time.Now call, so a
 	// test can pin the clock without a sleep.
 	now func() time.Time
@@ -585,6 +590,21 @@ func (r *Registry) Cancel(scopeID string) (<-chan struct{}, error) {
 		return nil, nil
 	}
 	return run.entry.Done, nil
+}
+
+// Haltable reports whether a halt would reach a run: a live registration whose
+// run carries a cancellation. It is the non-mutating half of Cancel, and the
+// ordering device a stop needs (yaah-vaxv): a stop's record must be appended
+// BEFORE the cancel, because the cancel is what makes the halted run settle and
+// a settling run drains its own scope's records — so a producer asks this
+// question first, records while the answer still holds, and only then cancels.
+// Recording after a successful Cancel is too late by construction, and it is the
+// narrow race that loses a halt's record from its own run's envelope.
+func (r *Registry) Haltable(scopeID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run, ok := r.runs[scopeID]
+	return ok && run.entry.Cancel != nil
 }
 
 // Has reports whether a run is registered for the scope.

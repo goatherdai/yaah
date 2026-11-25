@@ -19,12 +19,16 @@
 //   - the headless Decider plus `supervisor.policy`/`policy_model` config and
 //     the locked v1 prompt wiring (yaah-0nbb; the prompt asset and the
 //     renderer are landed, the binding is not);
-//   - the dispatch-envelope records that cite TickResult (yaah-vaxv);
 //   - revert by construction — lane upgrade, fatal pre-run capture — which is
 //     what makes a revert reachable on a dispatched scope at all (yaah-ugtl).
 //     Until that lands, a revert is only as good as the registration says
 //     (Registration.Reversible), which is exactly what this arbiter reads: a
 //     revert on a scope with no capture is dropped, never downgraded.
+//
+// What it DOES do with its records, since yaah-vaxv: every tick hands its
+// results to the session's intervention log (recordInterventions), which is
+// where the dispatch envelope finds them when the supervised run settles. See
+// records.go.
 package supervision
 
 import (
@@ -32,7 +36,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -123,7 +126,18 @@ const (
 // a delivery failure. A nil StopFunc means there is no delivery side at all
 // (DropReasonNoStopFunc); the composition root that owns both the Service and
 // the batch supplies the real one.
-type StopFunc func(ctx context.Context, scopeID, reason string) (delivered bool, err error)
+//
+// record is the stop's own record and MUST be called — exactly once, and only
+// if the halt is actually issued — BEFORE the cancel that delivers it. The
+// cancel is what makes the halted run settle, and a settling run drains its own
+// scope's records for the dispatch envelope (Registry.DrainInterventions), so a
+// stop recorded after the cancel is a stop the halted dispatch never reports —
+// inverting the one case the record exists for (PR #415 review finding 2). A
+// refusal or a failure must NOT call it. An adapter that reports delivery
+// without calling it (a test double, a thin wrapper) leaves the arbiter to
+// append the record itself after the fact: present, but too late for the
+// halted run's own envelope.
+type StopFunc func(ctx context.Context, scopeID, reason string, record func()) (delivered bool, err error)
 
 // RuleArbiter is what the Service needs from the batch to route its rule
 // firings through the shared arbiter instead of delivering them directly: two
@@ -472,9 +486,7 @@ func (b *Batch) QueueRuleSteer(scopeID, reason, guidance string) {
 	if scopeID == "" {
 		return
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.queueRuleLocked(queuedRule{scopeID: scopeID, reason: reason, guidance: guidance})
+	b.queueRule(queuedRule{scopeID: scopeID, reason: reason, guidance: guidance})
 }
 
 // QueueRuleStop queues an advisory rule's stop of a scope for the next tick.
@@ -488,9 +500,27 @@ func (b *Batch) QueueRuleStop(scopeID, reason string) {
 	if scopeID == "" {
 		return
 	}
+	b.queueRule(queuedRule{stop: true, scopeID: scopeID, reason: reason})
+}
+
+// queueRule queues one firing and records the ones the full queue discards.
+//
+// The record is made AFTER the lock is released (recording can reach the trace
+// through the log's sink) and it carries Tick 0: this refusal happens on the
+// rules engine's goroutine, between ticks, so there is no tick to name. Without
+// it a discarded firing would be a drop nobody can see — the count RulesDropped
+// reports names no scope and no action.
+func (b *Batch) queueRule(q queuedRule) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.queueRuleLocked(queuedRule{stop: true, scopeID: scopeID, reason: reason})
+	queued := b.queueRuleLocked(q)
+	b.mu.Unlock()
+	if queued {
+		return
+	}
+	gen, _ := b.generation(q.scopeID)
+	b.recordInterventions([]supervisionapi.InterventionRecord{b.dropRecord(0,
+		supervisionapi.SourceRules, q.scopeID, q.action(), q.reason, q.guidance,
+		supervisionapi.DropReasonQueueFull, gen)})
 }
 
 // queueRuleLocked appends a firing unless the queue is full, in which case the
@@ -611,14 +641,18 @@ func (b *Batch) Next(ctx context.Context, decisions []supervisionapi.Decision) (
 		b.bumpAgesLocked()
 		done := len(b.members) == 0
 		b.mu.Unlock()
-		return supervisionapi.TickResult{
+		// A cancelled tick's interventions really happened, so they are
+		// recorded like any other tick's: the caller sees them in the
+		// returned result AND the envelope sees them at settle.
+		res := supervisionapi.TickResult{
 			Snapshot: last,
 			Applied:  appliedOf(results),
 			Results:  results,
 			Done:     done,
-		}, err
+		}
+		b.recordInterventions(res.Results)
+		return res, err
 	}
-
 	fresh := b.takeSnapshot()
 	b.mu.Lock()
 	prev := b.snapshot
@@ -634,12 +668,14 @@ func (b *Batch) Next(ctx context.Context, decisions []supervisionapi.Decision) (
 	// is vacuously done — deliberately, because the caller waiting on it
 	// (fy28's wait:settled) must not hang on a dispatch universe that never
 	// had a worker in it.
-	return supervisionapi.TickResult{
+	res := supervisionapi.TickResult{
 		Snapshot: fresh,
 		Applied:  appliedOf(results),
 		Results:  results,
 		Done:     done,
-	}, nil
+	}
+	b.recordInterventions(res.Results)
+	return res, nil
 }
 
 // action is the record action a queued rule names.
@@ -1202,7 +1238,23 @@ func (b *Batch) applyRuleStop(ctx context.Context, q queuedRule, tick int) []sup
 		return []supervisionapi.InterventionRecord{b.dropRecord(tick, source, q.scopeID,
 			supervisionapi.ActionStop, q.reason, "", supervisionapi.DropReasonNoStopFunc, 0)}
 	}
-	delivered, err := b.cfg.Stop(ctx, q.scopeID, q.reason)
+	// The applied stop's record is appended AT THE CANCEL, not here: the cancel is
+	// what makes the halted run settle, and a settling run drains its own scope's
+	// records, so the record has to be in the log before the delivery side issues
+	// it (see StopFunc). The tick result still carries the same record value; the
+	// log's per-record idempotence absorbs the second hand.
+	var applied supervisionapi.InterventionRecord
+	recorded := false
+	record := func() {
+		if recorded {
+			return
+		}
+		recorded = true
+		applied = b.newRecord(tick, source, q.scopeID,
+			supervisionapi.ActionStop, q.reason, "", supervisionapi.OutcomeApplied, "", 0)
+		b.recordInterventions([]supervisionapi.InterventionRecord{applied})
+	}
+	delivered, err := b.cfg.Stop(ctx, q.scopeID, q.reason, record)
 	if err != nil {
 		slog.Warn("supervision: rule stop delivery failed", "scope", q.scopeID, "err", err)
 		return []supervisionapi.InterventionRecord{b.dropRecord(tick, source, q.scopeID,
@@ -1215,9 +1267,15 @@ func (b *Batch) applyRuleStop(ctx context.Context, q queuedRule, tick int) []sup
 		return []supervisionapi.InterventionRecord{b.dropRecord(tick, source, q.scopeID,
 			supervisionapi.ActionStop, q.reason, "", supervisionapi.DropReasonStopRefused, 0)}
 	}
+	if !recorded {
+		// A delivery side that reported success without claiming the record (a
+		// test double, a thin adapter): append it here so the tick still accounts
+		// for the stop. The run it stopped has already settled by now, so this is
+		// the too-late case the real adapter avoids, not an equivalent one.
+		record()
+	}
 	b.noteApplied(q.scopeID, supervisionapi.ActionStop)
-	out := []supervisionapi.InterventionRecord{b.newRecord(tick, source, q.scopeID,
-		supervisionapi.ActionStop, q.reason, "", supervisionapi.OutcomeApplied, "", 0)}
+	out := []supervisionapi.InterventionRecord{applied}
 	if void, ok := b.voidClaim(q.scopeID, tick); ok {
 		out = append(out, void)
 	}
@@ -1440,17 +1498,25 @@ func appliedOf(results []supervisionapi.InterventionRecord) []supervisionapi.Int
 	return out
 }
 
-// truncateWords keeps the first max whitespace-separated words and drops the
-// rest, so a truncation never cuts a word in half. It counts exactly as
-// supervisionapi.WordCount does, which is the same rule the headless decider
-// (yaah-0nbb) enforces on its own replies.
+// recordInterventions hands records to the session's intervention log (yaah-vaxv,
+// design §4.10): the half the dispatch envelope reads when the supervised run
+// settles. A tick's records are appended once its own bookkeeping for them is
+// done, so a record never observes a half-applied action; the ONE exception is
+// an applied stop, which the delivery side appends at the cancel (see StopFunc)
+// because a stop recorded later than the run it stopped cannot reach that run's
+// envelope. A batch built without a registry (every claim drops no_run) records
+// nothing.
+func (b *Batch) recordInterventions(results []supervisionapi.InterventionRecord) {
+	if b.runs == nil || len(results) == 0 {
+		return
+	}
+	b.runs.RecordInterventions(results...)
+}
+
+// truncateWords delegates to the shared rule: the arbiter, the Service's direct
+// deliveries and the supervisor tool's root actions must bound model-authored
+// text identically, or the same guidance reads differently depending on which
+// producer recorded it.
 func truncateWords(s string, max int) string {
-	if max <= 0 {
-		return ""
-	}
-	fields := strings.Fields(s)
-	if len(fields) <= max {
-		return s
-	}
-	return strings.Join(fields[:max], " ")
+	return supervisionapi.TruncateWords(s, max)
 }

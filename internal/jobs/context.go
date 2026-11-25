@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/goatherdai/yaah/internal/supervisionapi"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -436,3 +437,37 @@ func CaptureSubAgentConfinement(ctx context.Context, conf SubAgentConfinement) {
 		*ptr = conf
 	}
 }
+
+// subAgentInterventionsKey stores a *[]supervisionapi.InterventionRecord the
+// runner writes after its loop returns: every supervision decision and rules
+// action that named the run's scope, in tick order (yaah-vaxv, design §4.10).
+// A dispatch body installs it before invoking the runner.
+type subAgentInterventionsKey struct{}
+
+// WithSubAgentInterventions stores ptr in ctx so the runner can report the
+// supervision interventions its run was subject to. Only safe when the caller
+// reads *ptr after joining the runner.
+func WithSubAgentInterventions(ctx context.Context, ptr *[]supervisionapi.InterventionRecord) context.Context {
+	return context.WithValue(ctx, subAgentInterventionsKey{}, ptr)
+}
+
+// CaptureSubAgentInterventions writes records through the intervention sink
+// stored in ctx, if present.
+//
+// This is the same route SubAgentDenial takes, and for the same reason: the
+// trace already holds the record (ScopeRecordSink writes a fact as each
+// intervention is made), but the orchestrator reads the dispatch envelope and
+// never the trace. A run whose supervisor steered, redirected or dropped an
+// action against it must say so before its proposal is settled.
+func CaptureSubAgentInterventions(ctx context.Context, records []supervisionapi.InterventionRecord) {
+	if ptr, ok := ctx.Value(subAgentInterventionsKey{}).(*[]supervisionapi.InterventionRecord); ok && ptr != nil {
+		*ptr = records
+	}
+}
+
+// SubAgentIntervention is one supervision intervention the settling run was
+// subject to — a policy decision, a rules action, or the dispatching agent's own
+// root action, taken or dropped, in tick order (yaah-vaxv, design §4.10). It is
+// the record type itself, not a copy: the batch, the trace fact, and the
+// envelope cite one shape.
+type SubAgentIntervention = supervisionapi.InterventionRecord

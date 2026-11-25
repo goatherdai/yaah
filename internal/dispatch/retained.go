@@ -701,11 +701,14 @@ func sessionContainerFallback(
 	// may start counting (yaah-95ri.2).
 	NotifySubAgentReady(runCtx)
 	// The fallback still runs the same guarded child; its refusals must reach
-	// the envelope like any other lane's (yaah-938).
+	// the envelope like any other lane's (yaah-938), and so must the
+	// supervisor's interventions on it (yaah-vaxv).
 	var denials []jobs.SubAgentDenial
 	runCtx = jobs.WithSubAgentDenials(runCtx, &denials)
+	var interventions []jobs.SubAgentIntervention
+	runCtx = jobs.WithSubAgentInterventions(runCtx, &interventions)
 	result, err := rt.Runner(runCtx, prompt, subParams)
-	warnings := denialWarnings(denials)
+	warnings := append(denialWarnings(denials), interventionWarnings(interventions)...)
 	if err != nil {
 		return fallback(retainedRunResult{Warnings: warnings}), err
 	}
@@ -1055,12 +1058,16 @@ func startRetainedRun(
 	var confinement jobs.SubAgentConfinement
 	// The supervisor-guard refusals this body recorded (yaah-938), carried into
 	// the envelope's warnings below: the trace records them for an operator, but
-	// this envelope is what the orchestrator reads.
+	// this envelope is what the orchestrator reads. The supervision
+	// interventions on this run ride the same channel (yaah-vaxv, design
+	// §4.10).
 	var denials []jobs.SubAgentDenial
+	var interventions []jobs.SubAgentIntervention
 	runCtx := jobs.WithSubAgentTranscript(ctx, &transcript)
 	runCtx = jobs.WithSubAgentStop(runCtx, &stop)
 	runCtx = jobs.WithSubAgentConfinement(runCtx, &confinement)
 	runCtx = jobs.WithSubAgentDenials(runCtx, &denials)
+	runCtx = jobs.WithSubAgentInterventions(runCtx, &interventions)
 	var cancel context.CancelFunc
 	if timeout > 0 {
 		runCtx, cancel = context.WithTimeout(runCtx, timeout)
@@ -1081,7 +1088,12 @@ func startRetainedRun(
 	// The refusals this body recorded ride on the envelope the orchestrator
 	// settles (yaah-938): a sealed proposal whose child was refused part of what
 	// it attempted must say so, whether it sealed completely or as a partial.
+	// The interventions the supervisor made on it follow the same route
+	// (yaah-vaxv).
 	for _, w := range denialWarnings(denials) {
+		env.AddWarning(w)
+	}
+	for _, w := range interventionWarnings(interventions) {
 		env.AddWarning(w)
 	}
 
@@ -1094,8 +1106,9 @@ func startRetainedRun(
 		var notes []string
 		// What the guard refused is one of the attempt's caveats: a report that
 		// could only gather part of what it was asked for must say so
-		// (yaah-938).
-		warnings := denialWarnings(denials)
+		// (yaah-938). A supervision intervention on the run is one too
+		// (yaah-vaxv).
+		warnings := append(denialWarnings(denials), interventionWarnings(interventions)...)
 		if worldRes.Degraded {
 			notes = append(notes, "dispatch world degraded: "+worldRes.Reason)
 		}
@@ -1545,12 +1558,15 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	// under, and the seal below cites it.
 	var confinement jobs.SubAgentConfinement
 	// The continuation's own guard refusals (yaah-938), carried into the
-	// envelope below like the original run's.
+	// envelope below like the original run's, and the supervision interventions
+	// it was subject to (yaah-vaxv).
 	var denials []jobs.SubAgentDenial
+	var interventions []jobs.SubAgentIntervention
 	runCtx := jobs.WithSubAgentTranscript(ctx, &transcript)
 	runCtx = jobs.WithSubAgentStop(runCtx, &stop)
 	runCtx = jobs.WithSubAgentConfinement(runCtx, &confinement)
 	runCtx = jobs.WithSubAgentDenials(runCtx, &denials)
+	runCtx = jobs.WithSubAgentInterventions(runCtx, &interventions)
 	var cancel context.CancelFunc
 	if p.timeout > 0 {
 		runCtx, cancel = context.WithTimeout(runCtx, p.timeout)
@@ -1659,7 +1675,11 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	}
 	// The same refusals channel the original run's do (yaah-938): a continuation
 	// is a dispatch of its own, and its envelope is what the orchestrator reads.
+	// The interventions made on it follow the same route (yaah-vaxv).
 	for _, w := range denialWarnings(denials) {
+		env.AddWarning(w)
+	}
+	for _, w := range interventionWarnings(interventions) {
 		env.AddWarning(w)
 	}
 	if output == nil {
