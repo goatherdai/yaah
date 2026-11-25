@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.215.0](https://github.com/goatherdai/yaah/compare/v0.214.0...v0.215.0) (2026-11-25)
+
+
+### Features
+
+* **supervision:** supervise tool consuming the Batch arbiter (yaah-fy28) ([#412](https://github.com/goatherdai/yaah/issues/412)) ([cc1dc6a](https://github.com/goatherdai/yaah/commit/cc1dc6ae5e59afe3606eb659c57ab649680efa6e))
+
 ## [0.214.0](https://github.com/goatherdai/yaah/compare/v0.213.0...v0.214.0) (2026-11-25)
 
 
