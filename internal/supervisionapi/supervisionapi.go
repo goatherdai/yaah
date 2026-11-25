@@ -28,6 +28,25 @@ var (
 	// this caller arrived second at a run that is still live — and must
 	// not launch a second replacement loop for it.
 	ErrAlreadyClaimed = errors.New("the run is already claimed for redirect")
+
+	// ErrSupervisedCaptureFailed is a supervised dispatch's pre-run
+	// workspace capture failing, which stops the dispatch before it starts
+	// (design §4.2, yaah-ugtl): supervision promises a revert, and a
+	// revert whose snapshot never landed has nothing to restore.
+	//
+	// It lives HERE, not in the runner that returns it, so the dispatch
+	// boundary can classify it: the refusal is a deterministic
+	// configuration outcome, and a retry policy must not re-provision a
+	// world for it. The runner re-exports it, so errors.Is identity holds
+	// on both sides.
+	ErrSupervisedCaptureFailed = errors.New("supervised dispatch refused at start: the pre-run workspace capture failed")
+
+	// ErrSupervisedNotReversible is supervisor.require_reversible refusing
+	// a supervised dispatch that owns no isolated workspace (design §4.2):
+	// a pure-causal fork, a container session's shared root, or a session
+	// running directly on the shared workspace has nothing this dispatch
+	// could roll back without touching other writers' work.
+	ErrSupervisedNotReversible = errors.New("supervised dispatch refused at start: this dispatch has no isolated workspace it can roll back")
 )
 
 // RedirectHandle is a successful Redirect claim: the scope and the

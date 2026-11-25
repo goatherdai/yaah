@@ -94,6 +94,18 @@ type DelegateTool struct {
 	// retained too — their delivered result is a proposal envelope — so there is
 	// no path from this tool to the host tree while Retained is set.
 	Retained *RetainedRuntime
+
+	// Supervised, when true, runs this tool's dispatches through the
+	// supervised dispatch path (design §4.2, yaah-ugtl): a dispatch that
+	// lane routing would send to the SHARED lane is upgraded to the REPORT
+	// lane — an isolated world, a plain result, and the world torn down
+	// afterwards — so the work is revertable by construction, and the runner
+	// refuses to start a dispatch whose pre-run workspace capture fails
+	// instead of warning and running unrevertable. The composition root sets
+	// it from supervisor config; the per-call `supervise` argument overrides
+	// it for one dispatch. False (the default) changes nothing: lane routing
+	// and every lane's behavior are exactly the unsupervised ones.
+	Supervised bool
 }
 
 func (t *DelegateTool) Name() string { return "delegate" }
@@ -129,7 +141,7 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	strict, err := DecodeStrictObject("delegate", args,
 		"description", "prompt", "role", "timeout_seconds", "max_iterations",
 		"max_turns", "json_mode", "output_limit", "background", "seed_from",
-		"seed_mode", "provider", "model")
+		"seed_mode", "provider", "model", "supervise")
 	if err != nil {
 		return "", err
 	}
@@ -170,6 +182,11 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 		SeedMode       string `json:"seed_mode"`
 		Provider       string `json:"provider"`
 		Model          string `json:"model"`
+		// Supervise is the per-dispatch supervision override: nil follows
+		// the session's posture, false opts this dispatch out, true opts it
+		// in. A pointer, not a bool, because "absent" and "explicitly
+		// false" are different answers (design §4.9).
+		Supervise *bool `json:"supervise"`
 	}
 	if err := json.Unmarshal(fixed, &params); err != nil {
 		return "", fmt.Errorf("delegate: invalid arguments: %w", err)
@@ -240,10 +257,18 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 		label = label + " — " + params.Description
 	}
 
+	// Supervision posture for THIS dispatch (design §4.2, yaah-ugtl).
+	// Resolved before the lane, because a supervised dispatch may upgrade
+	// the lane routing chose.
+	supervised, serr := t.supervisedDispatch(params.Supervise)
+	if serr != nil {
+		return "", serr
+	}
+
 	// Resolve the lane once: LaneForRole reads the live role registry, so a
 	// second call could disagree with the first if a role is created or
 	// edited mid-dispatch.
-	lane := t.laneFor(params.Role)
+	lane := supervisedLane(t.laneFor(params.Role), supervised, t.Retained != nil)
 	conflictLane := ConflictLaneShared
 	if t.Retained != nil && lane != LaneShared {
 		conflictLane = ConflictLaneRetained
@@ -255,6 +280,15 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	if cd, ok := conflictDispatchFrom(runCtx); ok {
 		runCtx = jobs.WithDispatchID(runCtx, cd.ID)
 	}
+	// Hand the runner this dispatch's supervision answer (design §4.2):
+	// jobs.SubAgentParams carries no supervision field, and the answer is a
+	// caller decision — the per-call override over the session posture — not
+	// a dispatch parameter. The marker always carries the RESOLVED value, in
+	// both directions (review M1): a nested dispatch inherits its parent's
+	// context, so a marker written only when supervised would let a parent's
+	// supervision leak into a child that resolved to unsupervised, and rules
+	// it never opted into would gate that child's start.
+	runCtx = WithSupervisedDispatch(runCtx, supervised)
 
 	// Background jobs cancel from the session root, not the dispatching call,
 	// so ordinary context values do not flow through. Re-attach the conflict
@@ -262,19 +296,16 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	// ceiling (parity W5.7) before the runner starts — a deferred dispatch must
 	// not become the loophole that escapes what the parent denied.
 	res, err := dispatch.Run(runCtx, dispatch.DispatchRequest{
-		Description:    params.Description,
-		Prompt:         params.Prompt,
-		Lane:           lane,
-		Params:         subParams,
-		Timeout:        timeout,
-		Background:     params.Background,
-		Runner:         t.Runner,
-		Retained:       t.Retained,
-		BackgroundJobs: t.BackgroundJobs,
-		BackgroundContextSeeder: func(jobCtx context.Context) context.Context {
-			jobCtx = WithConflictDispatch(jobCtx, label, conflictLane)
-			return permissions.WithInherited(jobCtx, permissions.Inherited(runCtx))
-		},
+		Description:             params.Description,
+		Prompt:                  params.Prompt,
+		Lane:                    lane,
+		Params:                  subParams,
+		Timeout:                 timeout,
+		Background:              params.Background,
+		Runner:                  t.Runner,
+		Retained:                t.Retained,
+		BackgroundJobs:          t.BackgroundJobs,
+		BackgroundContextSeeder: backgroundContextSeeder(runCtx, label, conflictLane, supervised),
 	})
 	if err != nil {
 		return "", err
@@ -435,4 +466,90 @@ func (t *DelegateTool) laneFor(role string) DelegateLane {
 		return lane
 	}
 	return LaneProposal
+}
+
+// supervisedDispatch resolves THIS dispatch's supervision posture (design
+// §4.2, §4.9): the per-call override when supplied, the session posture
+// otherwise.
+//
+// supervise: true asks for a supervision the session is not running, and that
+// is refused rather than silently honored. A single dispatch can choose an
+// isolated lane and can refuse to start without a snapshot — that is entirely
+// local — but it cannot conjure the host-side tick that would actually watch
+// it, so reporting success would promise supervision that does not exist. The
+// design is silent on the combination; refusing it is the choice that keeps
+// `supervise: true` meaning what it says.
+//
+// supervise: false opts this ONE dispatch out and leaves the lane routing
+// untouched, so it behaves exactly as it did before this option existed.
+func (t *DelegateTool) supervisedDispatch(override *bool) (bool, error) {
+	if override == nil {
+		return t.Supervised, nil
+	}
+	if !*override {
+		return false, nil
+	}
+	if !t.Supervised {
+		return false, fmt.Errorf("delegate: supervise: true needs supervision enabled for the session (an explicit supervisor.enabled: true) — one dispatch can choose an isolated, revertable lane, but it cannot start the host-side supervision that would watch it; omit supervise or set it to false to keep this dispatch unsupervised")
+	}
+	return true, nil
+}
+
+// supervisedLane upgrades the lane routing chose for a supervised dispatch
+// (design §4.2, yaah-ugtl): under supervision a dispatch either owns an
+// isolated workspace it can roll back or it never starts, so a lane that would
+// run directly on the shared workspace is moved to the report lane — isolated
+// world, plain result, world torn down afterwards. Only where the work runs
+// changes; what comes back does not.
+//
+// isolatedAvailable reports whether the session has an isolated lane at all
+// (a retained runtime: worktree or per-dispatch container). Without one the
+// lane stays shared and the decision moves to the runner, which refuses the
+// dispatch under supervisor.require_reversible and otherwise runs it with
+// Reversible false — the honest report for a host that cannot isolate.
+func supervisedLane(lane DelegateLane, supervised, isolatedAvailable bool) DelegateLane {
+	if supervised && isolatedAvailable && lane == LaneShared {
+		return LaneReport
+	}
+	return lane
+}
+
+// supervisedDispatchKey marks a dispatch context as supervised (design §4.2).
+// It is a context value, not a dispatch parameter, because the answer is the
+// dispatching tool's decision (the per-call override over the session
+// posture), and jobs.SubAgentParams would hand every caller a knob only
+// supervision sets.
+type supervisedDispatchKey struct{}
+
+// WithSupervisedDispatch records ctx's supervision answer. It always writes,
+// false included: the value is the RESOLVED posture of one dispatch, and a
+// nested dispatch reuses its parent's context, so a set-only marker would let
+// the parent's answer stand in for the child's (review M1).
+func WithSupervisedDispatch(ctx context.Context, supervised bool) context.Context {
+	return context.WithValue(ctx, supervisedDispatchKey{}, supervised)
+}
+
+// SupervisedDispatch reports whether ctx belongs to a supervised dispatch.
+// The zero answer — an unmarked context — is "unsupervised", which is the
+// behavior every dispatch had before supervision existed.
+func SupervisedDispatch(ctx context.Context) bool {
+	supervised, _ := ctx.Value(supervisedDispatchKey{}).(bool)
+	return supervised
+}
+
+// backgroundContextSeeder returns the seeder a background job uses to
+// re-attach what a job cannot inherit: it cancels from the session root, not
+// from the dispatching call, so ordinary context values do not flow through.
+// Re-attached are the conflict attribution (with a fresh id for the job), the
+// inherited permission ceiling (parity W5.7) — a deferred dispatch must not
+// become the loophole that escapes what the parent denied — and the dispatch's
+// RESOLVED supervision answer, which the runner's start gate reads. Both
+// directions are re-attached (review M1): a deferred supervised dispatch is
+// still supervised, and a deferred opted-out one stays opted out.
+func backgroundContextSeeder(runCtx context.Context, label, lane string, supervised bool) func(context.Context) context.Context {
+	return func(jobCtx context.Context) context.Context {
+		jobCtx = WithConflictDispatch(jobCtx, label, lane)
+		jobCtx = permissions.WithInherited(jobCtx, permissions.Inherited(runCtx))
+		return WithSupervisedDispatch(jobCtx, supervised)
+	}
 }

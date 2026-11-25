@@ -375,7 +375,13 @@ supervisor:
 - The rule keys are unchanged. `policy` does not inherit the rules'
   "absent means on" convention: absent means `none`.
 - `delegate` gains one optional override, `supervise: true` or `false`, for a
-  single dispatch.
+  single dispatch. `true` asks for supervision the session is not running, and
+  that is refused rather than silently honored: one dispatch can choose an
+  isolated, revertable lane and can refuse to start without a snapshot, but it
+  cannot start the host-side tick that would watch it, so reporting success
+  would promise supervision that does not exist. `false` opts this one dispatch
+  out and leaves lane routing untouched (the runner and the tool agree on
+  this — internal/tools/delegate.go, supervisedDispatch).
 
 ### 4.10 Record
 

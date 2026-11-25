@@ -1346,8 +1346,16 @@ func buildDelegateTool(st *loopInfraStage, cfg *config.Config, lc *sessionConfig
 		// the runtime too, for report-lane sibling worlds; its proposal lane is
 		// routed shared below because there is no host worktree to settle into.
 		// agents.subagent.mode: shared remains the opt-out.
-		SubNetwork:           posture.network,
-		Retain:               posture.retainedLane,
+		SubNetwork: posture.network,
+		Retain:     posture.retainedLane,
+
+		// Supervised dispatch path (design §4.2, yaah-ugtl): with
+		// supervision on, a lane routing would send to the shared workspace
+		// is upgraded to the isolated report lane, a failed pre-run capture
+		// fails the dispatch at start, and require_reversible refuses a
+		// scope that cannot roll back.
+		Supervised:           supervisedDispatches(cfg),
+		RequireReversible:    cfg.Agent.Default.Supervisor.RequireReversible,
 		RetainedRepoPath:     cfg.Agent.Default.RetainedRepoPath,
 		RetainedWorktreeRoot: cfg.Agent.Default.RetainedWorktreeRoot,
 		RetainedBootstrap:    cfg.Agent.Default.RetainedWorktreeBootstrap,
@@ -1410,6 +1418,19 @@ func wireLaneRouting(st *loopInfraStage) {
 			return tools.LaneProposal
 		}
 	}
+}
+
+// supervisedDispatches reports whether this session's dispatches run
+// supervised (design §4.2, yaah-ugtl). Until the `supervisor.policy` key lands
+// (yaah-0nbb) an EXPLICIT supervisor.enabled: true is the only signal
+// available, and deliberately so: that key's documented default is on for the
+// advisory rules, and reading the default as "supervise every dispatch" would
+// upgrade every shared-lane dispatch and make a failed pre-run capture fatal
+// for sessions that never asked for supervision — against design D5, whose
+// whole claim is that the default is today's behavior.
+func supervisedDispatches(cfg *config.Config) bool {
+	s := cfg.Agent.Default.Supervisor
+	return s.Enabled != nil && *s.Enabled
 }
 
 // wireBackgroundJobs hands the job manager to the delegate tool, delivers

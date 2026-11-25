@@ -27,7 +27,8 @@ func (t *DelegateTool) Schema() json.RawMessage {
 			"seed_from": {"type": "string", "description": "Optional retained proposal id whose sealed workspace seeds this dispatch (retained-result threading); the source proposal stays open. Proposal-lane only."},
 			"seed_mode": {"type": "string", "enum": ["workspace", "conversation"], "description": "seed_from only: workspace (default) seeds the sealed worktree state; conversation also seeds the captured messages and is same-role only."},
 			"provider": {"type": "string", "description": "Optional provider override for this dispatch (must be a configured provider name). Prefer omitting — the role file or config decides. Omitted falls back to the role's resolution chain."},
-			"model": {"type": "string", "description": "Optional model override for this dispatch. Omitted falls back to the role's resolution chain (call > config role entry > role file > parent session model > config default)."}
+			"model": {"type": "string", "description": "Optional model override for this dispatch. Omitted falls back to the role's resolution chain (call > config role entry > role file > parent session model > config default)."},
+			"supervise": {"type": "boolean", "description": "Optional per-dispatch supervision override. Under supervision a dispatch that would run on the shared workspace is upgraded to the isolated report lane, so its work can be reverted by construction. false keeps the lane the role's routing chose; true requires the session itself to be supervised. Omitted follows the session."}
 		},
 		"additionalProperties": false,
 		"required": ["description", "prompt", "role"]
@@ -171,6 +172,10 @@ func BuildDelegateSchemaFiltered(roleNames []string, roleDescriptions map[string
 			"model": map[string]any{
 				"type":        "string",
 				"description": "Optional model override for this dispatch. Omitted falls back to the role's resolution chain (call > config role entry > role file > parent session model > config default).",
+			},
+			"supervise": map[string]any{
+				"type":        "boolean",
+				"description": "Optional per-dispatch supervision override. Under supervision a dispatch that would run on the shared workspace is upgraded to the isolated report lane, so its work can be reverted by construction. false keeps the lane the role's routing chose; true requires the session itself to be supervised. Omitted follows the session.",
 			},
 		},
 		"additionalProperties": false,

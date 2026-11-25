@@ -83,6 +83,13 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, ro
 			Runner:         makeTaskRunner(opts, remainingDepth-1),
 			ResolveTimeout: resolveTimeout,
 			Delegatable:    subagent.DelegatableRole,
+			// The nested tool resolves its supervision posture exactly as
+			// the dispatch that built it did (review M1): the child of a
+			// supervised dispatch is supervised unless it opts out per
+			// call, and the child of an unsupervised one cannot acquire
+			// supervision its parent never had. opts carries the
+			// RESOLVED bit, not the session default.
+			Supervised: opts.supervised,
 		})
 	}
 

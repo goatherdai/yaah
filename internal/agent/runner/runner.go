@@ -138,6 +138,18 @@ type DelegateToolOpts struct {
 	// default; the composition root passes an explicit policy either way.
 	SubNetwork confinement.NetworkPolicy
 
+	// Supervised runs dispatch through the supervised path (design §4.2,
+	// yaah-ugtl): a shared-lane dispatch is upgraded to the report lane so it
+	// is revertable by construction, and the runner refuses to start a
+	// dispatch whose pre-run capture failed. False (the default) is the
+	// historical behavior.
+	Supervised bool
+
+	// RequireReversible refuses a supervised dispatch whose workspace this
+	// dispatch cannot roll back (supervisor.require_reversible). Only ever
+	// narrows a supervised dispatch; with supervision off nothing reads it.
+	RequireReversible bool
+
 	// DispatchWorlds is the per-dispatch container setup (yaah-ihfh.3). Non-nil
 	// only in a host session that can offer a container world: the retained
 	// runtime then creates one per report dispatch, and the runner runs the
@@ -185,6 +197,7 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 		guardCheck:            opts.GuardCheck,
 		guardDenyRec:          opts.ShellGuardDenyRec,
 		resolveProviderByName: opts.ResolveProviderByName,
+		requireReversible:     opts.RequireReversible,
 	}, depth)
 
 	tool := &tools.DelegateTool{
@@ -194,6 +207,7 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 		RoleNames:        opts.RoleNames,
 		RoleDescriptions: RoleDescriptionsFor(opts.RoleNames),
 		Tracker:          opts.Tracker,
+		Supervised:       opts.Supervised,
 	}
 	// Retained mode (Plan 7 Phase 2): route delegate through the
 	// retained-run lane. It needs a scope manager and a root scope to fork from;

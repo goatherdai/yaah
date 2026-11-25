@@ -288,19 +288,21 @@ Shepherd, `JudgePredicate` is a plain predicate with no model.
 which revert restores. *Also:* pre-run snapshot (Shepherd; avoid, see §9),
 baseline.
 
-**Reversible** *(planned)* — a per-scope flag: a revert will really roll
-back. Fixed when the dispatch starts.
+**Reversible** — a per-scope flag: a revert will really roll back. Fixed when
+the dispatch starts. *Shipped in yaah-k0x1; the flag is set only where the
+scope owns an isolated workspace the dispatch can restore.*
 
-**`require_reversible`** *(planned)* — a config switch. When on, a supervised
+**`require_reversible`** — a config switch. When on, a supervised
 dispatch that cannot roll back fails at start instead of running. On for
-measurement, off for interactive use.
+measurement, off for interactive use. *Shipped in yaah-ugtl, together with the
+lane upgrade below; it only ever narrows a supervised dispatch.*
 
-**Lane upgrade** *(planned)* — under supervision, a dispatch that would run
+**Lane upgrade** — under supervision, a dispatch that would run
 on the shared workspace is moved to the report lane so that it gets its own
-workspace copy.
+workspace copy. *Shipped in yaah-ugtl.*
 
-**Redirectable** *(planned)* — a per-scope flag: false for the root scope,
-true otherwise.
+**Redirectable** — a per-scope flag: false for the root scope,
+true otherwise. *Shipped in yaah-k0x1.*
 
 **Guard** — a check that can refuse a tool call before it runs, such as the
 blocking shell guard or an approval. Refusals appear in the envelope. A guard
