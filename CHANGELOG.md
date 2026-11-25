@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.209.1](https://github.com/goatherdai/yaah/compare/v0.209.0...v0.209.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* close PR [#398](https://github.com/goatherdai/yaah/issues/398) review findings - atomic handoff lifecycle, cancel separation, revert safety, per-generation usage keys, failed-seal gate ([#400](https://github.com/goatherdai/yaah/issues/400)) ([2c550cd](https://github.com/goatherdai/yaah/commit/2c550cde70d46f29435cf5ab4f65fd803925d651))
+
 ## [0.209.0](https://github.com/goatherdai/yaah/compare/v0.208.0...v0.209.0) (2026-11-24)
 
 
