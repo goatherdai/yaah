@@ -1304,8 +1304,13 @@ func startRetainedRun(
 		}
 		// The envelope carries the head; the sealed metadata (when the runtime
 		// kept a recoverable artifact) carries the whole report, which is what
-		// the route below pages.
-		env.setReport(result, retrieveProposalReport(env.ProposalID))
+		// the route below pages. Without a handle nothing was retained, so the
+		// marker must not name a proposal the registry does not hold.
+		pagingID := env.ProposalID
+		if !recoverable {
+			pagingID = ""
+		}
+		env.setReport(result, retrieveProposalReport(pagingID))
 		if len(notes) > 0 {
 			env.Error = trimResult(strings.Join(notes, "; "))
 		}
