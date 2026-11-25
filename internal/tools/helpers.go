@@ -288,34 +288,6 @@ var binaryExtensions = map[string]bool{
 	".min.js": true, ".min.css": true, ".map": true,
 }
 
-// dangerousCommands is a coarse deny-list of obviously destructive shell
-// patterns. It is NOT a security boundary: model-generated shell can trivially
-// evade a substring deny-list (whitespace, shell variables, indirection,
-// decoders). Real protection comes from the approval gate (config.Approval);
-// this list only catches the most blatant mistakes.
-var dangerousCommands = []string{
-	"rm -rf /", "rm -rf ~", "rm -rf .",
-	"shutdown", "reboot", "halt",
-	"mkfs", "mkswap",
-	"dd if=", ":(){ :|:& };:",
-	"chmod 777 /", "chown -R",
-	"remove-item -recurse -force c:\\",
-	"format-volume", "stop-computer", "restart-computer",
-	"clear-disk", "initialize-disk",
-}
-
-// isDangerous reports whether cmd matches a known destructive pattern. It is a
-// best-effort guard only (see dangerousCommands).
-func isDangerous(cmd string) bool {
-	lower := strings.ToLower(cmd)
-	for _, dangerous := range dangerousCommands {
-		if strings.Contains(lower, dangerous) {
-			return true
-		}
-	}
-	return false
-}
-
 // clampPositiveInt bounds a positive integer knob (timeouts, context lines) to
 // max. A non-positive value means "use the tool's default" and stays 0, so a
 // negative or zero payload cannot acquire a meaning the schema never offered.

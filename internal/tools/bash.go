@@ -57,9 +57,10 @@ func (t *BashTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("bash: command is required")
 	}
 
-	// Best-effort dangerous-command guard (NOT a security boundary).
-	if isDangerous(params.Command) {
-		return "", fmt.Errorf("bash: command matches a dangerous pattern; refused (enable approval gating for real protection)")
+	// Best-effort dangerous-command guard (NOT a security boundary). It gates
+	// the verb, not substrings inside a read-only command's data arguments.
+	if denial, refused := denyShellCommand(params.Command); refused {
+		return "", fmt.Errorf("bash: command matches a dangerous pattern (%s); refused (enable approval gating for real protection)", denial)
 	}
 
 	timeout := bashDefaultTimeout

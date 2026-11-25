@@ -52,8 +52,8 @@ func TestBackgroundProcess_IsDangerous(t *testing.T) {
 func TestBackgroundProcess_RefusesDangerousStart(t *testing.T) {
 	mgr := process.NewManager()
 	tool := &BackgroundProcessTool{Manager: mgr}
-	// "echo mkfs" is inert, but matches the coarse dangerous-pattern list.
-	_, err := tool.Execute(context.Background(), `{"action":"start","command":"echo mkfs"}`)
+	// mkfs in verb position is a hard refusal whatever follows it.
+	_, err := tool.Execute(context.Background(), `{"action":"start","command":"mkfs.ext4 /dev/yaah-test-nonexistent"}`)
 	if err == nil || !strings.Contains(err.Error(), "dangerous pattern") {
 		t.Fatalf("start of a dangerous-pattern command = %v, want a refusal", err)
 	}
@@ -62,9 +62,30 @@ func TestBackgroundProcess_RefusesDangerousStart(t *testing.T) {
 	}
 }
 
+// TestBackgroundProcess_AllowsReadOnlyDataInStart pins yaah-0lx8 on this tool:
+// the deny-list gates the verb, so a read-only command whose arguments carry
+// deny-list vocabulary starts normally.
+func TestBackgroundProcess_AllowsReadOnlyDataInStart(t *testing.T) {
+	mgr := process.NewManager()
+	tool := &BackgroundProcessTool{Manager: mgr}
+	result, err := tool.Execute(context.Background(), `{"action":"start","command":"echo 'rm -rf /; mkfs; shutdown -h now'"}`)
+	if err != nil {
+		t.Fatalf("start of a read-only command with scary arguments = %v, want it to run", err)
+	}
+	if !strings.Contains(result, "Started process") {
+		t.Errorf("result = %q, want a started process", result)
+	}
+	for _, p := range mgr.List() {
+		t.Cleanup(func() { _ = mgr.Stop(p.ID) })
+	}
+}
+
 func TestBackgroundProcess_RefusesDangerousRestartWithoutStopping(t *testing.T) {
 	mgr := process.NewManager()
-	info, err := mgr.Start("echo mkfs", "planted")
+	// The second segment is a hard refusal and the first keeps the process
+	// alive, so a restart that failed to re-check would be observable as a
+	// stopped process. Planting goes through the manager, not the tool.
+	info, err := mgr.Start("sleep 30; mkfs", "planted")
 	if err != nil {
 		t.Fatalf("plant process: %v", err)
 	}
