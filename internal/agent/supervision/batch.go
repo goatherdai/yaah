@@ -71,7 +71,12 @@ const maxQueuedRules = 64
 // concurrent tick would interleave two deciders' decisions against the same
 // state. The refused caller (design §5: "a second caller is refused") gets
 // this error and retries on its next turn.
-var ErrBatchBusy = errors.New("supervision: a tick is already in progress for this batch")
+//
+// It is an ALIAS of supervisionapi.ErrBatchBusy, not a separate sentinel: the
+// tool that drives a batch cannot import this package (the agent family owns
+// it), so the sentinel lives in the shared vocabulary and errors.Is holds
+// against either name.
+var ErrBatchBusy = supervisionapi.ErrBatchBusy
 
 // ruleSteerReason is the reason a queued rules steer carries. The kernel's
 // Intervention (supervisor.Intervention) names its type, scope and payload but

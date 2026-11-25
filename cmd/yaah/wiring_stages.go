@@ -1599,6 +1599,11 @@ func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 			HaltRoot: cfg.Agent.Default.HaltRootEnabled(),
 		})
 
+		// supervise (yaah-fy28, design §4.7): agent mode's tick surface —
+		// registered and belt-admitted only under supervisor.policy: agent,
+		// so an unconfigured session's tool surface is unchanged.
+		registerSuperviseTool(st, cfg, tr, snapSrc)
+
 		// Proposal tool (Plan 7 Phase 2): settles the sealed proposals the
 		// retained lane produces. Registered only when that lane is live — a
 		// shared lane or an isolated session produces none. The root-scope
@@ -1632,7 +1637,7 @@ func registerSubAgentTools(st *loopInfraStage, cfg *config.Config, tr *toolRegis
 			tr.belt.Know("proposal")
 		}
 	} else {
-		tr.belt.Know("supervisor")
+		tr.belt.Know("supervisor", "supervise")
 
 	}
 

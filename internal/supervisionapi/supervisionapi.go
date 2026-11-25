@@ -28,6 +28,16 @@ var (
 	// this caller arrived second at a run that is still live — and must
 	// not launch a second replacement loop for it.
 	ErrAlreadyClaimed = errors.New("the run is already claimed for redirect")
+	// ErrBatchBusy means another tick is already in progress for the same
+	// batch: one batch drives one tick at a time, because the decider is a
+	// per-tick conversation with a tick counter and a claim table behind it.
+	//
+	// It lives here rather than only in the supervision package because the
+	// consumers of a batch (the `supervise` tool, and later the headless
+	// decider) must recognize it WITHOUT importing the agent family that
+	// constructs the batch. The supervision package's ErrBatchBusy is this
+	// value, so errors.Is works against either name.
+	ErrBatchBusy = errors.New("supervision: a tick is already in progress for this batch")
 
 	// ErrSupervisedCaptureFailed is a supervised dispatch's pre-run
 	// workspace capture failing, which stops the dispatch before it starts
@@ -149,6 +159,19 @@ type ToolCallDigest struct {
 // character limit that a byte cap would break on the first non-ASCII
 // summary.
 const MaxFeatureRunes = 350
+
+// MaxScopeDepth bounds a scope-tree parent walk. A scope tree is finite by
+// construction, so the bound only stops a corrupted parent pointer from
+// spinning the walker: the snapshot source's descendant filter runs on the
+// model's turn path, and the reaper's depth sweep runs on a timer.
+//
+// It lives here, in the vocabulary both sides already import, because the
+// bound is a property of the TREE and not of either reader: internal/tools
+// deliberately does not import the agent family that owns the reaper
+// (supervise_scope.go's header), so a constant exported from the supervision
+// package would be unreachable from the tool side and the two copies would
+// drift.
+const MaxScopeDepth = 64
 
 // InFlightCall is a tool call that has started and has not returned.
 type InFlightCall struct {

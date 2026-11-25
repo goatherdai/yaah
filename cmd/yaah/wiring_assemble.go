@@ -211,7 +211,7 @@ func newSessionFromStages(lc *sessionConfig, opts SessionOptions, ws *workspaceS
 		scopes:          loop.scopeMgr,
 		traceStore:      loop.traceStore,
 		traceBus:        loop.traceBus,
-		supervisor:      loop.supervisorSvc,
+		supervisor:      rulesServiceOf(loop.supervisorSvc),
 		reaper:          loop.reaper,
 		roleWatcher:     loop.roleWatcher,
 		egressBroker:    loop.egressBroker,

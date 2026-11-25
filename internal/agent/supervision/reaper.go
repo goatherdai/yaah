@@ -12,6 +12,7 @@ import (
 	goatherd "github.com/goatherdai/goatherd-runtime"
 
 	"github.com/goatherdai/yaah/internal/agent/recovery"
+	"github.com/goatherdai/yaah/internal/supervisionapi"
 )
 
 // errPermanentDiscard marks a discard failure that no later sweep can turn
@@ -402,16 +403,13 @@ func (r *Reaper) ReapOnce(now time.Time) (reaped, stale, pruned int) {
 	return reaped, stale, pruned
 }
 
-// maxScopeDepth bounds the parent walk in scopeDepth.
-const maxScopeDepth = 64
-
 // scopeDepth counts a scope's ancestors: a root is depth 0. The walk is
 // bounded so a reconstructed parent chain that loops (a corrupt trace)
 // cannot hang a sweep.
 func scopeDepth(scope *goatherd.Scope) int {
 	depth := 0
 	for cur := scope; cur != nil; {
-		if depth >= maxScopeDepth {
+		if depth >= supervisionapi.MaxScopeDepth {
 			return depth
 		}
 		cur = cur.Parent()
