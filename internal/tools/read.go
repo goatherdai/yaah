@@ -103,7 +103,9 @@ func (t *ReadTool) Execute(ctx context.Context, args string) (string, error) {
 		}
 		result := strings.Join(lines[start:end], "\n")
 		if end < len(lines) {
-			result += truncationMarker
+			// The rest of the file is on disk and one offset/limit call away,
+			// so this is a view bound, not a loss: no storage claim.
+			result += moreAvailableMarker
 		}
 		return result, nil
 	}

@@ -109,6 +109,7 @@ func (l *Loop) applyDefaults() {
 	l.CtxMgr.CompactModel = l.Config.CompactModel
 	l.CtxMgr.SessionID = l.Config.SessionID
 	l.CtxMgr.OtelEnabled = l.Config.OtelEnabled
+	l.CtxMgr.SpillDir = l.Config.ToolSpillDir
 	if l.CtxMgr.ReasoningProtectTurns <= 0 {
 		l.CtxMgr.ReasoningProtectTurns = 2
 	}

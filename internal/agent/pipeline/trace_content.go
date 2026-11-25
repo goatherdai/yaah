@@ -217,7 +217,12 @@ func traceToolOutput(result string) map[string]any {
 	if truncated {
 		out["output_truncated"] = true
 	}
-	if strings.Contains(result, "[output truncated") || strings.Contains(result, "[truncated]") {
+	// Every marker family that announces a cut, so a trace fact says the body
+	// is incomplete whichever stage did the cutting: the loop's spill notice
+	// ("[output truncated"), a bare cut ("[truncated]"/"[truncated at"), and a
+	// soft-prune excerpt ("[output pruned").
+	if strings.Contains(result, "[output truncated") || strings.Contains(result, "[truncated") ||
+		strings.Contains(result, "[output pruned") {
 		out["output_truncated"] = true
 	}
 	if match := traceSpillPattern.FindStringSubmatch(result); len(match) == 2 {

@@ -1937,7 +1937,12 @@ func remainingAllowance(ctx context.Context, allowance time.Duration) time.Durat
 // verbatim: the body keeps its head (the part that orients), the caveat
 // keeps its tail (teardown notes end with the worktree path they report).
 func foldRetainedPartial(body, note string) string {
-	return retainedNote(substrate.TruncateAt(body, substrate.ToolResultMaxBytes), keepTail(note, noteBudget))
+	// TruncateAtDropped, not TruncateAt: the folded body's remainder is
+	// discarded with no spool behind it, so the marker must say "dropped and
+	// not stored" — the plain TruncationMarker means "bounded view, full text
+	// still on disk" since yaah-vw1v and would promise a read that cannot
+	// serve it.
+	return retainedNote(substrate.TruncateAtDropped(body, substrate.ToolResultMaxBytes), keepTail(note, noteBudget))
 }
 
 // worktreeOnDisk reports whether a worktree directory still exists.

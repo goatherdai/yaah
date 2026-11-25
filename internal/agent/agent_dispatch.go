@@ -573,7 +573,10 @@ func (d *toolDispatch) runQualityGates(ctx context.Context, result string) strin
 		}
 		if gateVerdictFailed(validatorRole, gateRes) {
 			if len(gateRes) > 2000 {
-				gateRes = gateRes[:2000] + "\n...[truncated]"
+				// Display-only cut on a failure verdict. The validator's full
+				// report is not stored anywhere, so the marker says so rather
+				// than implying a spill exists.
+				gateRes = gateRes[:2000] + "\n...[truncated — the rest of the validator report was not stored]"
 			}
 			note.WriteString("\n\n[quality-gate:FAIL] Validator " + validatorRole + " found issues:\n" + gateRes)
 		}

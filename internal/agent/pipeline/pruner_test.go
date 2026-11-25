@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -667,4 +669,93 @@ func TestByteExcerpt_SingleLineKeepsRuneCut(t *testing.T) {
 	if !strings.HasSuffix(content, tail) {
 		t.Error("tail is not a suffix of the original")
 	}
+}
+
+// TestPruner_SpillsFullResultAndNamesIt (yaah-vw1v): a pruned result's full
+// text is spilled and the excerpt's notice names it, so the elided middle has a
+// first-class read path instead of being unreachable.
+func TestPruner_SpillsFullResultAndNamesIt(t *testing.T) {
+	spillDir := t.TempDir()
+	p := NewPruner(PruneConfig{ProtectTokens: 10, MinReclaim: 1, MinTurns: 1, SpillDir: spillDir})
+	msgs := pruneFixture(80)
+	content := msgs[2].Content
+
+	if stats := p.Mark(msgs, "post_tool"); !stats.Committed {
+		t.Fatalf("prune should have committed: %+v", stats)
+	}
+	got := filteredContent(p, msgs, "c1")
+
+	if !strings.Contains(got, "full output at ") {
+		t.Fatalf("prune notice must name the spill path:\n%s", head(got))
+	}
+	entries, err := os.ReadDir(spillDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected one spill file, got %v (err %v)", entries, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(spillDir, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != content {
+		t.Errorf("prune spill must hold the original bytes: got %d, want %d", len(raw), len(content))
+	}
+	if !strings.Contains(got, filepath.Join(spillDir, entries[0].Name())) {
+		t.Errorf("notice must name the actual spill file, got:\n%s", head(got))
+	}
+}
+
+// TestPruner_NoSpillDirDeclaresNoSpool: with no spill directory the notice says
+// the dropped text is not stored, rather than naming a file nobody wrote.
+func TestPruner_NoSpillDirDeclaresNoSpool(t *testing.T) {
+	p := NewPruner(PruneConfig{ProtectTokens: 10, MinReclaim: 1, MinTurns: 1})
+	msgs := pruneFixture(80)
+
+	if stats := p.Mark(msgs, "post_tool"); !stats.Committed {
+		t.Fatalf("prune should have committed: %+v", stats)
+	}
+	got := filteredContent(p, msgs, "c1")
+
+	if !strings.Contains(got, "not stored") || !strings.Contains(got, "no spill directory") {
+		t.Fatalf("notice must declare that nothing holds the elided text:\n%s", head(got))
+	}
+	if strings.Contains(got, "full output at") {
+		t.Fatalf("notice must not name a spill path:\n%s", head(got))
+	}
+}
+
+// pruneFixture builds user + assistant(call c1) + tool(c1) with 80 lines of
+// content, enough to clear the prune floor.
+func pruneFixture(lines int) []types.Message {
+	body := ""
+	for i := 0; i < lines; i++ {
+		body += fmt.Sprintf("line-%02d of the tool result\n", i)
+	}
+	return []types.Message{
+		types.UserMsg("do the thing"),
+		types.AssistantMsg("", []types.ToolCall{{
+			ID:       "c1",
+			Type:     "function",
+			Function: types.ToolCallFn{Name: "read", Arguments: `{"filePath":"src/main.go"}`},
+		}}),
+		types.ToolResultMsg("c1", "read", body),
+		// A turn after the batch: the newest completed batch is protected, and
+		// the model has consumed this one, so it is eligible for pruning.
+		types.UserMsg("what did you find?"),
+	}
+}
+
+func filteredContent(p *Pruner, msgs []types.Message, id string) string {
+	for _, m := range p.Filter(msgs) {
+		if m.ToolCallID == id {
+			return m.Content
+		}
+	}
+	return ""
+}
+
+func head(s string) string {
+	if len(s) > 400 {
+		return s[:400]
+	}
+	return s
 }
