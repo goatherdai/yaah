@@ -134,3 +134,41 @@ func TestMarker_EmptyRouteSaysNothingIsRetrievable(t *testing.T) {
 		t.Fatalf("Marker with no route = %q, want it to say the rest was not retained", got)
 	}
 }
+
+// TestAt_NarrowLimitStillAdvances pins the livelock fix (PR #419 review
+// finding 1): report_limit may legally be 1, and a limit narrower than the
+// rune at start used to snap both edges to the same boundary — an empty page
+// whose Next() equals its Offset, so a caller looping "request next offset
+// while there is one" spun forever. A page must now always advance.
+func TestAt_NarrowLimitStillAdvances(t *testing.T) {
+	report := "a🀄b" // a=1 byte, 🀄=4 bytes, b=1 byte
+	offset := 0
+	seen := 0
+	for {
+		page := At(report, offset, 1) // narrower than every multi-byte rune
+		if page.Next() <= page.Offset {
+			t.Fatalf("page at offset %d did not advance: %+v", offset, page)
+		}
+		if !utf8.ValidString(page.Text) {
+			t.Fatalf("page at offset %d split a rune: %q", offset, page.Text)
+		}
+		offset = page.Next()
+		seen++
+		if !page.Truncated() {
+			break
+		}
+		if seen > len(report) {
+			t.Fatal("paging did not terminate")
+		}
+	}
+	// The whole report must be covered: rebuild it from the pages.
+	var got strings.Builder
+	for off := 0; off < len(report); {
+		page := At(report, off, 1)
+		got.WriteString(page.Text)
+		off = page.Next()
+	}
+	if got.String() != report {
+		t.Errorf("narrow-limit pages rebuilt %q, want %q", got.String(), report)
+	}
+}

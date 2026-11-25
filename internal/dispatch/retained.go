@@ -1226,6 +1226,11 @@ func startRetainedRun(
 		env.Error = trimResult(strings.Join(failureNotes, "; "))
 		return retainedRunResult{Proposal: &env}, nil
 	}
+	// The durable copy gets the only bound this path applies (see
+	// maxDurableReportBytes): everything downstream — the seal metadata, the
+	// in-session proposal, the envelope head and its total — sees the capped
+	// text, so paging always matches what was sealed.
+	result = capDurableReport(result)
 	seal := mgr.Seal
 	if rt.sealOutput != nil {
 		seal = rt.sealOutput
@@ -1304,8 +1309,9 @@ func startRetainedRun(
 		}
 		// The envelope carries the head; the sealed metadata (when the runtime
 		// kept a recoverable artifact) carries the whole report, which is what
-		// the route below pages. Without a handle nothing was retained, so the
-		// marker must not name a proposal the registry does not hold.
+		// the route below pages. An UNRECOVERABLE seal failure registered no
+		// proposal, so the marker must not name a proposal show route that
+		// cannot serve it (PR #419 review finding 2).
 		pagingID := env.ProposalID
 		if !recoverable {
 			pagingID = ""
@@ -1656,6 +1662,9 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	if derr != nil {
 		return "", fmt.Errorf("continue: %w", derr)
 	}
+	// The durable copy gets the only bound this path applies (see
+	// maxDurableReportBytes), same as the first-run seal.
+	result = capDurableReport(result)
 	sealOpts, metaErr := proposalSealOptions(retainedProposalMeta{
 		ID:                  newID,
 		SessionID:           rt.SessionID,
@@ -1735,7 +1744,14 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 			}
 			env.Status = "error"
 		}
-		env.setReport(result, retrieveProposalReport(env.ProposalID))
+		// An UNRECOVERABLE seal failure registered no proposal: the marker must
+		// not name a proposal show route that cannot serve it (PR #419 review
+		// finding 2).
+		pagingID := env.ProposalID
+		if !recoverable {
+			pagingID = ""
+		}
+		env.setReport(result, retrieveProposalReport(pagingID))
 		if len(notes) > 0 {
 			env.Error = trimResult(strings.Join(notes, "; "))
 		}

@@ -407,6 +407,11 @@ func runDispatchContainerProposal(
 		notes = append(notes, bodyFailure)
 	}
 
+	// The durable copy (meta.json) gets the only bound this path applies (see
+	// maxDurableReportBytes): the manifest, the in-session proposal, and the
+	// envelope's paging totals all see the same capped text.
+	result = capDurableReport(result)
+
 	// Seal on the dispatch context, not the (possibly expired) run context: a
 	// timed-out body's partial work is still worth sealing.
 	delta, review, sealErr := captureContainerDelta(ctx, sandbox)

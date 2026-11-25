@@ -15,7 +15,10 @@
 // scan of the text before it.
 package reportpage
 
-import "fmt"
+import (
+	"fmt"
+	"unicode/utf8"
+)
 
 const (
 	// DefaultBytes is the default page window. It is the size the dispatch
@@ -83,9 +86,15 @@ func At(s string, offset, limit int) Page {
 		end = len(s)
 	} else {
 		end = runeStart(s, end)
-	}
-	if end < start {
-		end = start
+		if end <= start {
+			// The limit is narrower than the rune at start (report_limit: 1
+			// over multi-byte text is legal per the schema). Advance one whole
+			// rune so a page is never empty and Next() always exceeds Offset —
+			// without this the caller's offset == next loop spins forever
+			// (PR #419 review finding 1).
+			_, width := utf8.DecodeRuneInString(s[start:])
+			end = start + width
+		}
 	}
 	if end == start && start < len(s) {
 		// A window narrower than the rune at start would otherwise return an

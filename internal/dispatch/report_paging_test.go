@@ -11,10 +11,14 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	goatherd "github.com/goatherdai/goatherd-runtime"
 
 	"github.com/goatherdai/yaah/internal/jobs"
 	"github.com/goatherdai/yaah/internal/reportpage"
@@ -331,4 +335,71 @@ func tailOf(s string, n int) string {
 		return s
 	}
 	return s[len(s)-n:]
+}
+
+// TestRetained_UnrecoverableSealFailureMarkerSaysNotRetained pins PR #419
+// review finding 2: when the seal fails WITHOUT a recoverable artifact, the
+// isolated scope is discarded and no proposal is registered — so the report
+// marker must not name a `proposal show` route (that id was never registered
+// and show would answer "unknown proposal"). It must say the remainder was
+// not retained.
+func TestRetained_UnrecoverableSealFailureMarkerSaysNotRetained(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	report := bigReport("unrecoverable")
+	rt := bigReportRuntime(t, fx, repo, rootID, report, "out.txt")
+	// A plain error, not a *goatherd.SealError with ArtifactID+Handle: the
+	// recoverable check fails and the envelope takes the error path.
+	rt.sealOutput = func(context.Context, string, ...goatherd.SealOptions) (*goatherd.RetainedOutput, error) {
+		return nil, errors.New("injected total seal failure")
+	}
+
+	res, err := StartRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "developer"}, 30*time.Second, false)
+	if err != nil {
+		t.Fatalf("StartRetainedRun: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+	if env.Status != "error" {
+		t.Fatalf("status = %q, want error", env.Status)
+	}
+	if strings.Contains(env.Result, "proposal show") || strings.Contains(env.Result, "proposal_id") {
+		t.Errorf("the marker names a route that cannot serve it: %q", env.Result[max(0, len(env.Result)-200):])
+	}
+	if !strings.Contains(env.Result, "not retained") {
+		t.Errorf("the marker must state the remainder was not retained: %q", env.Result[max(0, len(env.Result)-200):])
+	}
+	if env.ResultTotalBytes != len(report) {
+		t.Errorf("result_total_bytes = %d, want %d: the head must still report the true size", env.ResultTotalBytes, len(report))
+	}
+}
+
+// TestCapDurableReport pins the durable-seal bound (PR #419 review finding 5):
+// sealed metadata and meta.json are written VERBATIM into durable storage, so
+// a pathological multi-megabyte report needs the same kind of guard the
+// transcript already has. Under the cap nothing changes; over it, the cut is
+// made on a rune boundary and STATED in the sealed text.
+func TestCapDurableReport(t *testing.T) {
+	short := strings.Repeat("x", 1000)
+	if got := capDurableReport(short); got != short {
+		t.Error("a report under the cap must seal unchanged")
+	}
+
+	huge := strings.Repeat("y", maxDurableReportBytes+4096)
+	got := capDurableReport(huge)
+	if !strings.Contains(got, "durable cap") || !strings.Contains(got, "not retained") {
+		t.Errorf("an over-cap report must state the cut, tail: %q", got[len(got)-160:])
+	}
+	if len(got) > maxDurableReportBytes+200 {
+		t.Errorf("capped report = %d bytes, want at most the cap plus its marker", len(got))
+	}
+
+	// The cut lands on a rune boundary: 4-byte runes straddling the cap.
+	multi := strings.Repeat("🀄", maxDurableReportBytes/2)
+	gotM := capDurableReport(multi)
+	cutAt := strings.Index(gotM, "\n...[report exceeded")
+	if cutAt < 0 {
+		t.Fatal("over-cap multibyte report was not marked")
+	}
+	if !utf8.ValidString(gotM[:cutAt]) {
+		t.Error("the durable cap must cut on a rune boundary")
+	}
 }

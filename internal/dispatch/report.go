@@ -12,6 +12,7 @@ package dispatch
 
 import (
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/goatherdai/yaah/internal/reportpage"
 )
@@ -20,6 +21,33 @@ import (
 // the window trimResult has always applied, so paging changed the retrieval
 // route rather than the size of a read.
 const reportHeadBytes = reportpage.DefaultBytes
+
+// maxDurableReportBytes caps the report copy sealed into a DURABLE artifact:
+// the worktree lane's SealOptions.Metadata (a trace-store row) and the
+// container lane's meta.json. Reports are model-authored text and the page
+// limit is 1 MiB, so 8 MiB is generous; the cap exists because a pathological
+// report — megabytes of accidental stdout — would otherwise be written
+// verbatim into durable storage with no bound at all, the same guard rationale
+// as the transcript's maxDurableTranscriptBytes. A capped report is sealed with
+// its excess cut and the cut STATED, so the durable copy never silently
+// pretends completeness, and the envelope pages the sealed (capped) text so
+// result_total_bytes always matches what retrieval can serve.
+const maxDurableReportBytes = 8 << 20
+
+// capDurableReport bounds a report for durable sealing (see
+// maxDurableReportBytes). Under the cap it returns the text unchanged.
+func capDurableReport(s string) string {
+	if len(s) <= maxDurableReportBytes {
+		return s
+	}
+	cut := maxDurableReportBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + fmt.Sprintf(
+		"\n...[report exceeded the %d-byte durable cap; the remainder was not retained]...",
+		maxDurableReportBytes)
+}
 
 // retrieveProposalReport renders the route a bounded proposal report names:
 // `proposal show` paged at the byte offset the head stopped at. An empty id
@@ -48,8 +76,10 @@ func retrieveJobReport(jobID string) func(next int) string {
 }
 
 // setReport bounds a report for this envelope, recording what was withheld and
-// how to page it. A report that fits is carried verbatim — trailing whitespace
-// included, since setReport does not trim — and adds no paging fields at all.
+// how to page it. A report that fits is carried verbatim and adds no paging
+// fields at all, so a short report's envelope needs no paging context (the
+// pre-okcl trimResult also stripped trailing whitespace, which setReport no
+// longer does — carried means carried).
 func (e *proposalEnvelope) setReport(report string, retrieve func(next int) string) {
 	page := reportpage.Head(report, reportHeadBytes)
 	if !page.Truncated() {
