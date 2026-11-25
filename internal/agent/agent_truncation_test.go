@@ -220,10 +220,24 @@ func TestTruncateToolResult_singleLineBlobSpillsRawWithPagerSibling(t *testing.T
 	if joined := strings.ReplaceAll(string(wrapped), "\n", ""); joined != result {
 		t.Error("joining the pager sibling's lines must reconstruct the original bytes")
 	}
-	for _, want := range []string{canonical, sibling, "raw output byte-for-byte", "line-wrapped copy for paging is at"} {
+	for _, want := range []string{canonical, sibling, "line-wrapped paging copy at", "byte-for-byte in a single line"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("notice must name %q: %q", want, tail(got, 400))
 		}
+	}
+	// The paging instruction must name the SIBLING, not the canonical file:
+	// offset/limit against a one-line file returns the whole blob, which is the
+	// dead end the sibling exists to close.
+	idx := strings.Index(got, "To read portions")
+	if idx < 0 {
+		t.Fatalf("notice must carry the paging instruction: %q", tail(got, 400))
+	}
+	paging := got[idx:]
+	if !strings.Contains(paging, sibling) {
+		t.Errorf("the paging instruction must name the pager sibling: %q", tail(got, 400))
+	}
+	if strings.Contains(paging, "against that file") {
+		t.Errorf("the paging instruction still points offset/limit at the one-line canonical file: %q", tail(got, 400))
 	}
 }
 

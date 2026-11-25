@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	agentctx "github.com/goatherdai/yaah/internal/agent/context"
 )
 
 func TestReadTool_readsExistingFile(t *testing.T) {
@@ -184,5 +186,44 @@ func TestReadTool_PagesRawSpill(t *testing.T) {
 	}
 	if got != blob {
 		t.Errorf("single-line spill should read back as the one original line: got %d bytes, want %d", len(got), len(blob))
+	}
+}
+
+// TestReadTool_readsSessionSpillOutsideWorkspace (review round 1, yaah-vw1v):
+// a truncation notice promises the spilled output is readable with
+// offset/limit, but the spill directory lives outside the workspace. The
+// composition root registers it as a read-only exemption on the session's path
+// validator (cmd/yaah/wiring_stages.go), so the promise has to be servable
+// through the read tool end to end.
+func TestReadTool_readsSessionSpillOutsideWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	spillDir := filepath.Join(t.TempDir(), "truncated")
+
+	var body strings.Builder
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&body, "line %02d\n", i)
+	}
+	spill, err := agentctx.WriteSpool(spillDir, "tool", []byte(body.String()))
+	if err != nil {
+		t.Fatalf("WriteSpool: %v", err)
+	}
+
+	pv := NewPathValidator(workspace, false, nil)
+	pv.AddReadAllowRoot(spillDir)
+	tool := &ReadTool{PV: pv}
+
+	out, err := tool.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q,"offset":20,"limit":3}`, spill))
+	if err != nil {
+		t.Fatalf("the session's own spill must be readable: %v", err)
+	}
+	if !strings.HasPrefix(out, "line 19\nline 20\nline 21") {
+		t.Fatalf("unexpected slice: %q", out)
+	}
+
+	// Without the grant the same read is refused: the exemption is what serves
+	// the notice, not a general hole.
+	contained := &ReadTool{PV: NewPathValidator(workspace, false, nil)}
+	if _, err := contained.Execute(context.Background(), fmt.Sprintf(`{"filePath":%q}`, spill)); err == nil {
+		t.Fatal("a contained session must refuse the spill path")
 	}
 }

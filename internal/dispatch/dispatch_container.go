@@ -50,7 +50,7 @@ func dispatchWorldPreflightFailure(res subagent.WorldResolution, cause error) (s
 	}
 	res.Resolved = subagent.WorldWorktree
 	res.Degraded = true
-	res.Reason = "per-dispatch container world unavailable: " + substrate.TruncateAt(cause.Error(), noteBudget)
+	res.Reason = "per-dispatch container world unavailable: " + substrate.TruncateAtDropped(cause.Error(), noteBudget)
 	return res, nil
 }
 

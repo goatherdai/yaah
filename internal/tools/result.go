@@ -62,15 +62,13 @@ const (
 
 // truncateAt caps s at max bytes on a UTF-8 rune boundary and appends
 // truncationMarker when it cuts. max <= 0 means no cap.
+//
+// It delegates to the substrate helper rather than repeating the UTF-8
+// back-off loop: two copies of a rune-boundary cut drift apart, and the
+// substrate family (TruncateAt / TruncateAtDropped / KeepTail) is where the
+// marker choice is decided.
 func truncateAt(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	cut := max
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + truncationMarker
+	return substrate.TruncateAtDropped(s, max)
 }
 
 // truncateResult caps s at toolResultMaxBytes on a UTF-8 rune boundary and

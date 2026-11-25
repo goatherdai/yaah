@@ -262,6 +262,15 @@ func buildContainment(cfg *config.Config, opts SessionOptions, ws *workspaceStag
 		ws.pathValidator = tools.NewPathValidator(opts.WorkspaceRoot, allowHome, patterns)
 		ws.pathValidator.WorkDir = ws.cwd
 		ws.pathValidator.Harness = ws.harness
+		// The tool-result spill directory lives outside the workspace
+		// (~/.yaah/truncated) and every truncation notice tells the model to
+		// read the spilled output back, so a contained session has to be able
+		// to reach it or the notice promises a read the tool refuses. The
+		// grant is READ-ONLY: writes there stay refused, everything else
+		// outside the workspace stays refused, and an isolated session disables host
+		// spilling outright (build_loop.go), so this path only exists in the
+		// local substrate branch above.
+		ws.pathValidator.AddReadAllowRoot(toolSpillDir())
 		// The local substrate's paths gate this registry directly. Exactly
 		// one substrate: the isolated backend instead hands the registry
 		// its workspace at the SetWorkspace gate, after every tool is

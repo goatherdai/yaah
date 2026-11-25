@@ -471,3 +471,64 @@ func TestPathValidator_WithWorkspaceRootNilReceiver(t *testing.T) {
 		t.Error("nil-receiver derivation must not grant home access")
 	}
 }
+
+// TestPathValidator_readAllowRootIsReadOnly (review round 1, yaah-vw1v): the
+// session's tool-result spill directory sits outside the workspace and every
+// truncation notice points the model at it, so reads there must succeed while
+// writes stay refused and the rest of the filesystem stays contained.
+func TestPathValidator_readAllowRootIsReadOnly(t *testing.T) {
+	workspace := t.TempDir()
+	spill := filepath.Join(t.TempDir(), "truncated")
+	if err := os.MkdirAll(spill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(spill, "1795639718490606315-tool.txt")
+	if err := os.WriteFile(file, []byte("spilled output\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pv := NewPathValidator(workspace, false, nil)
+	pv.AddReadAllowRoot(spill)
+
+	if got, err := pv.ResolvePath(file); err != nil {
+		t.Fatalf("reading the session spill dir must be allowed: %v", err)
+	} else if got == "" {
+		t.Fatal("resolved path is empty")
+	}
+
+	if _, err := pv.ResolveWritePath(file); err == nil {
+		t.Fatal("writing into the read-only spill root must be refused")
+	}
+
+	// Everything else outside the workspace stays refused.
+	if _, err := pv.ResolvePath(filepath.Join(filepath.Dir(spill), "elsewhere.txt")); err == nil {
+		t.Fatal("a sibling of the spill root must stay refused")
+	}
+
+	// A sub-agent's derived validator keeps the exemption: its own notices name
+	// the same shared spill directory.
+	derived := pv.WithWorkspaceRoot(t.TempDir())
+	if _, err := derived.ResolvePath(file); err != nil {
+		t.Fatalf("a derived validator must inherit the read-only root: %v", err)
+	}
+	if _, err := derived.ResolveWritePath(file); err == nil {
+		t.Fatal("a derived validator must keep refusing writes to the spill root")
+	}
+}
+
+// TestPathValidator_noReadAllowRootMeansContained: without the grant the same
+// path is refused, so the exemption is what serves the notice — not a hole that
+// was always there.
+func TestPathValidator_noReadAllowRootMeansContained(t *testing.T) {
+	workspace := t.TempDir()
+	spill := t.TempDir()
+	file := filepath.Join(spill, "1-tool.txt")
+	if err := os.WriteFile(file, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pv := NewPathValidator(workspace, false, nil)
+	if _, err := pv.ResolvePath(file); err == nil {
+		t.Fatal("a contained session must refuse a path outside the workspace")
+	}
+}

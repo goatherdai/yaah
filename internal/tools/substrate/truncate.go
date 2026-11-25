@@ -7,11 +7,20 @@ import "unicode/utf8"
 // tool never hands the loop more than a bounded payload.
 const ToolResultMaxBytes = 8192
 
-// TruncationMarker is the marker yaah appends when it caps a payload for
-// display: capped tool output, a bounded proposal diff, or a dispatch note.
-// Since yaah-vw1v it means a bounded VIEW — the full text is still on disk
-// and one offset/limit read away. A cap that truly DISCARDS bytes uses
-// DroppedMarker instead.
+// TruncationMarker is the marker yaah appends when it caps a payload: capped
+// tool output, a bounded proposal diff, or a dispatch note. The marker itself
+// makes NO storage claim — it says only that text was cut. Which of the two
+// families it belongs to is decided at the call site (yaah-vw1v):
+//
+//   - TruncationMarker, for a bounded VIEW whose full text is still on disk —
+//     the read tool's offset/limit window, a proposal diff bounded for an
+//     envelope that the sealed proposal still holds.
+//   - DroppedMarker, for a cap that truly DISCARDS bytes nothing stores — the
+//     folded body of a failed run, a dispatch reason, a tool result with no
+//     spool behind it.
+//
+// TruncateAt is accordingly for views only; a discard site calls
+// TruncateAtDropped.
 const TruncationMarker = "\n...[truncated]..."
 
 // DroppedMarker is appended when a cap truly DISCARDS bytes that nothing
@@ -27,8 +36,8 @@ const DroppedMarker = "\n...[truncated — the remainder was dropped and is not 
 // TruncateAt caps s at max bytes on a UTF-8 rune boundary and appends
 // TruncationMarker when it cuts. max <= 0 means no cap.
 //
-// It lives with the workspace substrate so a dispatch note and a tool result
-// are capped the same way; the callers differ, the convention does not.
+// It makes no storage claim of its own: the caller decides whether the rest of
+// the payload is still on disk (a view) or gone (use TruncateAtDropped).
 func TruncateAt(s string, max int) string {
 	if max <= 0 || len(s) <= max {
 		return s

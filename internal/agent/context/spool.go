@@ -77,15 +77,21 @@ func WriteSpool(dir, kind string, data []byte) (string, error) {
 }
 
 // SpoolPagerSibling writes a line-wrapped PAGER COPY of a spill next to it and
-// returns its path. It returns "" (and no error) when the canonical spill needs
-// no pager copy: content that already has line structure is pageable as it
-// stands, and a copy of it would be a second, divergent artifact for no gain.
+// returns its path, or "" (no error) when the canonical spill needs no copy.
 //
-// width is the wrap width in bytes. The canonical file is never touched, so
-// joining the sibling's lines reconstructs it exactly when it had no newlines
-// to begin with, and searching the canonical file never sees a split token.
+// The copy is DERIVED, not byte-identical: it holds the same text wrapped at
+// width columns so the read tool's line-based offset/limit can step through a
+// blob that the canonical file holds as one line. Byte identity belongs to the
+// canonical spill alone — a consumer that needs the original bytes reads that
+// file and never this one.
+//
+// The copy is written only for a newline-FREE blob. Content that already has
+// line structure is pageable as it stands, and wrapping it would break this
+// function's reconstruction guarantee: WrapForPaging only INSERTS newlines, so
+// a single original newline would not survive joining the copy's lines back
+// up.
 func SpoolPagerSibling(spillPath string, data []byte, width int) (string, error) {
-	if spillPath == "" || countNewlines(data) > 1 || len(data) <= width {
+	if spillPath == "" || countNewlines(data) > 0 || len(data) <= width {
 		return "", nil
 	}
 	sibling := spillPath + ".wrapped"
@@ -106,10 +112,16 @@ func countNewlines(data []byte) int {
 	return n
 }
 
-// SpoolPagerWidth is the wrap width for a spill's pager copy. 200 bytes keeps
+// SpoolPagerWidth is the wrap width for a spill's PAGER COPY. 200 bytes keeps
 // a pager read's line windows small enough to stay under the tool-result cap
 // (a 200-byte width means ~40 lines of a pager copy fit in 8 KiB), so
 // offset/limit can actually walk a single-line blob.
+//
+// The width applies to the `.wrapped` sibling ALONE. The canonical spill is
+// never wrapped at any width: byte identity is the whole point of that file —
+// a spooled JSON envelope parses straight off disk, a byte comparison against
+// the original succeeds, and grep/tail on the spill see the real bytes instead
+// of a wrap that splits tokens. Display may page; storage never loses.
 const SpoolPagerWidth = 200
 
 // RecoveryClause is the sentence a truncation notice carries to name its
@@ -123,13 +135,16 @@ const SpoolPagerWidth = 200
 // `full output at \S+` (spillPathPattern). Change the shape and those two
 // consumers silently stop seeing the spill.
 func RecoveryClause(path, wrapped string) string {
-	clause := "full output at " + path +
-		". To read portions, use the read tool with offset/limit against that file: " +
-		"it holds the raw output byte-for-byte, with no line wrapping"
-	if wrapped != "" {
-		clause += "; a line-wrapped copy for paging is at " + wrapped
+	clause := "full output at " + path + ". To read portions, use the read tool with offset/limit"
+	if wrapped == "" {
+		return clause + " against that file: it holds the raw output byte-for-byte, with no line wrapping"
 	}
-	return clause
+	// A blob with no line structure cannot be paged by line, so the paging
+	// instruction has to name the derived copy: offset/limit against the
+	// canonical file would return the whole blob as one line, which is why the
+	// sibling exists.
+	return clause + " against the line-wrapped paging copy at " + wrapped +
+		" (the file named above holds the raw output byte-for-byte in a single line, so offset/limit cannot step through it)"
 }
 
 // NoSpoolClause is the honest alternative to RecoveryClause when a truncation

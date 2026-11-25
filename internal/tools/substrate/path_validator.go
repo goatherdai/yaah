@@ -48,6 +48,17 @@ type PathValidator struct {
 	// cache, so this is independent of AskFn and of the approval mode.
 	Harness *HarnessPaths
 
+	// ReadAllowRoots are directories OUTSIDE the workspace that read access is
+	// granted to and write access is not (see AddReadAllowRoot). The
+	// composition root registers the session's tool-result spill directory
+	// here: a truncation notice tells the model to read the spilled output
+	// back (internal/agent/context.RecoveryClause), and that promise is only
+	// servable if the read tool can reach the file in a contained session.
+	// Everything else outside the workspace stays refused, and ResolveWritePath
+	// refuses these roots outright — the exemption is for reading a spool, not
+	// for writing outside the workspace.
+	ReadAllowRoots []string
+
 	// mu guards approved.
 	mu sync.Mutex
 	// approved remembers granted exceptions keyed by path + reason class
@@ -115,8 +126,55 @@ func (pv *PathValidator) WithWorkspaceRoot(root string) *PathValidator {
 	derived := NewPathValidator(root, pv.AllowHomeAccess, pv.DenyPatterns)
 	derived.AskFn = pv.AskFn
 	derived.Harness = pv.Harness.WithWorkspaceRoot(root)
+	// The read-only exemptions carry over: a sub-agent gets the same spill
+	// directory its own truncation notices name, and a read-only grant cannot
+	// widen a scope's writes.
+	derived.ReadAllowRoots = append([]string(nil), pv.ReadAllowRoots...)
 	derived.WorkDir = derived.WorkspaceRoot
 	return derived
+}
+
+// AddReadAllowRoot grants read access to dir when it lies outside the
+// workspace, without granting write access (ResolveWritePath still refuses it).
+// The path is canonicalised the same way the workspace root is, so a symlinked
+// or relative spill directory cannot smuggle in a different tree; a path that
+// cannot be canonicalised is ignored rather than stored, because a root that
+// cannot be compared is a root that silently grants nothing.
+func (pv *PathValidator) AddReadAllowRoot(dir string) {
+	if pv == nil || dir == "" {
+		return
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = real
+	} else if real, err := resolveExistingAncestor(abs); err == nil {
+		// The spill directory is created on the first spill, so it usually
+		// does not exist yet; resolve the deepest existing ancestor instead
+		// of dropping the grant.
+		abs = real
+	} else {
+		return
+	}
+	for _, existing := range pv.ReadAllowRoots {
+		if existing == abs {
+			return
+		}
+	}
+	pv.ReadAllowRoots = append(pv.ReadAllowRoots, abs)
+}
+
+// inReadAllowRoot reports whether the already symlink-resolved abs lies inside
+// one of the read-only exemption roots.
+func (pv *PathValidator) inReadAllowRoot(abs string) bool {
+	for _, root := range pv.ReadAllowRoots {
+		if root != "" && WithinRoot(abs, root) {
+			return true
+		}
+	}
+	return false
 }
 
 // ResolvePath validates and resolves a user-supplied file path.
@@ -193,7 +251,11 @@ func (pv *PathValidator) ResolvePath(input string) (string, error) {
 			return "", fmt.Errorf("cannot compute relative path: %w", err)
 		}
 		if strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
-			if !pv.ask(realPath, fmt.Sprintf("outside the workspace (%s)", root)) {
+			// A read-only exemption outside the workspace (the session's spill
+			// directory) is consulted before the refusal/approval path, so a
+			// grant that needs no prompt never consumes one. Deny patterns
+			// below still apply: operator policy outranks the exemption.
+			if !pv.inReadAllowRoot(realPath) && !pv.ask(realPath, fmt.Sprintf("outside the workspace (%s)", root)) {
 				return "", &PathRefusalError{Path: realPath, Root: root, Reason: "outside the workspace"}
 			}
 		} else {
@@ -246,10 +308,30 @@ func (pv *PathValidator) ResolveWritePath(input string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := pv.refuseReadOnlyRootWrite(abs); err != nil {
+		return "", err
+	}
 	if err := pv.CheckHarnessWrite(abs); err != nil {
 		return "", err
 	}
 	return abs, nil
+}
+
+// refuseReadOnlyRootWrite refuses a write into a read-only exemption root when
+// the workspace does not already contain it. The exemption exists so a spooled
+// result can be READ back; honouring it for writes would turn a display aid
+// into a general write path outside the workspace.
+func (pv *PathValidator) refuseReadOnlyRootWrite(abs string) error {
+	if pv == nil || pv.WorkspaceRoot == "" || !pv.inReadAllowRoot(abs) {
+		return nil
+	}
+	if WithinRoot(abs, pv.WorkspaceRoot) {
+		return nil
+	}
+	return &PathRefusalError{
+		Path:   abs,
+		Reason: "read-only spool directory outside the workspace: reads are allowed, writes are not",
+	}
 }
 
 // CheckHarnessWrite applies the harness-path policy to an already-resolved

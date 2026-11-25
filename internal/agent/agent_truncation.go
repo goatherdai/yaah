@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	agentctx "github.com/goatherdai/yaah/internal/agent/context"
@@ -72,7 +73,13 @@ func (l *Loop) truncateToolResult(result string) string {
 	spillDir := l.Config.ToolSpillDir
 	raw := []byte(result)
 	if fullPath, writeErr := agentctx.WriteSpool(spillDir, "tool", raw); writeErr == nil {
-		wrapped, _ := agentctx.SpoolPagerSibling(fullPath, raw, agentctx.SpoolPagerWidth)
+		wrapped, wrapErr := agentctx.SpoolPagerSibling(fullPath, raw, agentctx.SpoolPagerWidth)
+		if wrapErr != nil {
+			// The canonical spill is intact, so the notice stays truthful (it
+			// names no pager copy), but the loss of offset/limit paging would
+			// otherwise be invisible: record it instead of discarding the error.
+			slog.Debug("spill pager copy failed", "spill", fullPath, "err", wrapErr)
+		}
 		agentctx.CleanTruncatedDir(spillDir)
 		hint := fmt.Sprintf(
 			"\n...[output truncated at %d lines / %d bytes — %s. Or spawn a subagent for large analysis.]...",
