@@ -103,7 +103,16 @@ type Run struct {
 // carry the run's channels — a snapshot is a read of state, never a handle
 // on the execution — so it stays copyable and cannot be used to steer.
 type Registration struct {
-	ScopeID      string
+	ScopeID string
+	// Generation is the incarnation this registration describes: the
+	// registry-wide monotonic number Register stamped on the run. The
+	// snapshot reads an entry's metadata and its in-flight calls in two
+	// steps, and a redirect may register a successor between them —
+	// carrying the generation makes the second read generation-checked,
+	// so a replaced run's entry reports no in-flight calls rather than
+	// its successor's (InFlightCalls applies the same guard as
+	// InFlightTable).
+	Generation   uint64
 	Role         string
 	Label        string
 	Feature      string
@@ -155,14 +164,19 @@ func (r *Registry) InFlightTable(scopeID string, gen uint64) *InFlightTable {
 }
 
 // InFlightCalls returns the scope's live run's in-flight calls, oldest
-// first, aged at now. Nil when no run is live for the scope — a finished
-// run has no in-flight calls, which is what makes a call cut off by
-// cancellation disappear from the snapshot.
-func (r *Registry) InFlightCalls(scopeID string, now time.Time) []supervisionapi.InFlightCall {
+// first, aged at now — but only when the live run's generation still
+// equals gen, the same guard InFlightTable applies. Nil when no run is
+// live for the scope (a finished run has no in-flight calls, which is
+// what makes a call cut off by cancellation disappear from the snapshot),
+// and nil when the generation was replaced: a snapshot reads an entry's
+// metadata and its calls in two steps, and a redirect may register a
+// successor between them — the predecessor's entry must report no calls,
+// never its successor's.
+func (r *Registry) InFlightCalls(scopeID string, gen uint64, now time.Time) []supervisionapi.InFlightCall {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	run, ok := r.runs[scopeID]
-	if !ok {
+	if !ok || run.gen != gen {
 		return nil
 	}
 	return run.inflight.Entries(now)
@@ -309,7 +323,7 @@ func (r *Registry) Unregister(scopeID string) {
 // and UnregisterGeneration share one removal path.
 func (r *Registry) unregisterLocked(scopeID string, entry *run) {
 	delete(r.runs, scopeID)
-	reg := registrationOf(scopeID, entry.entry, entry.reversible)
+	reg := registrationOf(scopeID, entry.entry, entry.reversible, entry.gen)
 	reg.StillRunning = false
 	reg.FinishedAt = r.clock()
 	r.finished = append(r.finished, reg)
@@ -431,10 +445,12 @@ func (r *Registry) ConsumeRedirectOrClose(scopeID string, gen uint64) (RedirectR
 
 // registrationOf projects a run's bridge surface down to its snapshot
 // metadata: the channels and the cancellation stay with the execution,
-// and Reversible arrives from the run's MarkReversible-written flag.
-func registrationOf(scopeID string, entry Run, reversible bool) Registration {
+// Reversible arrives from the run's MarkReversible-written flag, and the
+// generation is the incarnation the projection describes.
+func registrationOf(scopeID string, entry Run, reversible bool, gen uint64) Registration {
 	return Registration{
 		ScopeID:      scopeID,
+		Generation:   gen,
 		Role:         entry.Role,
 		Label:        entry.Label,
 		Feature:      entry.Feature,
@@ -587,7 +603,7 @@ func (r *Registry) Entries() []Registration {
 	defer r.mu.Unlock()
 	out := make([]Registration, 0, len(r.runs))
 	for id, entry := range r.runs {
-		reg := registrationOf(id, entry.entry, entry.reversible)
+		reg := registrationOf(id, entry.entry, entry.reversible, entry.gen)
 		reg.StillRunning = true
 		out = append(out, reg)
 	}
@@ -617,7 +633,7 @@ func (r *Registry) SnapshotEntries() []Registration {
 	defer r.mu.Unlock()
 	live := make([]Registration, 0, len(r.runs))
 	for id, entry := range r.runs {
-		reg := registrationOf(id, entry.entry, entry.reversible)
+		reg := registrationOf(id, entry.entry, entry.reversible, entry.gen)
 		reg.StillRunning = true
 		live = append(live, reg)
 	}

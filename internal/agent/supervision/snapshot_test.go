@@ -593,3 +593,43 @@ func TestSnapshotter_InFlight(t *testing.T) {
 		t.Errorf("a finished scope must show no in-flight calls, got %+v", a.InFlight)
 	}
 }
+
+// TestSnapshotter_StaleGenerationHoldsNoInFlight pins the builder's
+// generation-checked call read (review finding): the snapshot builds an
+// entry from its registration's metadata and then reads that scope's
+// in-flight calls, and a redirect may register a successor between the two
+// steps. A registration whose generation was replaced must report no
+// in-flight calls — never its successor's — while the successor's own
+// entry still shows them.
+func TestSnapshotter_StaleGenerationHoldsNoInFlight(t *testing.T) {
+	runs := NewRegistry()
+	scope := "scope:stale-gen"
+	runs.Register(scope, Run{SteerCh: make(chan string, SteerBuffer)})
+	reg := runs.Entries()[0]
+	if reg.Generation == 0 {
+		t.Fatal("the registration must carry its generation")
+	}
+
+	// The successor registers, and ITS table sees a call.
+	runs.Register(scope, Run{SteerCh: make(chan string, SteerBuffer)})
+	gen2, ok := runs.Generation(scope)
+	if !ok || gen2 == reg.Generation {
+		t.Fatalf("Generation after the successor = %d/%v, want a new incarnation", gen2, ok)
+	}
+	tbl := runs.InFlightTable(scope, gen2)
+	if tbl == nil {
+		t.Fatal("the successor must expose its table")
+	}
+	tbl.Start(1, "bash", `{"command":"go test"}`, time.Unix(1000, 0))
+
+	now := time.Unix(1002, 0)
+	s := &Snapshotter{Runs: runs, Now: func() time.Time { return now }}
+	stale := s.agent(context.Background(), reg, now)
+	if stale.InFlight != nil {
+		t.Errorf("a replaced generation's InFlight = %+v, want nil — never the successor's calls", stale.InFlight)
+	}
+	fresh := s.agent(context.Background(), runs.Entries()[0], now)
+	if len(fresh.InFlight) != 1 || fresh.InFlight[0].Name != "bash" {
+		t.Errorf("the successor's InFlight = %+v, want its open bash call", fresh.InFlight)
+	}
+}

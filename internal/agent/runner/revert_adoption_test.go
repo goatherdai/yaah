@@ -204,6 +204,45 @@ func newRevertFixture(t *testing.T, session string, isolated bool) (*goatherd.Sc
 	return mgr, store, root, sb
 }
 
+// sharedFakeSandbox is the fake's storage with the SHARED capability
+// report: capture and apply work, but the sandbox declares itself NOT
+// isolated — the shape of the session sandbox a shared-lane dispatch
+// inherits (a plain fork of a sandboxed root, or a container session's
+// root): capture-capable, yet owned by the session rather than this
+// dispatch, so a revert must not roll it back and the snapshot must not
+// read the dispatch reversible.
+type sharedFakeSandbox struct {
+	*sandboxfake.Sandbox
+}
+
+func (s *sharedFakeSandbox) Capabilities() goatherdsandbox.SandboxCapabilities {
+	caps := s.Sandbox.Capabilities()
+	caps.Isolated = false
+	return caps
+}
+
+// newSharedSandboxFixture is newRevertFixture's shared-lane variant: a root
+// scope carrying a capture-capable sandbox that reports NOT isolated, so a
+// plain fork inherits a shared workspace.
+func newSharedSandboxFixture(t *testing.T, session string) (*goatherd.ScopeManager, *kerneltrace.SQLiteTraceStore, *goatherd.Scope, *sharedFakeSandbox) {
+	t.Helper()
+	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	mgr := goatherd.NewScopeManager(store)
+	sb := &sharedFakeSandbox{Sandbox: sandboxfake.New()}
+	if err := sb.Create(context.Background(), goatherdsandbox.SandboxSpec{}); err != nil {
+		t.Fatalf("create fake sandbox: %v", err)
+	}
+	root, err := mgr.Create(session, sb)
+	if err != nil {
+		t.Fatalf("create root scope with shared sandbox: %v", err)
+	}
+	return mgr, store, root, sb
+}
+
 // TestTaskRunner_LiveRevertRollsWorkspaceBackBeforeFreshLoop pins
 // yaah-1050.1.3 (a)+(b): run 1 writes an artifact, a revert claims the
 // handoff, and the adoption loop applies the pre-run snapshot BEFORE

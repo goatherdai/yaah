@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"runtime"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/goatherdai/yaah/internal/config"
 	"github.com/goatherdai/yaah/internal/supervisionapi"
 	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // TestTaskRunner_RegistersRedirectableRunWithFeature pins the registration
@@ -91,13 +93,18 @@ func TestTaskRunner_RegistersRedirectableRunWithFeature(t *testing.T) {
 	}
 }
 
-// TestTaskRunner_RegistersReversibleAfterPreRunCapture pins the capture
-// path (yaah-k0x1): on a scope whose fork carries a sandbox the pre-run
-// capture succeeds and the registration reads reversible — through
-// MarkReversible, the generation-checked write, never a registration
-// literal. The no-sandbox half (Reversible stays false) is
-// TestTaskRunner_RegistersRedirectableRunWithFeature above.
-func TestTaskRunner_RegistersReversibleAfterPreRunCapture(t *testing.T) {
+// TestTaskRunner_ReversibleOnIsolatedSandboxAfterCapture pins the isolated
+// case (b) of the reversibility marking (yaah-k0x1, design §4.2): on a
+// scope whose fork carries an ISOLATED sandbox — the worktree lane this
+// dispatch owns — the pre-run capture succeeds and the registration reads
+// reversible, through MarkReversible, the generation-checked write, never
+// a registration literal. The fixture's third argument selects the lane:
+// false hands the root a sandbox the fork inherits (the fake reports the
+// isolated capability, standing in for the real worktree lane); true is
+// the isolated session — a pure-causal root with no per-sub-agent
+// sandbox, which is case (c) below. The shared-lane case (a) is
+// TestTaskRunner_NotReversibleOnSharedSandbox.
+func TestTaskRunner_ReversibleOnIsolatedSandboxAfterCapture(t *testing.T) {
 	initTestRoles(t)
 
 	mgr, store, root, sb := newRevertFixture(t, "sess-reversible-capture", false)
@@ -154,6 +161,190 @@ func TestTaskRunner_RegistersReversibleAfterPreRunCapture(t *testing.T) {
 	}
 }
 
+// wedgeAfterFirstCallProvider signals its channel when the run reaches its
+// first model call — by which point the runner has registered the bridge
+// and run (or skipped) the pre-run capture — and then wedges until its
+// context is cancelled, like haltBlockProvider. The signal is what makes a
+// "Reversible stayed false" reading settled rather than raced: everything
+// the marking path does has happened by the time Send is entered.
+type wedgeAfterFirstCallProvider struct {
+	reached chan struct{}
+}
+
+func (p *wedgeAfterFirstCallProvider) Send(ctx context.Context, _ types.ChatRequest) (*types.ChatResponse, error) {
+	select {
+	case p.reached <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestTaskRunner_NotReversibleOnSharedSandbox pins the shared-lane case (a)
+// of the reversibility marking (yaah-k0x1, design §4.2): a dispatch whose
+// scope shares the session's sandbox is capture-capable — the pre-run
+// capture DOES succeed — but a revert could not roll that workspace back
+// without removing other writers' changes, so the registration reads
+// Reversible false. Marking it reversible would promise a revert that
+// silently behaves like a redirect.
+func TestTaskRunner_NotReversibleOnSharedSandbox(t *testing.T) {
+	initTestRoles(t)
+
+	mgr, store, root, sb := newSharedSandboxFixture(t, "sess-reversible-shared")
+	if sb == nil {
+		t.Skip("no shared-sandbox fixture in this environment")
+	}
+
+	runs := supervision.NewRegistry()
+	provider := &wedgeAfterFirstCallProvider{reached: make(chan struct{}, 1)}
+	opts := taskRunnerOpts{
+		provider:     provider,
+		systemPrompt: "BASE",
+		modelName:    "test-model",
+		subCfg:       config.SubAgentConfig{},
+		defaults:     config.Defaults{},
+		rootScopeID:  root.ID(),
+		runs:         runs,
+		scopeManager: mgr,
+		traceStore:   store,
+	}
+	runner := makeTaskRunner(opts, 0)
+
+	done := make(chan error, 1)
+	go func() {
+		_, rerr := runner(context.Background(), "fix the widget", tools.SubAgentParams{Role: "developer"})
+		done <- rerr
+	}()
+
+	var reg supervision.Registration
+	deadline := time.After(5 * time.Second)
+	for {
+		if regs := runs.Entries(); len(regs) == 1 {
+			reg = regs[0]
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("the dispatch never registered its run")
+		case <-done:
+			t.Fatal("the run ended before it could be inspected")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	// The fixture's premise, checked: the dispatch inherited the root's
+	// capture-capable sandbox, and that sandbox reports NOT isolated.
+	sub, ok := mgr.Get(reg.ScopeID)
+	if !ok {
+		t.Fatalf("scope %q missing from the manager", reg.ScopeID)
+	}
+	if sbox := sub.Sandbox(); sbox == nil || sbox.Capabilities().Isolated {
+		t.Fatalf("fixture must hand the dispatch a capture-capable SHARED sandbox, got %#v", sbox)
+	}
+
+	// Wait until the run reached its first model call: the capture and its
+	// mark have both landed by then, so the false reading below is settled,
+	// not a snapshot of the instant before the capture ran.
+	select {
+	case <-provider.reached:
+	case <-done:
+		t.Fatal("the run ended before its first model call")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the dispatch never reached its first model call")
+	}
+
+	if regs := runs.Entries(); len(regs) != 1 || regs[0].Reversible {
+		t.Errorf("a shared-sandbox dispatch = %+v, want Reversible false despite its successful capture", regs)
+	}
+
+	if _, err := runs.Cancel(reg.ScopeID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the halted run never returned")
+	}
+}
+
+// TestTaskRunner_NotReversibleWithoutSandbox pins the no-substrate case (c)
+// of the reversibility marking (yaah-k0x1, design §4.2): a dispatch whose
+// scope has no sandbox at all — a pure-causal root, the isolated session
+// lane (the fixture's third argument true) — has nothing to capture and
+// nothing to roll back, so the capture is skipped and the registration
+// reads Reversible false.
+func TestTaskRunner_NotReversibleWithoutSandbox(t *testing.T) {
+	initTestRoles(t)
+
+	mgr, store, root, sb := newRevertFixture(t, "sess-reversible-nosandbox", true)
+	if sb != nil {
+		t.Fatal("the isolated fixture must have no sandbox — that is the point")
+	}
+
+	runs := supervision.NewRegistry()
+	opts := taskRunnerOpts{
+		provider:     &haltBlockProvider{},
+		systemPrompt: "BASE",
+		modelName:    "test-model",
+		subCfg:       config.SubAgentConfig{},
+		defaults:     config.Defaults{},
+		rootScopeID:  root.ID(),
+		runs:         runs,
+		scopeManager: mgr,
+		traceStore:   store,
+	}
+	runner := makeTaskRunner(opts, 0)
+
+	done := make(chan error, 1)
+	go func() {
+		_, rerr := runner(context.Background(), "fix the widget", tools.SubAgentParams{Role: "developer"})
+		done <- rerr
+	}()
+
+	var reg supervision.Registration
+	deadline := time.After(5 * time.Second)
+	for {
+		if regs := runs.Entries(); len(regs) == 1 {
+			reg = regs[0]
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("the dispatch never registered its run")
+		case <-done:
+			t.Fatal("the run ended before it could be inspected")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	// The fixture's premise, checked: the dispatch inherited the
+	// pure-causal root — no sandbox at all.
+	sub, ok := mgr.Get(reg.ScopeID)
+	if !ok {
+		t.Fatalf("scope %q missing from the manager", reg.ScopeID)
+	}
+	if sbox := sub.Sandbox(); sbox != nil {
+		t.Fatalf("fixture must give the dispatch no sandbox, got %#v", sbox)
+	}
+
+	// Nothing can ever mark this scope — there is no sandbox to capture —
+	// so the false reading is settled the moment the registration exists.
+	if regs := runs.Entries(); len(regs) != 1 || regs[0].Reversible {
+		t.Errorf("a no-sandbox dispatch = %+v, want Reversible false", regs)
+	}
+
+	if _, err := runs.Cancel(reg.ScopeID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the halted run never returned")
+	}
+}
+
 // TestTaskRunner_InFlightObserverFeedsScopeTable pins the feed seam at the
 // dispatch level (yaah-k0x1): a real dispatch through makeTaskRunner
 // attaches ITS scope's in-flight table to the loop, so the call the fake
@@ -162,6 +353,9 @@ func TestTaskRunner_RegistersReversibleAfterPreRunCapture(t *testing.T) {
 // internal/agent's subagent_observer_test.go; this one closes the gap the
 // runner wiring sits in.
 func TestTaskRunner_InFlightObserverFeedsScopeTable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("drives a real bash call, and the bash tool is unavailable on Windows")
+	}
 	initTestRoles(t)
 
 	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
@@ -221,11 +415,15 @@ func TestTaskRunner_InFlightObserverFeedsScopeTable(t *testing.T) {
 	// The bash call must be visible in the scope's own table while it
 	// runs: the loop's start event reached it through the observer the
 	// runner attached, and InFlightCalls reads it back through the
-	// registry.
+	// registry — generation-checked, against THIS run's incarnation.
+	gen, ok := runs.Generation(scopeID)
+	if !ok {
+		t.Fatal("the live registration must report its generation")
+	}
 	var saw []supervisionapi.InFlightCall
 	observeDeadline := time.After(5 * time.Second)
 	for len(saw) == 0 {
-		saw = runs.InFlightCalls(scopeID, time.Now())
+		saw = runs.InFlightCalls(scopeID, gen, time.Now())
 		if len(saw) > 0 {
 			break
 		}
@@ -250,7 +448,7 @@ func TestTaskRunner_InFlightObserverFeedsScopeTable(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the dispatch never returned")
 	}
-	if got := runs.InFlightCalls(scopeID, time.Now()); got != nil {
+	if got := runs.InFlightCalls(scopeID, gen, time.Now()); got != nil {
 		t.Errorf("InFlightCalls after the dispatch returned = %+v, want nil", got)
 	}
 }

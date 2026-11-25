@@ -597,11 +597,11 @@ func TestRegistry_InFlightTableIsGenerationChecked(t *testing.T) {
 
 	// Writes into the stale table are invisible: nobody reads it.
 	stale.Start(1, "bash", "{}", time.Now())
-	if got := r.InFlightCalls(scope, time.Now()); len(got) != 0 {
+	if got := r.InFlightCalls(scope, gen2, time.Now()); len(got) != 0 {
 		t.Errorf("stale table writes leaked into the live view: %+v", got)
 	}
 	live.Start(2, "edit", `{"filePath":"a.go"}`, time.Now())
-	got := r.InFlightCalls(scope, time.Now())
+	got := r.InFlightCalls(scope, gen2, time.Now())
 	if len(got) != 1 || got[0].Name != "edit" {
 		t.Errorf("InFlightCalls = %+v, want the live table's open call", got)
 	}
@@ -609,8 +609,52 @@ func TestRegistry_InFlightTableIsGenerationChecked(t *testing.T) {
 	// A finished scope reports none.
 	live.End(2)
 	r.Unregister(scope)
-	if got := r.InFlightCalls(scope, time.Now()); got != nil {
+	if got := r.InFlightCalls(scope, gen2, time.Now()); got != nil {
 		t.Errorf("a finished scope must report nil in-flight, got %+v", got)
+	}
+}
+
+// TestRegistry_InFlightCallsIsGenerationChecked pins the read-side guard
+// on the pair of reads a snapshot performs (review finding): the entry's
+// metadata is read first, its calls second, and a successor Register may
+// land between them. The replaced generation's entry — carrying ITS
+// generation — must read nil, never the successor's calls; the
+// successor's own generation reads its calls.
+func TestRegistry_InFlightCallsIsGenerationChecked(t *testing.T) {
+	r := NewRegistry()
+	scope := "scope:swap"
+	r.Register(scope, Run{SteerCh: make(chan string, SteerBuffer)})
+	gen1, _ := r.Generation(scope)
+
+	// The snapshot's first read: the live registration, carrying the
+	// generation it was stamped with.
+	regs := r.Entries()
+	if len(regs) != 1 || regs[0].Generation != gen1 {
+		t.Fatalf("Entries = %+v, want the live registration carrying generation %d", regs, gen1)
+	}
+	reg := regs[0]
+
+	// A successor registers, and ITS table sees a call.
+	r.Register(scope, Run{SteerCh: make(chan string, SteerBuffer)})
+	gen2, ok := r.Generation(scope)
+	if !ok || gen2 == gen1 {
+		t.Fatalf("Generation after the successor = %d/%v, want a new incarnation", gen2, ok)
+	}
+	tbl := r.InFlightTable(scope, gen2)
+	if tbl == nil {
+		t.Fatal("the successor must expose its table")
+	}
+	tbl.Start(1, "edit", `{"filePath":"a.go"}`, time.Now())
+
+	// The predecessor's entry, read with the generation it carries: nil —
+	// the successor's call must not bleed into it.
+	if got := r.InFlightCalls(reg.ScopeID, reg.Generation, time.Now()); got != nil {
+		t.Errorf("the replaced generation's call read = %+v, want nil", got)
+	}
+	// The successor's generation reads its own calls.
+	got := r.InFlightCalls(scope, gen2, time.Now())
+	if len(got) != 1 || got[0].Name != "edit" {
+		t.Errorf("the successor's call read = %+v, want its open call", got)
 	}
 }
 
@@ -633,7 +677,7 @@ func TestRegistry_MarkReturnedClearsInFlight(t *testing.T) {
 		t.Fatal("the live run must expose its in-flight table")
 	}
 	tbl.Start(1, "bash", `{"command":"go test"}`, time.Now())
-	if got := r.InFlightCalls(scope, time.Now()); len(got) != 1 {
+	if got := r.InFlightCalls(scope, gen, time.Now()); len(got) != 1 {
 		t.Fatalf("InFlightCalls before return = %+v, want the open call", got)
 	}
 
@@ -662,7 +706,7 @@ func TestRegistry_MarkReturnedClearsInFlight(t *testing.T) {
 	}
 	tbl2.Start(2, "edit", `{"filePath":"a.go"}`, time.Now())
 	r.MarkReturned(scope, gen) // the predecessor's stale generation
-	if got := r.InFlightCalls(scope, time.Now()); len(got) != 1 {
+	if got := r.InFlightCalls(scope, gen2, time.Now()); len(got) != 1 {
 		t.Errorf("a stale MarkReturned must leave the successor's table alone, got %+v", got)
 	}
 }

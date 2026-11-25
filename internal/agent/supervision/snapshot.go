@@ -161,7 +161,10 @@ func (s *Snapshotter) agent(ctx context.Context, reg Registration, now time.Time
 	// nil — the property that makes a call cut off by cancellation
 	// disappear.
 	if reg.StillRunning && s.Runs != nil {
-		out.InFlight = s.Runs.InFlightCalls(reg.ScopeID, now)
+		// reg.Generation makes this a checked read: the metadata above and
+		// the calls here are two steps, and a successor registered between
+		// them leaves this entry with nil, never the successor's calls.
+		out.InFlight = s.Runs.InFlightCalls(reg.ScopeID, reg.Generation, now)
 	}
 	if s.Store == nil || out.OwnerID == "" {
 		out.Note = "trace store unavailable for this session"
