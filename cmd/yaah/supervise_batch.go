@@ -1,0 +1,114 @@
+package yaah
+
+// supervise_batch.go is the `supervise` tool's composition root (yaah-fy28,
+// design §4.7). The tool lives in internal/tools and knows nothing about the
+// agent family; everything a tick touches is assembled here, once, and handed
+// over as one factory closure:
+//
+//   - the session's run registry, which the arbiter steers and claims through;
+//   - the snapshot source, wrapped in tools.DescendantSnapshot so the batch's
+//     membership is the CALLING scope's strict descendants (the root never);
+//   - the stop delivery function, which must be the SAME Service whose rules
+//     engine is routed into this batch — that pairing is what makes one arbiter
+//     serve both halves (design §4.6). BatchConfig.Stop = svc.StopFunc() and the
+//     binding's Arm (svc.SetArbiter(batch)) are therefore set together, here,
+//     and nowhere else;
+//   - the binding's Release, which puts the rules engine back on direct
+//     delivery when the batch reports Done. A batch that is armed but no longer
+//     ticked is worse than one that was never armed: rule firings queue into
+//     it and drop past its queue cap.
+
+import (
+	"github.com/goatherdai/yaah/internal/agent/supervision"
+	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/tools"
+)
+
+// registerSuperviseTool registers agent mode's tick surface, and only then
+// (design §4.7, §5 "default posture"): under policy none — the default — the
+// tool is never registered, so an unconfigured session's tool surface is
+// unchanged, and the belt is told the name so a persona that lists it is not
+// reported as a typo.
+//
+// snap is the CONCRETE *supervision.Snapshotter on purpose. Taking it as
+// supervisionapi.SnapshotSource would make the nil check below unfalsifiable:
+// a nil *Snapshotter stored in an interface is a non-nil interface, so policy
+// agent on a session whose run registry or trace store never came up would
+// register a tool whose every tick reports an empty, done batch — the opposite
+// of the honest refusal.
+func registerSuperviseTool(st *loopInfraStage, cfg *config.Config, tr *toolRegistryStage, snap *supervision.Snapshotter) {
+	if !cfg.Agent.Default.Supervisor.PolicyAgent() || snap == nil {
+		tr.belt.Know("supervise")
+		return
+	}
+	tr.reg.Admit("supervise")
+	tr.reg.Register(&tools.SuperviseTool{
+		// The dispatching agent in agent mode is the session's own loop, so
+		// the batch binds to the root scope's descendants. A nested
+		// dispatching agent needs the runner to carry its scope on the tool
+		// context (SuperviseTool.CallerScope is that seam); until then this
+		// is the root agent, which is the mode's default caller.
+		CallerScopeID: st.rootScopeID,
+		NewBatch:      newSuperviseBatchFactory(st, snap),
+	})
+}
+
+// superviseBatchConfig is the BatchConfig the production factory builds. It is
+// a function so the settings exist in exactly one place and are pinned by a
+// test (supervise_registration_test.go): CooldownTicks is the design's default
+// selector — a NEGATIVE value means supervision.DefaultCooldownTicks, i.e. the
+// `cooldown_ticks: 1` the tool's doc and design §4.9 promise. The ZERO value
+// means "no cooldown", which is why leaving the field unset here would silently
+// disable a documented brake.
+func superviseBatchConfig(callerScopeID string, stop supervision.StopFunc) supervision.BatchConfig {
+	return supervision.BatchConfig{
+		// The batch's own root: the caller is never a member and never a
+		// target. For the root agent that is exactly the session root the
+		// design names; the descendant filter has already removed every
+		// ancestor for a nested caller, so naming the caller here only
+		// turns "not live" into the honest root_scope drop.
+		RootScopeID: callerScopeID,
+		// -1 selects the documented default (one tick), never 0.
+		CooldownTicks: -1,
+		Stop:          stop,
+	}
+}
+
+// newSuperviseBatchFactory builds the batch a `supervise` call binds on first
+// use. The batch is created LATE — on the first call, not at startup — so a
+// session that never supervises constructs nothing and leaves the rules
+// engine's direct delivery exactly as it was.
+func newSuperviseBatchFactory(st *loopInfraStage, snap *supervision.Snapshotter) tools.SuperviseBatchFactory {
+	return func(callerScopeID string) *tools.SuperviseBinding {
+		batch := supervision.NewBatch(st.runs, &tools.DescendantSnapshot{
+			Source: snap,
+			Scopes: st.scopeMgr,
+			Caller: callerScopeID,
+		}, superviseBatchConfig(callerScopeID, superviseStopFunc(st.supervisorSvc)))
+
+		binding := &tools.SuperviseBinding{Batch: batch}
+		if svc := st.supervisorSvc; svc != nil {
+			// One arbiter for rules and decisions (design §4.6): while the
+			// batch ticks, the rules engine's firings queue for its next tick
+			// instead of being delivered beside it. Release — called by the
+			// tool when a tick reports Done — restores direct delivery, so a
+			// loop the model has stopped driving cannot swallow the session's
+			// rule firings. Both are Service mutex-guarded, so a Release and a
+			// later Arm cannot interleave badly.
+			binding.Arm = func() { svc.SetArbiter(batch) }
+			binding.Release = func() { svc.SetArbiter(nil) }
+		}
+		return binding
+	}
+}
+
+// superviseStopFunc adapts the Service's stop delivery. A nil service — tracing
+// off, or a startup that never reached the goatherd branch — yields nil, which
+// the arbiter records as no_stop_func rather than claiming a stop that never
+// happened.
+func superviseStopFunc(svc *supervision.Service) supervision.StopFunc {
+	if svc == nil {
+		return nil
+	}
+	return svc.StopFunc()
+}

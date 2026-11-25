@@ -28,6 +28,16 @@ var (
 	// this caller arrived second at a run that is still live — and must
 	// not launch a second replacement loop for it.
 	ErrAlreadyClaimed = errors.New("the run is already claimed for redirect")
+	// ErrBatchBusy means another tick is already in progress for the same
+	// batch: one batch drives one tick at a time, because the decider is a
+	// per-tick conversation with a tick counter and a claim table behind it.
+	//
+	// It lives here rather than only in the supervision package because the
+	// consumers of a batch (the `supervise` tool, and later the headless
+	// decider) must recognize it WITHOUT importing the agent family that
+	// constructs the batch. The supervision package's ErrBatchBusy is this
+	// value, so errors.Is works against either name.
+	ErrBatchBusy = errors.New("supervision: a tick is already in progress for this batch")
 
 	// ErrSupervisedCaptureFailed is a supervised dispatch's pre-run
 	// workspace capture failing, which stops the dispatch before it starts

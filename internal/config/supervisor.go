@@ -55,7 +55,37 @@ type SupervisorConfig struct {
 	// Rules configures the individual advisory rules. A nil rule is
 	// enabled with its defaults.
 	Rules SupervisorRulesConfig `yaml:"rules"`
+
+	// Policy is the supervisor policy mode
+	// (docs/supervisor-policy-design.md §4.9): who runs the meta-agent loop
+	// over a dispatch. None (the empty string) and "none" are today's
+	// behavior — no policy loop, no `supervise` tool, rules engine only.
+	// "agent" registers the `supervise` tool so the DISPATCHING AGENT's own
+	// turn cycle is the loop (design §4.7). "headless" is the host-driven
+	// measurement loop and is NOT implemented yet (yaah-0nbb); naming it is a
+	// load-time validation error rather than a silently unsupervised run.
+	//
+	// The field is a string rather than a bool because the vocabulary is the
+	// design's: a later mode must be addable without re-reading every
+	// configuration, and an unknown value must be a visible error instead of
+	// falling back to "off". Use PolicyMode/PolicyAgent, not the raw field.
+	Policy string `yaml:"policy"`
 }
+
+// Supervisor policy modes (docs/supervisor-policy-design.md §4.9).
+const (
+	// SupervisorPolicyNone is the default: no policy loop. The advisory rules
+	// engine and the `supervisor` tool's direct verbs are unaffected.
+	SupervisorPolicyNone = "none"
+	// SupervisorPolicyAgent makes the dispatching agent the meta-agent: it
+	// reads the snapshot the `supervise` tool returns and answers with one
+	// decision list per tick.
+	SupervisorPolicyAgent = "agent"
+	// SupervisorPolicyHeadless is the host-driven one-shot decider
+	// (design §4.8), the measurement mode. Not implemented yet: yaah-0nbb
+	// lands it, and until then the mode is a validation error.
+	SupervisorPolicyHeadless = "headless"
+)
 
 // SupervisorRulesConfig holds the per-rule switches of the rules
 // engine: the advisory rules (destructive warning, error rate, stuck
@@ -126,6 +156,26 @@ type SupervisorStuckDetectionConfig struct {
 // the master switch is off only when it was set to false explicitly.
 func (s SupervisorConfig) EngineEnabled() bool {
 	return s.Enabled == nil || *s.Enabled
+}
+
+// PolicyMode normalizes the policy mode: the empty string (key unset) is
+// SupervisorPolicyNone, and surrounding case/whitespace is ignored so
+// " Agent " is the agent mode rather than an unknown value.
+func (s SupervisorConfig) PolicyMode() string {
+	switch mode := strings.ToLower(strings.TrimSpace(s.Policy)); mode {
+	case "":
+		return SupervisorPolicyNone
+	default:
+		return mode
+	}
+}
+
+// PolicyAgent reports whether the dispatching agent runs the meta-agent loop
+// itself — the mode that registers the `supervise` tool. Every other mode,
+// including the default, leaves the tool unregistered, so an unconfigured
+// session is byte-identical to today's.
+func (s SupervisorConfig) PolicyAgent() bool {
+	return s.PolicyMode() == SupervisorPolicyAgent
 }
 
 // DispatchSupervised reports whether this session's DISPATCHES run supervised
@@ -248,6 +298,25 @@ func (d Defaults) HaltRootEnabled() bool {
 	return d.SupervisorHaltRoot
 }
 
+// validateSupervisorPolicy checks the policy mode (design §4.9). "none" and
+// "agent" are the supported values; "headless" is named and refused so a
+// configuration written against the design's full stanza fails loudly instead
+// of running with no decider.
+func validateSupervisorPolicy(d Defaults) []string {
+	switch mode := d.Supervisor.PolicyMode(); mode {
+	case SupervisorPolicyNone, SupervisorPolicyAgent:
+		return nil
+	case SupervisorPolicyHeadless:
+		return []string{fmt.Sprintf(
+			"agents.default.supervisor.policy %q is not supported yet — the headless decider lands in yaah-0nbb; use %q (the dispatching agent runs the loop) or %q (the default, no policy loop)",
+			SupervisorPolicyHeadless, SupervisorPolicyAgent, SupervisorPolicyNone)}
+	default:
+		return []string{fmt.Sprintf(
+			"agents.default.supervisor.policy %q is not a policy mode: use %q (the default, no policy loop), %q (the dispatching agent runs the loop), or %q (not yet supported)",
+			d.Supervisor.Policy, SupervisorPolicyNone, SupervisorPolicyAgent, SupervisorPolicyHeadless)}
+	}
+}
+
 // validateSupervisor checks the supervisor stanza's numeric settings.
 // Zeros are the documented defaults; an explicit value must be usable
 // by the rule it tunes — an error-rate threshold above 1 would make an
@@ -258,11 +327,16 @@ func (d Defaults) HaltRootEnabled() bool {
 // that are actually enabled — values the engine never reads (engine
 // off, rule off) cannot reject an otherwise valid config.
 func validateSupervisor(d Defaults) []string {
+	// The policy mode is checked BEFORE the rules-engine switch: the switch
+	// governs the advisory RULES, while the policy decides whether the
+	// session's tool surface gains a `supervise` tool at all. A typo there is
+	// never inert — it silently leaves a session unsupervised — so it is
+	// refused even with the engine off.
+	errs := validateSupervisorPolicy(d)
 	if !d.Supervisor.EngineEnabled() {
-		return nil
+		return errs
 	}
 	sup := d.Supervisor
-	var errs []string
 	if sup.HighErrorRateEnabled() {
 		if t := sup.ErrorRateThreshold(); t < 0 || t > 1 {
 			errs = append(errs, fmt.Sprintf(

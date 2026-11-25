@@ -106,6 +106,7 @@ var toolPolicies = map[string]Policy{
 	"todowrite":      {Effects: EffectMutate, Danger: DangerPolicySafe, Reason: "session todo list and UI state only"},
 	"subagent_jobs":  {Effects: EffectRead | EffectMutate, Danger: DangerPolicySafe, Reason: "control plane for dispatches already approved through delegate"},
 	"supervisor":     {Effects: EffectExec, Danger: DangerPolicySafe, Reason: "control plane for runs and scopes; halts/injections are explicit and traced"},
+	"supervise":      {Effects: EffectExec, Danger: DangerPolicySafe, Reason: "control plane for one dispatch batch: every intervention reaches a run approved through delegate and is recorded as a decision with its outcome"},
 
 	// Process execution.
 	"bash":               {Effects: EffectExec, Danger: DangerPolicyAlways},

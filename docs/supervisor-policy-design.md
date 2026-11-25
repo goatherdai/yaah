@@ -326,8 +326,22 @@ the live one.
 supervise(
   decisions?: [ {scope, action, reason, guidance} ],  # for the snapshot last returned
   wait?: "tick" | "settled"                           # default "tick"
-) → { done, snapshot, applied: [ {scope, action, outcome} ], results? }
+) → { done, busy, snapshot,
+      applied: [ {scope, action, outcome} ],
+      results: [ {tick, scope, source, action, reason, guidance, outcome, drop_reason, generation} ],
+      ticks, note? }
 ```
+
+- `ticks` counts the ticks the call ran (1 for `wait: "tick"`, and for
+  `"settled"` how many intervals the batch took to finish); each `results`
+  entry names the `tick` that recorded it, its `source` (policy or rules) and
+  the scope registration's `generation` when a claim named one.
+- `busy` is set on a call that arrived while another `supervise` call for the
+  same session was in flight: nothing applied, no tick run (`note` says so).
+  One call per session at a time is deliberate — the snapshot render assigns
+  the labels the next decision list resolves against — so a concurrent call is
+  refused as data rather than queued behind a tick that may block for the
+  batch's life.
 
 - On first call it binds to the live descendants of the calling scope. One
   batch per calling loop; a second caller is refused.
