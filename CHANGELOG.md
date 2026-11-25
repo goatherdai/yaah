@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.211.0](https://github.com/goatherdai/yaah/compare/v0.210.0...v0.211.0) (2026-11-25)
+
+
+### Features
+
+* **supervision:** decision types and snapshot fields for the supervisor policy (yaah-k0x1) ([#405](https://github.com/goatherdai/yaah/issues/405)) ([ed896ac](https://github.com/goatherdai/yaah/commit/ed896ac51634972e7692c6a201656de75cee6f75))
+
 ## [0.210.0](https://github.com/goatherdai/yaah/compare/v0.209.1...v0.210.0) (2026-11-25)
 
 
