@@ -44,16 +44,12 @@ var ErrNotHaltable = supervisionapi.ErrNotHaltable
 // not launch a second replacement loop for it.
 var ErrAlreadyClaimed = supervisionapi.ErrAlreadyClaimed
 
-// ErrRedirectNotClaimed reports a DepositRedirect at a live,
-// generation-matching registration that carries no claim: guidance must
-// never ride a slot the single-winner discipline did not open, so the
-// deposit is refused rather than queued against a run nobody redirected.
-var ErrRedirectNotClaimed = supervisionapi.ErrRedirectNotClaimed
+// ErrAlreadyClaimed = errors.New("the run is already claimed for redirect")
 
-// steerBuffer bounds one run's undelivered guidance. Steering is
-// between-turn delivery; a healthy run drains this every step.
-// SteerBuffer is the per-run steering channel capacity, exported for
-// the composition sites that create the channels the registry borrows.
+// SteerBuffer is the per-run steering channel capacity, exported for the
+// composition sites that create the channels the registry borrows. Steering
+// is between-turn delivery: a healthy run drains this buffer every step;
+// a full buffer means the run is wedged between turns.
 const SteerBuffer = 8
 
 // Run is one registered execution's bridge surface: the steering channel
@@ -69,6 +65,14 @@ type Run struct {
 	SteerCh chan string
 	Cancel  context.CancelFunc
 	Done    chan struct{}
+
+	// Handoff ends the run WITHOUT halt semantics — the live redirect's
+	// handoff signal (PR #398 review finding: a redirect's stop must not
+	// read as a supervisor halt in the runner's accounting, or the
+	// adoption loop's halt handling erases real halts). CancelGeneration
+	// stops a run through this function; halt keeps using Cancel. Nil
+	// falls back to Cancel, at the cost of that conflation.
+	Handoff context.CancelFunc
 
 	// Role, Label, Workdir, and StartedAt are the run's snapshot metadata
 	// (yaah-1050.1.1): who registered, under what role, in which
@@ -132,17 +136,21 @@ type run struct {
 	// generation-swap model that keeps an old loop's teardown or claim
 	// from touching a successor.
 	gen uint64
+	// returned marks a generation whose loop has returned: Inject stops
+	// claiming delivery while the redirect machinery keeps working —
+	// the adoption window is exactly "returned but not yet consumed or
+	// closed". closed marks a generation past its final adoption check:
+	// no redirect may claim it anymore. Both flags live and die with the
+	// generation (a later Register replaces the whole value).
+	returned bool
+	closed   bool
 	// redirectPending records a successful Redirect claim for this
 	// generation. It lives and dies with the registration, so exactly
 	// one claimer wins per incarnation: the next Redirect at the same
 	// generation reports ErrAlreadyClaimed.
 	redirectPending bool
 	// pendingRedirect carries the claimed handoff's guidance until the
-	// parent loop consumes it (nil when unclaimed, or once
-	// ConsumeRedirect cleared it after adoption). It lives and dies
-	// with the registration like redirectPending; the mark survives the
-	// consume, so a second claimer at this generation still sees
-	// ErrAlreadyClaimed.
+	// parent loop consumes it (nil when unclaimed, or once consumed).
 	pendingRedirect *RedirectRequest
 }
 
@@ -288,72 +296,56 @@ func (r *Registry) UnregisterGeneration(scopeID string, gen uint64) bool {
 // handoff cannot both launch replacements. The pending mark lives and
 // dies with the registration: a new Register is a fresh, unclaimed
 // generation, and Unregister ends the incarnation entirely.
-func (r *Registry) Redirect(scopeID string, fromGen uint64) (RedirectHandle, error) {
+func (r *Registry) Redirect(scopeID string, fromGen uint64, req RedirectRequest) (RedirectHandle, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	entry, ok := r.runs[scopeID]
-	if !ok || entry.gen != fromGen {
+	run, ok := r.runs[scopeID]
+	if !ok || run.gen != fromGen {
 		return RedirectHandle{}, ErrNoRun
 	}
-	if entry.redirectPending {
+	if run.closed {
+		// The generation passed its final adoption check: a claim here
+		// would be reported as a fresh loop and then silently dropped at
+		// teardown (PR #398 review finding). Refuse it honestly.
+		return RedirectHandle{}, ErrNoRun
+	}
+	if run.redirectPending {
 		return RedirectHandle{}, ErrAlreadyClaimed
 	}
-	entry.redirectPending = true
-	// Open the pending slot alongside the claim: an empty request the
-	// claimer fills with DepositRedirect before cancelling the run, and
-	// the parent loop reads through ConsumeRedirect when the run returns.
-	entry.pendingRedirect = &RedirectRequest{}
+	run.redirectPending = true
+	// The claim and the payload publish under ONE lock: an empty pending
+	// request the parent loop could consume before the claimer deposited
+	// the guidance lost the handoff entirely (PR #398 review finding). A
+	// pending request is therefore born complete.
+	run.pendingRedirect = &req
 	return RedirectHandle{ScopeID: scopeID, Gen: fromGen}, nil
 }
 
-// DepositRedirect attaches the handoff payload (guidance plus the
-// live-revert mark) to an already-claimed redirect as a
-// compare-and-swap on the generation: the scope must still be
-// registered at fromGen and the claim must still be pending. ErrNoRun
-// reports an unregistered scope or a generation mismatch — the claim
-// died with its registration (the run finished or a successor Register
-// superseded it), so the payload has nowhere to land. ErrRedirectNotClaimed
-// reports a live generation nobody claimed. The deposit is a separate
-// call from the claim so the claimer can carry its own payload type
-// without widening Redirect's yaah-8gxg.1 signature; the tool always
-// claims first, then deposits, then cancels the current run.
-func (r *Registry) DepositRedirect(scopeID string, fromGen uint64, req RedirectRequest) error {
+// ConsumeRedirectOrClose is the parent loop's post-run read: it consumes
+// the generation's pending redirect if one arrived, and otherwise closes
+// the generation to further redirects in the same critical section. The
+// claim check and the teardown gap must not be separate — a redirect
+// landing after a final ConsumeRedirect(false) used to succeed, promise a
+// successor, and be silently dropped at UnregisterGeneration (PR #398
+// review finding). A returned request is always complete (Redirect
+// publishes the payload atomically with the claim).
+func (r *Registry) ConsumeRedirectOrClose(scopeID string, gen uint64) (RedirectRequest, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	entry, ok := r.runs[scopeID]
-	if !ok || entry.gen != fromGen {
-		return ErrNoRun
-	}
-	if !entry.redirectPending {
-		return ErrRedirectNotClaimed
-	}
-	if entry.pendingRedirect == nil {
-		entry.pendingRedirect = &RedirectRequest{}
-	}
-	entry.pendingRedirect.Guidance = req.Guidance
-	entry.pendingRedirect.Revert = req.Revert
-	return nil
-}
-
-// ConsumeRedirect returns the pending redirect claimed for the scope's
-// generation and CLEARS the slot — the adopt half of the handoff. The
-// parent loop calls it after a run returns; a true result means it must
-// start the successor loop on this registration. False reports no
-// pending claim at that generation (none made, already consumed, or the
-// registration moved on). The redirect-pending mark survives the
-// consume, so a second claimer at the same generation still reports
-// ErrAlreadyClaimed until a successor Register supersedes it — one
-// handoff per generation even across the adoption window.
-func (r *Registry) ConsumeRedirect(scopeID string, gen uint64) (RedirectRequest, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	entry, ok := r.runs[scopeID]
-	if !ok || entry.gen != gen || entry.pendingRedirect == nil {
+	run, ok := r.runs[scopeID]
+	if !ok || run.gen != gen {
 		return RedirectRequest{}, false
 	}
-	req := *entry.pendingRedirect
-	entry.pendingRedirect = nil
-	return req, true
+	if run.redirectPending && run.pendingRedirect != nil {
+		req := *run.pendingRedirect
+		run.pendingRedirect = nil
+		// redirectPending stays set: the single-winner mark outlives
+		// the payload slot, so a second claim on the generation is
+		// refused even after the parent loop adopted the handoff.
+		return req, true
+	}
+	run.closed = true
+	return RedirectRequest{}, false
 }
 
 // registrationOf projects a run's bridge surface down to its snapshot
@@ -389,15 +381,66 @@ func (r *Registry) clock() time.Time {
 	return r.now()
 }
 
+// MarkReturned records that the generation's loop has returned. The
+// registration stays live — the redirect machinery (claim, consume,
+// close) works exactly through the adoption window — but steering must
+// stop claiming delivery: a buffered injection the returned loop will
+// never drain is a false "delivered" (PR #398 review finding).
+func (r *Registry) MarkReturned(scopeID string, gen uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if run, ok := r.runs[scopeID]; ok && run.gen == gen {
+		run.returned = true
+	}
+}
+
+// CancelGeneration ends exactly one generation — the live redirect's
+// stop. Generation-checked on purpose: a scope-keyed Cancel can land
+// after the claimed run finished and its successor registered, stopping
+// the replacement that already carries the guidance (PR #398 review
+// finding). Stops through Run.Handoff so the runner's halt accounting
+// never reads a redirect's stop as a supervisor halt; falls back to
+// Cancel for registrations that predate the split.
+func (r *Registry) CancelGeneration(scopeID string, gen uint64) (<-chan struct{}, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run, ok := r.runs[scopeID]
+	if !ok || run.gen != gen {
+		return nil, ErrNoRun
+	}
+	stop := run.entry.Handoff
+	if stop == nil {
+		stop = run.entry.Cancel
+	}
+	if stop == nil {
+		return nil, ErrNotHaltable
+	}
+	stop()
+	if run.entry.Done == nil {
+		return nil, nil
+	}
+	return run.entry.Done, nil
+}
+
 // Inject delivers guidance to the run's steering channel. The send
 // happens under the registry lock, and Unregister must be called before
 // the channel is closed, so a send can never land on a closed channel.
-// Non-blocking: a full buffer means the run is not consuming guidance.
+// Non-blocking: a full buffer means the run is not consuming guidance. A
+// run whose loop has returned (MarkReturned) is reported undelivered —
+// the caller's trace-side fallback is the honest outcome (PR #398 review
+// finding).
 func (r *Registry) Inject(scopeID, guidance string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	run, ok := r.runs[scopeID]
-	if !ok {
+	if !ok || run.entry.SteerCh == nil {
+		return ErrNoRun
+	}
+	if run.returned || run.closed {
+		// The loop has returned (or the sequence closed): guidance sent
+		// now is acknowledged and then discarded. Report it undelivered
+		// — the caller's trace-only fallback is the honest outcome
+		// (PR #398 review finding).
 		return ErrNoRun
 	}
 	select {

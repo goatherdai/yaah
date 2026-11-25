@@ -130,40 +130,55 @@ func aggregateConflicts(slice kerneltrace.Slice, session string, legacyParents m
 	// Pass 1: usage facts are the only place that connects a per-dispatch
 	// owner (`sub-*`) to the session root. Build that mapping before resolving
 	// worktree merge-proposal facts, which live on the child owner path.
+	// Usage facts are per GENERATION now (a redirect successor appends its
+	// own under the same owner — PR #400 review finding 4): counting per
+	// fact would report one redirected dispatch as several, so each owner
+	// counts once. The facts of one dispatch share owner, parent, and lane.
 	for owner, factIDs := range slice.OwnerPaths {
+		var parent, lane string
+		haveUsage := false
 		for _, factID := range factIDs {
 			fact := slice.FactsByID[factID]
 			rec, ok := fact.(kerneltrace.Record)
 			if !ok || rec.Envelope.SchemaRef != "yaah.subagent.usage.v1" {
 				continue
 			}
-			parent, _ := rec.Body.Payload["parent_session"].(string)
+			haveUsage = true
 			if parent == "" {
-				parent = legacyParents[owner]
+				parent, _ = rec.Body.Payload["parent_session"].(string)
 			}
-			unresolved := parent == "" && strings.HasPrefix(owner, "sub-")
-			if unresolved {
-				if session != "" {
-					continue
-				}
-				report.UnresolvedDispatches++
-			} else {
-				if parent == "" {
-					parent = owner
-				}
-				parentByOwner[owner] = parent
-				if session != "" && parent != session {
-					continue
-				}
-				sessionsSeen[parent] = true
-				sessionDispatches[parent]++
-			}
-			lane, _ := rec.Body.Payload["lane"].(string)
 			if lane == "" {
-				lane = "unknown"
+				lane, _ = rec.Body.Payload["lane"].(string)
 			}
-			report.Dispatches[lane]++
 		}
+		if !haveUsage {
+			continue
+		}
+		if parent == "" {
+			parent = legacyParents[owner]
+		}
+		if parent == "" && strings.HasPrefix(owner, "sub-") {
+			if session == "" {
+				report.UnresolvedDispatches++
+			}
+			continue
+		}
+		if parent == "" {
+			parent = owner
+		}
+		parentByOwner[owner] = parent
+		if session != "" && parent != session {
+			continue
+		}
+		if lane == "" {
+			lane = "unknown"
+		}
+		// The lane totals belong to the report's window: a session-filtered
+		// run must not count other sessions' dispatches (qodo review
+		// follow-up on PR #400).
+		report.Dispatches[lane]++
+		sessionsSeen[parent] = true
+		sessionDispatches[parent]++
 	}
 	sessionFor := func(owner string) (string, bool) {
 		if parent := parentByOwner[owner]; parent != "" {

@@ -151,20 +151,19 @@ func revertHandoff(t *testing.T, mgr *goatherd.ScopeManager, store *kerneltrace.
 		t.Fatal("the first model call never started")
 	}
 
-	// The supervisor's handoff path: claim (CAS), deposit with the
-	// revert flag, cancel.
+	// The supervisor's handoff path: claim publishes the complete
+	// payload (including the revert mark) atomically, then cancel.
 	gen1, ok := runs.Generation(scopeID)
 	if !ok {
 		t.Fatal("the live registration must report its generation")
 	}
-	if _, err := runs.Redirect(scopeID, gen1); err != nil {
+	if _, err := runs.Redirect(scopeID, gen1, supervisionapi.RedirectRequest{Guidance: provider.guidance, Revert: revert}); err != nil {
 		t.Fatalf("Redirect: %v", err)
 	}
-	if err := runs.DepositRedirect(scopeID, gen1, supervisionapi.RedirectRequest{Guidance: provider.guidance, Revert: revert}); err != nil {
-		t.Fatalf("DepositRedirect: %v", err)
-	}
-	if _, err := runs.Cancel(scopeID); err != nil {
-		t.Fatalf("Cancel: %v", err)
+	// The revert's generation-checked stop runs through Handoff —
+	// plain cancellation, never the halt mark (finding #4).
+	if _, err := runs.CancelGeneration(scopeID, gen1); err != nil {
+		t.Fatalf("CancelGeneration: %v", err)
 	}
 
 	select {

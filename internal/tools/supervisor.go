@@ -42,13 +42,16 @@ type runBridge interface {
 	// Generation reports the scope's live generation — the token a
 	// redirect claims against (yaah-8gxg.1's compare-and-swap).
 	Generation(scopeID string) (uint64, bool)
-	// Redirect CAS-claims the scope's current generation for a handoff:
-	// single winner per generation (ErrAlreadyClaimed), ErrNoRun when
-	// the generation no longer names a live run.
-	Redirect(scopeID string, fromGen uint64) (supervisionapi.RedirectHandle, error)
-	// DepositRedirect attaches the handoff payload (the successor's
-	// guidance plus the live-revert flag) to a claim made by Redirect.
-	DepositRedirect(scopeID string, fromGen uint64, req supervisionapi.RedirectRequest) error
+	// Redirect CAS-claims the scope's current generation for a handoff,
+	// carrying the complete payload (guidance plus the live-revert mark)
+	// in ONE publication: single winner per generation
+	// (ErrAlreadyClaimed), ErrNoRun when the generation no longer names a
+	// live run or has passed its final adoption check.
+	Redirect(scopeID string, fromGen uint64, req supervisionapi.RedirectRequest) (supervisionapi.RedirectHandle, error)
+	// CancelGeneration ends exactly the claimed generation — the
+	// redirect's stop. A scope-keyed Cancel could stop a successor that
+	// already carries the guidance (PR #398 review finding).
+	CancelGeneration(scopeID string, gen uint64) (<-chan struct{}, error)
 }
 
 // firingSource is the status view's consumer-side view of the advisory
@@ -186,16 +189,26 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 		if raw.ScopeID == "" || raw.Guidance == "" {
 			return "", fmt.Errorf("supervisor: scope_id and guidance required for redirect")
 		}
-		if raw.ScopeID == t.RootScopeID && !t.HaltRoot {
-			return "", fmt.Errorf("supervisor: redirecting the session root requires the supervisor_halt_root opt-in (agents.default.supervisor_halt_root); it stops the session's current run and no dispatch loop exists to adopt a replacement. Redirect a sub-agent scope instead (see list_scopes)")
+		if raw.ScopeID == t.RootScopeID {
+			// The root registration has no adoption loop: redirecting it
+			// cancels the session's run, promises a replacement that
+			// never starts, and leaves the claim jamming later redirects
+			// (PR #398 review finding). Unconditional — the halt_root
+			// opt-in gates halt only.
+			return "", fmt.Errorf("supervisor: the session root cannot be redirected or reverted: no dispatch loop exists to adopt a replacement. Use halt (with halt_root) to stop the session, or inject to steer it")
 		}
 		return executeRedirect(mgr, runs, raw.ScopeID, raw.Guidance, false)
 	case "revert":
 		if raw.ScopeID == "" || raw.Guidance == "" {
 			return "", fmt.Errorf("supervisor: scope_id and guidance required for revert")
 		}
-		if raw.ScopeID == t.RootScopeID && !t.HaltRoot {
-			return "", fmt.Errorf("supervisor: reverting the session root requires the supervisor_halt_root opt-in (agents.default.supervisor_halt_root); it stops the session's current run and no dispatch loop exists to adopt a replacement. Revert a sub-agent scope instead (see list_scopes)")
+		if raw.ScopeID == t.RootScopeID {
+			// The root registration has no adoption loop: reverting it
+			// cancels the session's run, promises a replacement that never
+			// starts, and leaves the claim jamming later redirects (PR #398
+			// review finding). Unconditional — the halt_root opt-in gates
+			// halt only.
+			return "", fmt.Errorf("supervisor: the session root cannot be redirected or reverted: no dispatch loop exists to adopt a replacement. Use halt (with halt_root) to stop the session, or inject to steer it")
 		}
 		return executeRedirect(mgr, runs, raw.ScopeID, raw.Guidance, true)
 	case "status":
@@ -336,40 +349,37 @@ func executeRedirect(mgr *goatherd.ScopeManager, runs runBridge, scopeID, guidan
 	if !ok {
 		return fmt.Sprintf("No active run on %s to redirect (the scope is not currently executing); nothing was claimed.", scopeID), nil
 	}
-	handle, err := runs.Redirect(scopeID, gen)
+	// The claim carries the complete payload in ONE registry publication
+	// (PR #398 review finding: the old empty-slot claim let the parent
+	// loop consume an empty request before the guidance landed).
+	handle, err := runs.Redirect(scopeID, gen, supervisionapi.RedirectRequest{Guidance: guidance, Revert: revert})
 	switch {
-	case errors.Is(err, supervisionapi.ErrNoRun):
-		// The generation moved between inspection and claim (the run
-		// finished or a successor registered): re-inspect, don't retry.
-		return fmt.Sprintf("The run on %s finished or was superseded while redirecting; nothing was claimed — inspect with list_scopes and retry if a run is live.", scopeID), nil
+	case err == nil:
 	case errors.Is(err, supervisionapi.ErrAlreadyClaimed):
-		return fmt.Sprintf("A redirect is already claimed for %s; the handoff is in progress, so only one replacement will start for this run.", scopeID), nil
-	case err != nil:
+		return fmt.Sprintf("A handoff is already claimed and in progress for %s; nothing was claimed. Let the current handoff finish, or use halt to stop the run.", scopeID), nil
+	case errors.Is(err, supervisionapi.ErrNoRun):
+		// The inspected generation finished (or was superseded, or passed
+		// its final adoption check) between the generation read and the
+		// claim: the race is a normal inspection-to-claim gap, not a
+		// fault (PR #400 review finding 1). Report it as an outcome so
+		// the supervisor re-inspects instead of taking a tool failure.
+		return fmt.Sprintf("No active run on %s to hand off — the run inspected finished or was replaced before it could be claimed; nothing was claimed. Re-inspect the scope (list_scopes) and redirect again if a new run is executing.", scopeID), nil
+	default:
 		return "", fmt.Errorf("supervisor: redirect claim failed: %w", err)
 	}
-	if err := runs.DepositRedirect(scopeID, handle.Gen, supervisionapi.RedirectRequest{Guidance: guidance, Revert: revert}); err != nil {
-		// The claim died between the two calls — the run ended or was
-		// superseded, so the guidance has nowhere to land.
-		return fmt.Sprintf("The redirect guidance for %s could not be recorded (%v); no replacement will start.", scopeID, err), nil
+	what := "guidance"
+	verb := "Redirect requested"
+	if revert {
+		what = "revert plus guidance"
+		verb = "Revert requested"
 	}
-	// Cancel the CURRENT run so its runOnce returns — then return. The
-	// quiesce channel deliberately goes unread: waiting on it here would
-	// hold the supervisor through the handoff (and the sequence's Done
-	// only closes after the FINAL run), which is the blocking this
-	// action exists to avoid.
-	switch _, err := runs.Cancel(scopeID); {
-	case err == nil:
-		if revert {
-			return fmt.Sprintf("Revert requested for %s: the current run was cancelled; the dispatch will roll the workspace back to the pre-run snapshot and start a fresh loop on the same scope. This call returns now — the replacement is adopted when that run returns.", scopeID), nil
-		}
-		return fmt.Sprintf("Redirect requested for %s: the current run was cancelled and its guidance will start a fresh loop on the same scope. This call returns now — the replacement is adopted when that run returns.", scopeID), nil
-	case errors.Is(err, supervisionapi.ErrNotHaltable):
-		return fmt.Sprintf("Redirect claimed for %s, but the run registered no cancellation; the successor loop will start when the current run returns on its own.", scopeID), nil
-	case errors.Is(err, supervisionapi.ErrNoRun):
-		return fmt.Sprintf("The run on %s ended as the redirect was requested; no replacement will start.", scopeID), nil
-	default:
-		return "", fmt.Errorf("supervisor: redirect cancel failed: %w", err)
+	// Stop the claimed generation, generation-checked: if it already
+	// finished and a successor registered, that replacement carries the
+	// guidance and must NOT be cancelled (PR #398 review finding).
+	if _, err := runs.CancelGeneration(handle.ScopeID, handle.Gen); err != nil {
+		return fmt.Sprintf("%s for %s (generation %d), but the run had already finished: if a replacement started it carries the %s; nothing else was cancelled.", verb, scopeID, handle.Gen, what), nil
 	}
+	return fmt.Sprintf("%s for %s (generation %d): the run is stopping and a replacement loop starts with %s when it returns; a supervisor halt in that window supersedes the handoff.", verb, scopeID, handle.Gen, what), nil
 }
 
 func executeStatus(mgr *goatherd.ScopeManager, runs runBridge, svc firingSource) (string, error) {

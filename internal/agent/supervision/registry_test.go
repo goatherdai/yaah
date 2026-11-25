@@ -284,7 +284,7 @@ func TestRegistry_RedirectConcurrentClaim(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			handle, err := r.Redirect("scope:race", gen)
+			handle, err := r.Redirect("scope:race", gen, RedirectRequest{})
 			if err != nil {
 				losses <- err
 				return
@@ -318,13 +318,13 @@ func TestRegistry_RedirectConcurrentClaim(t *testing.T) {
 // live registration reports ErrNoRun — before and after Unregister.
 func TestRegistry_RedirectUnregisteredScope(t *testing.T) {
 	r := NewRegistry()
-	if _, err := r.Redirect("scope:gone", 1); !errors.Is(err, ErrNoRun) {
+	if _, err := r.Redirect("scope:gone", 1, RedirectRequest{}); !errors.Is(err, ErrNoRun) {
 		t.Errorf("Redirect at an unregistered scope = %v, want ErrNoRun", err)
 	}
 
 	r.Register("scope:gone", Run{SteerCh: make(chan string, SteerBuffer)})
 	r.Unregister("scope:gone")
-	if _, err := r.Redirect("scope:gone", 1); !errors.Is(err, ErrNoRun) {
+	if _, err := r.Redirect("scope:gone", 1, RedirectRequest{}); !errors.Is(err, ErrNoRun) {
 		t.Errorf("Redirect after Unregister = %v, want ErrNoRun", err)
 	}
 }
@@ -337,7 +337,7 @@ func TestRegistry_RedirectGenerationMismatch(t *testing.T) {
 	r.Register("scope:mismatch", Run{SteerCh: make(chan string, SteerBuffer)})
 	firstGen, _ := r.Generation("scope:mismatch")
 
-	if _, err := r.Redirect("scope:mismatch", firstGen+1); !errors.Is(err, ErrNoRun) {
+	if _, err := r.Redirect("scope:mismatch", firstGen+1, RedirectRequest{}); !errors.Is(err, ErrNoRun) {
 		t.Errorf("Redirect with fromGen+1 = %v, want ErrNoRun", err)
 	}
 
@@ -345,11 +345,11 @@ func TestRegistry_RedirectGenerationMismatch(t *testing.T) {
 	// generation no longer names a live run.
 	r.Register("scope:mismatch", Run{SteerCh: make(chan string, SteerBuffer)})
 	successorGen, _ := r.Generation("scope:mismatch")
-	if _, err := r.Redirect("scope:mismatch", firstGen); !errors.Is(err, ErrNoRun) {
+	if _, err := r.Redirect("scope:mismatch", firstGen, RedirectRequest{}); !errors.Is(err, ErrNoRun) {
 		t.Errorf("Redirect with the superseded generation = %v, want ErrNoRun", err)
 	}
 
-	handle, err := r.Redirect("scope:mismatch", successorGen)
+	handle, err := r.Redirect("scope:mismatch", successorGen, RedirectRequest{})
 	if err != nil {
 		t.Fatalf("Redirect with the current generation: %v", err)
 	}
@@ -358,12 +358,13 @@ func TestRegistry_RedirectGenerationMismatch(t *testing.T) {
 	}
 }
 
-// TestRegistry_RedirectGuidanceRoundTrip pins the guidance-carrying
-// handoff slot (yaah-8gxg.4): DepositRedirect refuses an unclaimed
-// generation, Redirect opens the pending request, the deposit fills it,
-// ConsumeRedirect returns it once and clears it, the claim's
-// single-winner mark survives the consume, and a successor Register is
-// a fresh, unclaimed generation.
+// TestRegistry_RedirectGuidanceRoundTrip pins the claim → consume →
+// close lifecycle (PR #398 review findings): the claim publishes the
+// COMPLETE payload atomically — no empty-slot window — the
+// single-winner mark outlives the payload slot, and the final empty
+// consume closes the generation so nothing can land after teardown and
+// be silently dropped. A successor Register is a fresh, unclaimed
+// generation.
 func TestRegistry_RedirectGuidanceRoundTrip(t *testing.T) {
 	r := NewRegistry()
 	r.Register("scope:handoff", Run{SteerCh: make(chan string, SteerBuffer)})
@@ -372,42 +373,41 @@ func TestRegistry_RedirectGuidanceRoundTrip(t *testing.T) {
 		t.Fatal("Generation must report the live registration")
 	}
 
-	// Deposit before a claim is refused: guidance rides a claim only.
-	if err := r.DepositRedirect("scope:handoff", gen, RedirectRequest{Guidance: "early"}); !errors.Is(err, ErrRedirectNotClaimed) {
-		t.Errorf("DepositRedirect without a claim = %v, want ErrRedirectNotClaimed", err)
-	}
-
-	if _, err := r.Redirect("scope:handoff", gen); err != nil {
+	// The claim carries the complete payload in one publication.
+	if _, err := r.Redirect("scope:handoff", gen, RedirectRequest{Guidance: "plan B"}); err != nil {
 		t.Fatalf("Redirect: %v", err)
 	}
-	// A generation that no longer (or never) names the run cannot deposit.
-	if err := r.DepositRedirect("scope:handoff", gen+1, RedirectRequest{Guidance: "stale"}); !errors.Is(err, ErrNoRun) {
-		t.Errorf("DepositRedirect at gen+1 = %v, want ErrNoRun", err)
-	}
-	if err := r.DepositRedirect("scope:handoff", gen, RedirectRequest{Guidance: "plan B"}); err != nil {
-		t.Fatalf("DepositRedirect after the claim: %v", err)
+
+	// The single-winner mark refuses a second claim outright.
+	if _, err := r.Redirect("scope:handoff", gen, RedirectRequest{Guidance: "plan C"}); !errors.Is(err, ErrAlreadyClaimed) {
+		t.Errorf("second Redirect = %v, want ErrAlreadyClaimed", err)
 	}
 
-	// The claim's single-winner discipline holds across the deposit.
-	if _, err := r.Redirect("scope:handoff", gen); !errors.Is(err, ErrAlreadyClaimed) {
-		t.Errorf("second Redirect after deposit = %v, want ErrAlreadyClaimed", err)
-	}
-
-	// Consume returns the guidance once and clears the slot; the claim
-	// mark survives, so a second claimer is still refused.
-	req, consumed := r.ConsumeRedirect("scope:handoff", gen)
+	// Consume returns the guidance once and clears the payload slot.
+	req, consumed := r.ConsumeRedirectOrClose("scope:handoff", gen)
 	if !consumed || req.Guidance != "plan B" {
-		t.Errorf("ConsumeRedirect = ({%q}, %v), want {\"plan B\"}, true", req.Guidance, consumed)
+		t.Errorf("ConsumeRedirectOrClose = ({%q}, %v), want {\"plan B\"}, true", req.Guidance, consumed)
 	}
-	if _, consumed := r.ConsumeRedirect("scope:handoff", gen); consumed {
-		t.Error("ConsumeRedirect must clear the slot when adopted")
-	}
-	if _, err := r.Redirect("scope:handoff", gen); !errors.Is(err, ErrAlreadyClaimed) {
+
+	// The mark outlives the slot: a claim after the consume, before
+	// the close, is still refused.
+	if _, err := r.Redirect("scope:handoff", gen, RedirectRequest{Guidance: "plan C"}); !errors.Is(err, ErrAlreadyClaimed) {
 		t.Errorf("Redirect after consume = %v, want ErrAlreadyClaimed (the mark outlives the slot)", err)
 	}
+
+	// The final empty consume closes the generation. Nothing may land
+	// after it (review finding: a late redirect used to succeed,
+	// promise a successor, and be silently dropped at teardown).
+	if _, consumed := r.ConsumeRedirectOrClose("scope:handoff", gen); consumed {
+		t.Error("ConsumeRedirectOrClose must report nothing on an empty slot")
+	}
+	if _, err := r.Redirect("scope:handoff", gen, RedirectRequest{Guidance: "late"}); !errors.Is(err, ErrNoRun) {
+		t.Errorf("Redirect after the final consume = %v, want ErrNoRun", err)
+	}
+
 	// A wrong generation never consumes.
-	if _, consumed := r.ConsumeRedirect("scope:handoff", gen+1); consumed {
-		t.Error("ConsumeRedirect at a wrong generation must report nothing")
+	if _, consumed := r.ConsumeRedirectOrClose("scope:handoff", gen+1); consumed {
+		t.Error("ConsumeRedirectOrClose at a wrong generation must report nothing")
 	}
 
 	// A successor Register is a fresh, unclaimed generation: no stale
@@ -417,7 +417,82 @@ func TestRegistry_RedirectGuidanceRoundTrip(t *testing.T) {
 	if !ok || next == gen {
 		t.Fatalf("successor Generation = (%d, %v), want a new generation after %d", next, ok, gen)
 	}
-	if _, consumed := r.ConsumeRedirect("scope:handoff", next); consumed {
+	if _, consumed := r.ConsumeRedirectOrClose("scope:handoff", next); consumed {
 		t.Error("a fresh generation must carry no pending redirect")
+	}
+}
+
+// TestRegistry_ClaimRacesFinalConsume_NoEmptyPayloadNoDrop pins the
+// atomic claim → consume → close window (yaah-96rj, yaah-74zs,
+// yaah-srl6 — PR #398 review findings 1/2/14): a redirect racing the
+// loop's final ConsumeRedirectOrClose either claims BEFORE the close
+// and is delivered complete, or is refused — it can never be accepted
+// and then silently dropped at teardown, and a delivered request is
+// never empty.
+func TestRegistry_ClaimRacesFinalConsume_NoEmptyPayloadNoDrop(t *testing.T) {
+	const claimants = 8
+	for iter := 0; iter < 50; iter++ {
+		r := NewRegistry()
+		r.Register("scope:race-close", Run{SteerCh: make(chan string, SteerBuffer)})
+		gen, ok := r.Generation("scope:race-close")
+		if !ok {
+			t.Fatal("Generation must report the live registration")
+		}
+
+		start := make(chan struct{})
+		wins := make(chan RedirectHandle, claimants)
+		var wg sync.WaitGroup
+		for i := 0; i < claimants; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				handle, err := r.Redirect("scope:race-close", gen, RedirectRequest{Guidance: "handoff"})
+				switch {
+				case err == nil:
+					wins <- handle
+				case errors.Is(err, ErrAlreadyClaimed), errors.Is(err, ErrNoRun):
+				default:
+					t.Errorf("unexpected Redirect error: %v", err)
+				}
+			}()
+		}
+		type consumedPayload struct {
+			req      RedirectRequest
+			consumed bool
+		}
+		got := make(chan consumedPayload, 1)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			req, consumed := r.ConsumeRedirectOrClose("scope:race-close", gen)
+			if consumed && req.Guidance != "handoff" {
+				t.Errorf("consumed an incomplete payload: %+v", req)
+			}
+			got <- consumedPayload{req, consumed}
+		}()
+		close(start)
+		wg.Wait()
+		close(wins)
+		p := <-got
+
+		switch {
+		case len(wins) > 1:
+			t.Fatalf("iter %d: %d claims won the CAS, want at most one", iter, len(wins))
+		case p.consumed && len(wins) != 1:
+			t.Fatalf("iter %d: payload consumed but no claim won", iter)
+		case !p.consumed && len(wins) != 0:
+			// The exact bug shape the fix forbids: a claim was accepted
+			// but the parent loop's read saw nothing — the handoff would
+			// be promised and silently dropped.
+			t.Fatalf("iter %d: a claim won but the consumer saw nothing — accepted then dropped", iter)
+		}
+
+		// Once the window settled (consumed-and-marked, or closed),
+		// every late claim is refused — nothing lands after teardown.
+		if _, err := r.Redirect("scope:race-close", gen, RedirectRequest{Guidance: "late"}); err == nil {
+			t.Fatalf("iter %d: a claim succeeded after the window closed", iter)
+		}
 	}
 }

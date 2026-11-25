@@ -106,3 +106,38 @@ func TestSupervisorTool_RootScopeHaltGuarded(t *testing.T) {
 		t.Errorf("a sub-agent halt must not need the root gate, got: %v", err)
 	}
 }
+
+// TestSupervisorTool_RootRedirectAndRevertRefusedUnconditionally pins
+// finding #11 (yaah-re1y): the session root has no adoption loop, so a
+// redirect or revert of it would jam the generation and lie about a
+// replacement starting. The refusal must be UNCONDITIONAL — not gated
+// on the halt_root opt-in — and must point at the supported actions.
+func TestSupervisorTool_RootRedirectAndRevertRefusedUnconditionally(t *testing.T) {
+	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+
+	mgr := goatherd.NewScopeManager(store)
+	runs := supervision.NewRegistry()
+	root, err := mgr.Create("root", nil)
+	if err != nil {
+		t.Fatalf("create root scope: %v", err)
+	}
+
+	// HaltRoot true: the refusal must NOT ride on the opt-in either —
+	// redirect/revert of the root is refused no matter the settings.
+	sup := &SupervisorTool{ScopeManager: mgr, Runs: runs, RootScopeID: root.ID(), HaltRoot: true}
+	for _, action := range []string{"redirect", "revert"} {
+		args, _ := json.Marshal(map[string]string{
+			"action": action, "scope_id": root.ID(), "guidance": "x"})
+		out, err := sup.Execute(context.Background(), string(args))
+		if err == nil {
+			t.Fatalf("%s on the session root = %q, nil error; want an unconditional refusal", action, out)
+		}
+		if !strings.Contains(err.Error(), "cannot be redirected or reverted") {
+			t.Errorf("%s refusal = %v, want the no-adoption-loop wording", action, err)
+		}
+	}
+}

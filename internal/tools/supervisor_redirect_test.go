@@ -11,6 +11,7 @@ import (
 	goatherd "github.com/goatherdai/goatherd-runtime"
 
 	"github.com/goatherdai/yaah/internal/agent/supervision"
+	"github.com/goatherdai/yaah/internal/supervisionapi"
 )
 
 // TestSupervisorTool_ReturnsPromptlyWithoutWaitingForReplacement pins
@@ -95,7 +96,7 @@ func TestSupervisorTool_ReturnsPromptlyWithoutWaitingForReplacement(t *testing.T
 	if !ok {
 		t.Fatal("the claimed run must stay registered until its loop adopts the handoff")
 	}
-	req, consumed := runs.ConsumeRedirect(child.ID(), gen)
+	req, consumed := runs.ConsumeRedirectOrClose(child.ID(), gen)
 	if !consumed {
 		t.Fatal("ConsumeRedirect must return the claimed request")
 	}
@@ -129,5 +130,55 @@ func TestSupervisorTool_RedirectNoRun(t *testing.T) {
 	}
 	if !strings.Contains(out, "No active run") {
 		t.Errorf("redirect without a run must say so, got: %s", out)
+	}
+}
+
+// raceNoRunBridge fakes the inspection-to-claim gap: Generation still
+// reports a live generation, but Redirect finds the run gone (it
+// finished, was superseded, or passed its final adoption check in
+// between) and refuses with ErrNoRun.
+type raceNoRunBridge struct{ gen uint64 }
+
+func (b raceNoRunBridge) Inject(string, string) error { return supervisionapi.ErrNoRun }
+func (b raceNoRunBridge) Cancel(string) (<-chan struct{}, error) {
+	return nil, supervisionapi.ErrNoRun
+}
+func (raceNoRunBridge) ScopeIDs() []string                 { return nil }
+func (b raceNoRunBridge) Generation(string) (uint64, bool) { return b.gen, true }
+func (raceNoRunBridge) Redirect(string, uint64, supervisionapi.RedirectRequest) (supervisionapi.RedirectHandle, error) {
+	return supervisionapi.RedirectHandle{}, supervisionapi.ErrNoRun
+}
+func (raceNoRunBridge) CancelGeneration(string, uint64) (<-chan struct{}, error) {
+	return nil, supervisionapi.ErrNoRun
+}
+
+// TestSupervisorTool_RedirectClaimRace: a run finishing between the
+// generation inspection and the claim is a normal race, not a fault
+// (PR #400 review finding 1) — the tool must report the refusal as a
+// result (nothing claimed; re-inspect), never as a tool error.
+func TestSupervisorTool_RedirectClaimRace(t *testing.T) {
+	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+
+	mgr := goatherd.NewScopeManager(store)
+	finishing, err := mgr.Create("sub-race", nil)
+	if err != nil {
+		t.Fatalf("create scope: %v", err)
+	}
+
+	sup := &SupervisorTool{ScopeManager: mgr, Runs: raceNoRunBridge{gen: 7}}
+	for _, action := range []string{"redirect", "revert"} {
+		args, _ := json.Marshal(map[string]string{
+			"action": action, "scope_id": finishing.ID(), "guidance": "anything"})
+		out, err := sup.Execute(context.Background(), string(args))
+		if err != nil {
+			t.Fatalf("Execute(%s, claim race): %v", action, err)
+		}
+		if !strings.Contains(out, "nothing was claimed") || !strings.Contains(out, "Re-inspect") {
+			t.Errorf("%s claim-race result = %q, want a nothing-claimed, re-inspect outcome", action, out)
+		}
 	}
 }
