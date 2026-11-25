@@ -713,6 +713,13 @@ func NewService(mgr *goatherd.ScopeManager, bus *kerneltrace.EffectBus, runs *Re
 //
 // Safe to call at any time — the field is read under the same mutex the drain
 // uses for its lifecycle checks — and a nil arbiter restores direct delivery.
+//
+// PAIRING REQUIREMENT: an arbiter only makes rule stops reachable if the batch
+// it routes into was built with BatchConfig.Stop = svc.StopFunc(). With a
+// zero-valued Stop the arbiter records every queued stop as no_stop_func and
+// nothing is stopped — a silent disarm, so the batch logs that mispairing once
+// at Warn (see applyRuleStop). Steers need no such pairing: they deliver through
+// the run registry, which the batch reaches directly.
 func (s *Service) SetArbiter(a RuleArbiter) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1062,18 +1069,24 @@ func (s *Service) drain() {
 			}
 			s.deliverInject(scopeID, guidance)
 		case supervisor.InterventionHalt:
-			if s.rootScopeID != "" && scopeID == s.rootScopeID && !s.haltRoot {
-				// The same gate deliverHalt applies, applied at QUEUE time as
-				// well: a queued stop is delivered by whatever StopFunc the batch
-				// holds, and a nil or thin one would bypass the gate entirely —
-				// the root would become stoppable with supervisor.halt_root off.
-				// Dropped by policy rather than lost in transit, so it is logged
-				// like the inject branch's root drop and not recorded.
-				slog.Debug("supervisor: rule halt against the root scope dropped",
-					"scope", scopeID)
-				continue
-			}
 			if arb := s.ruleArbiter(); arb != nil {
+				// The root gate applies at QUEUE time on THIS path only: a
+				// queued stop is delivered by whatever StopFunc the batch
+				// holds, and a nil or thin one would bypass the gate
+				// entirely — the root would become stoppable with
+				// supervisor.halt_root off. Dropped by policy rather than
+				// lost in transit, so it is logged like the inject branch's
+				// root drop and not recorded.
+				//
+				// The direct path below keeps deliverHalt's own gate (and
+				// its operator-visible Warn) unchanged: SetArbiter promises
+				// byte-for-byte direct delivery, and a Warn the operator
+				// never sees is a refusal nobody can act on.
+				if s.rootScopeID != "" && scopeID == s.rootScopeID && !s.haltRoot {
+					slog.Debug("supervisor: rule halt against the root scope dropped",
+						"scope", scopeID)
+					continue
+				}
 				// Queued, not delivered: the batch's next tick delivers it,
 				// which is what lets a stop void a pending policy claim in
 				// one place instead of two.

@@ -30,6 +30,7 @@ package supervision
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -51,6 +52,18 @@ const (
 	// only to a NEGATIVE value.
 	DefaultCooldownTicks = 1
 )
+
+// maxQueuedRules bounds the rule queue. QueueRuleSteer and QueueRuleStop are
+// called by the Service's drain goroutine, which queues as fast as the rules
+// engine sees events, while the queue is drained only by Next: a composition
+// that sets the arbiter but stops ticking (the batch reached Done, the supervise
+// loop ended) would otherwise accumulate firings for the session's life. Past
+// the cap the NEWEST firing is dropped and counted (Batch.RulesDropped) — a
+// queued firing that never drains is stale anyway, and a queue full of them has
+// already lost its point. The cap follows the shape the codebase uses for the
+// other unbounded-in-principle surfaces (Registry.maxFinishedRuns,
+// Service.maxFiringKeys).
+const maxQueuedRules = 64
 
 // ErrBatchBusy reports a Next call while another Next is still running. One
 // batch drives one tick at a time: the caller's decider is a per-tick
@@ -144,9 +157,18 @@ type BatchConfig struct {
 	// Trigger selects when the caller should call its decider. "" means
 	// TriggerAlways.
 	Trigger Trigger
-	// RootScopeID is the session's root scope: never a target, never part of
-	// the batch's membership. Empty means "no root known", which leaves only
-	// the membership rule to keep the root out.
+	// RootScopeID is the session's root scope: with it set, the root is never
+	// part of the batch's membership (so it neither keeps the batch alive nor
+	// counts toward Done) and a policy STEER naming it is dropped
+	// (DropReasonRootScope).
+	//
+	// It is NOT what protects the root from a redirect or a revert. That
+	// boundary is AgentSnapshot.Redirectable, false for a root registration by
+	// construction (the root registers no handoff) and enforced by the arbiter
+	// for both actions — and re-checked against the live registration at claim
+	// time. An EMPTY value therefore does not make the root a safe redirect
+	// target; it only leaves the membership and steer guards unset. Set it
+	// whenever the root's scope ID is known.
 	RootScopeID string
 	// Now is the clock used for record timestamps; nil means time.Now.
 	Now func() time.Time
@@ -228,9 +250,11 @@ type scopeTick struct {
 type pendingClaim struct {
 	generation uint64
 	action     supervisionapi.Action
-	reason     string
 	guidance   string
-	// tick is the tick that made the claim, for the void record's provenance.
+	// tick is the tick that made the claim. It carries no other state, so the
+	// void record a later rules stop writes can say WHEN the claim it killed
+	// was made — provenance the claim's own "claimed" record cannot restate
+	// for a reader looking at the void line alone.
 	tick int
 }
 
@@ -275,6 +299,14 @@ type Batch struct {
 	interventions int
 	claims        map[string]pendingClaim
 	rules         []queuedRule
+	// rulesDropped counts rule firings discarded because rules was full
+	// (maxQueuedRules). It is a count and not an error: the queue's callers are
+	// the rules engine's drain and cannot act on a refusal.
+	rulesDropped int
+	// noStopOnce makes the no_stop_func warning fire once per batch instead of
+	// once per tick: a batch wired without BatchConfig.Stop drops every rule
+	// stop it ever sees, and repeating that line every tick would bury it.
+	noStopOnce sync.Once
 	// snapshot is the last ingested snapshot and members its live, non-root
 	// agents: the only scopes a decision may target.
 	snapshot supervisionapi.Snapshot
@@ -437,7 +469,7 @@ func (b *Batch) QueueRuleSteer(scopeID, reason, guidance string) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.rules = append(b.rules, queuedRule{scopeID: scopeID, reason: reason, guidance: guidance})
+	b.queueRuleLocked(queuedRule{scopeID: scopeID, reason: reason, guidance: guidance})
 }
 
 // QueueRuleStop queues an advisory rule's stop of a scope for the next tick.
@@ -453,7 +485,31 @@ func (b *Batch) QueueRuleStop(scopeID, reason string) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.rules = append(b.rules, queuedRule{stop: true, scopeID: scopeID, reason: reason})
+	b.queueRuleLocked(queuedRule{stop: true, scopeID: scopeID, reason: reason})
+}
+
+// queueRuleLocked appends a firing unless the queue is full, in which case the
+// NEWEST is dropped and counted. Never blocks, never returns an error: the
+// Service's drain queues and moves on, and a full queue is a caller that stopped
+// ticking, not a delivery failure.
+func (b *Batch) queueRuleLocked(q queuedRule) bool {
+	if len(b.rules) >= maxQueuedRules {
+		b.rulesDropped++
+		slog.Debug("supervision: rule queue full, dropping the newest firing",
+			"scope", q.scopeID, "queued", len(b.rules), "dropped", b.rulesDropped)
+		return false
+	}
+	b.rules = append(b.rules, q)
+	return true
+}
+
+// RulesDropped reports how many rule firings were discarded because the queue
+// was full (maxQueuedRules). A non-zero count means the batch is not ticking
+// often enough for the rules engine, which a status surface can say out loud.
+func (b *Batch) RulesDropped() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.rulesDropped
 }
 
 // Next executes exactly one tick (design §4.1): drain the queued rule firings
@@ -467,13 +523,25 @@ func (b *Batch) QueueRuleStop(scopeID, reason string) {
 // arbiter validated against" are the same text.
 //
 // decisions are validated against the last ingested snapshot and the last
-// SnapshotText label map, never stored, so a stale decision cannot reach a
-// DIFFERENT INCARNATION of a scope: the labels it names are the ones the batch
-// reserved, and membership is that snapshot's. Freshness is a different promise
-// and this function does not make it: a decision made from tick N's render is
-// still applicable at tick N+3 when the scope stayed live and no render
-// replaced the labels, because nothing in the batch ages a decision. The label
-// map is what a caller refreshes, by rendering again.
+// SnapshotText label map, never stored: the labels a decision names are the ones
+// the batch reserved, and membership is that snapshot's, so a label cannot be
+// re-pointed at another scope between the render and the tick. That pins LABELS
+// AND MEMBERSHIP to the last render/ingest — it is not a freshness promise, and
+// this function does not make one: a decision made from tick N's render is still
+// applicable at tick N+3 when the scope stayed live and no render replaced the
+// labels, because nothing in the batch ages a decision. The label map is what a
+// caller refreshes, by rendering again.
+//
+// What the tick DOES guarantee against a replaced incarnation is narrower and
+// exact: the incarnation-dependent facts a claim rests on (a live registration
+// exists, it may be redirected, and for a revert its pre-run capture landed) are
+// re-read from the LIVE registration at claim time, not taken from the snapshot
+// the decider read — which can be an interval plus a decider's latency old. So a
+// decision can never be applied to an incarnation that did not exist when the
+// decider read the snapshot, and a scope whose capture landed after the ingest
+// is claimed on the strength of the live mark, not the stale one. A disagreement
+// between the snapshot and the live registration drops the decision with the
+// reason the live fact gives (not_live / not_redirectable / not_reversible).
 //
 // Decision.Scope accepts the rendered label ("w2") or a raw scope ID
 // ("scope:sub-a") — deliberately, because the supervise tool's caller may name
@@ -496,6 +564,15 @@ func (b *Batch) Next(ctx context.Context, decisions []supervisionapi.Decision) (
 	tick := b.tick
 	queued := b.rules
 	b.rules = nil
+	// The cooldown set is captured BEFORE the rules pass runs. A rule action
+	// that lands in this tick resets the scope's age (noteApplied), and the
+	// policy half must not read that as "acted on in an earlier tick": the two
+	// halves are one arbiter pass, and a same-tick rules steer must not cool out
+	// a higher-precedence policy revert or redirect on the same scope (design
+	// §4.6 stop > revert > redirect > steer). Ages bump at tick END, so the next
+	// tick's set does see this tick's rule action — which is why the policy half
+	// reads this pre-rules snapshot while the rules half keeps using live state.
+	cooling := b.coolingSetLocked()
 	b.mu.Unlock()
 
 	results := make([]supervisionapi.InterventionRecord, 0, len(queued)+len(decisions))
@@ -519,7 +596,7 @@ func (b *Batch) Next(ctx context.Context, decisions []supervisionapi.Decision) (
 			rulesOn[q.scopeID] = o
 		}
 	}
-	results = append(results, b.applyDecisions(ctx, tick, decisions, rulesOn)...)
+	results = append(results, b.applyDecisions(ctx, tick, decisions, rulesOn, cooling)...)
 
 	if err := b.cfg.Wait(ctx, b.cfg.Interval); err != nil {
 		b.mu.Lock()
@@ -677,18 +754,40 @@ func changedSince(prev supervisionapi.Snapshot, members map[string]supervisionap
 	return false
 }
 
+// policyPass is the per-tick state the policy half of the arbiter reads, in one
+// value: the tick number, the resolution tables of the last render/ingest, the
+// per-scope winner map, what the rules half accomplished this tick, and the
+// PRE-RULES cooldown set (see Next). Bundling it keeps applyDecision about the
+// gauntlet rather than about its inputs.
+type policyPass struct {
+	tick    int
+	labels  map[string]string
+	known   map[string]bool
+	winners map[string]int
+	rulesOn map[string]rulesOutcome
+	cooling map[string]bool
+}
+
 // applyDecisions runs the policy half of the arbiter: resolve, then per-scope
 // precedence, then the gauntlet, then the claim (design §4.6 steps 1-6). rulesOn
-// is what the rules half already accomplished on each scope this tick.
-func (b *Batch) applyDecisions(ctx context.Context, tick int, decisions []supervisionapi.Decision, rulesOn map[string]rulesOutcome) []supervisionapi.InterventionRecord {
+// is what the rules half already accomplished on each scope this tick, and
+// cooling is the cooldown set captured before that half ran.
+func (b *Batch) applyDecisions(ctx context.Context, tick int, decisions []supervisionapi.Decision, rulesOn map[string]rulesOutcome, cooling map[string]bool) []supervisionapi.InterventionRecord {
 	if len(decisions) == 0 {
 		return nil
 	}
 	labels, resolved := b.resolutionTables()
-	winners := winnersOf(decisions, labels, resolved, b.actionAllowed)
+	p := policyPass{
+		tick:    tick,
+		labels:  labels,
+		known:   resolved,
+		winners: winnersOf(decisions, labels, resolved, b.actionAllowed),
+		rulesOn: rulesOn,
+		cooling: cooling,
+	}
 	out := make([]supervisionapi.InterventionRecord, 0, len(decisions))
 	for i, d := range decisions {
-		rec, keep := b.applyDecision(ctx, tick, decisions, labels, resolved, winners, rulesOn, i, d)
+		rec, keep := b.applyDecision(ctx, p, i, d)
 		if keep {
 			out = append(out, rec)
 		}
@@ -736,6 +835,12 @@ func policyRank(a supervisionapi.Action) int {
 		return 1
 	}
 	return 0
+}
+
+// needsHandoff reports whether an action ends the run and starts a successor,
+// which is what a registration must be Redirectable for.
+func needsHandoff(a supervisionapi.Action) bool {
+	return a == supervisionapi.ActionRedirect || a == supervisionapi.ActionRevert
 }
 
 // ruleWinners picks, per scope, the queued rule action this tick applies: the
@@ -842,8 +947,9 @@ func resolveScope(name string, labels map[string]string, known map[string]bool) 
 // applyDecision runs one policy decision through the whole gauntlet and returns
 // its record, or keep=false for the one silent case (action none, which is what
 // an unlisted scope means and is not an outcome worth a record).
-func (b *Batch) applyDecision(ctx context.Context, tick int, decisions []supervisionapi.Decision, labels map[string]string, known map[string]bool, winners map[string]int, rulesOn map[string]rulesOutcome, i int, d supervisionapi.Decision) (supervisionapi.InterventionRecord, bool) {
+func (b *Batch) applyDecision(ctx context.Context, p policyPass, i int, d supervisionapi.Decision) (supervisionapi.InterventionRecord, bool) {
 	source := supervisionapi.SourcePolicy
+	tick := p.tick
 
 	// "none" is the absence of a decision, not a dropped one.
 	if d.Action == supervisionapi.ActionNone {
@@ -862,7 +968,7 @@ func (b *Batch) applyDecision(ctx context.Context, tick int, decisions []supervi
 		return b.dropRecord(tick, source, d.Scope, d.Action, d.Reason, d.Guidance,
 			supervisionapi.DropReasonRootScope, 0), true
 	}
-	scopeID, ok := resolveScope(d.Scope, labels, known)
+	scopeID, ok := resolveScope(d.Scope, p.labels, p.known)
 	if !ok {
 		return b.dropRecord(tick, source, d.Scope, d.Action, d.Reason, d.Guidance,
 			supervisionapi.DropReasonStale, 0), true
@@ -880,20 +986,39 @@ func (b *Batch) applyDecision(ctx context.Context, tick int, decisions []supervi
 		return b.dropRecord(tick, source, scopeID, d.Action, d.Reason, d.Guidance,
 			supervisionapi.DropReasonMaskedAction, 0), true
 	}
+	// Target validation, step 2: an action that needs a HANDOFF needs a
+	// registration that can be claimed for one. Redirectable is the enforced
+	// boundary around the session root (design §4.2): the root's registration
+	// carries no handoff and is not redirectable, so a claim on it would succeed
+	// in the registry — Redirect does not check this — and promise a successor
+	// the runner can never launch (RootScopeID empty is the configuration this
+	// protects against: the root would otherwise be an ordinary member).
+	//
+	// Asked here, with the other TARGET-validation questions and before the
+	// precedence, cooldown and precondition steps, because it is a fact about the
+	// target and not about this tick: a rules stop that also lands this tick does
+	// not make a claimable registration out of an unclaimable one, and the honest
+	// reason is the target's. Reversible is a separate question, asked later at
+	// the precondition step — a revert needs both, and reports whichever failed.
+	if needsHandoff(d.Action) && !member.Redirectable {
+		return b.dropRecord(tick, source, scopeID, d.Action, d.Reason, d.Guidance,
+			supervisionapi.DropReasonNotRedirectable, 0), true
+	}
 	// Precedence between the tick's two halves, then inside the policy's. A
 	// delivered rules stop outranks everything on the scope; a rules steer
 	// outranks only a policy steer, so the policy's stronger actions still
 	// reach their gauntlet (see rulesOutcome).
-	if r := rulesOn[scopeID]; r.stopped || (r.steered && d.Action == supervisionapi.ActionSteer) {
+	if r := p.rulesOn[scopeID]; r.stopped || (r.steered && d.Action == supervisionapi.ActionSteer) {
 		return b.dropRecord(tick, source, scopeID, d.Action, d.Reason, d.Guidance,
 			supervisionapi.DropReasonSuperseded, 0), true
 	}
-	if w, seen := winners[scopeID]; seen && w != i {
+	if w, seen := p.winners[scopeID]; seen && w != i {
 		return b.dropRecord(tick, source, scopeID, d.Action, d.Reason, d.Guidance,
 			supervisionapi.DropReasonDuplicate, 0), true
 	}
-	// Step 2: cooldown.
-	if b.coolingDown(scopeID) {
+	// Step 2: cooldown — against the PRE-RULES set, so a rule action applied
+	// earlier in this same tick cannot cool out this decision (see Next).
+	if p.cooling[scopeID] {
 		return b.dropRecord(tick, source, scopeID, d.Action, d.Reason, d.Guidance,
 			supervisionapi.DropReasonCooldown, 0), true
 	}
@@ -935,11 +1060,31 @@ func (b *Batch) applyDecision(ctx context.Context, tick int, decisions []supervi
 		return b.newRecord(tick, source, scopeID, d.Action, d.Reason, d.Guidance,
 			supervisionapi.OutcomeApplied, "", 0), true
 	default: // redirect, revert
-		gen, ok := b.generation(scopeID)
-		if !ok {
+		// Claim-time re-validation (design §4.5's incarnation guarantee). The
+		// gauntlet's target facts came from the last ingested snapshot, which can
+		// be an interval plus a decider's latency old, while the claim is made
+		// against whatever is registered NOW. So the incarnation-dependent facts
+		// are read again from the LIVE registration and the live value wins: a
+		// claim is never made — still less recorded as "claimed" — against an
+		// incarnation the snapshot described but the registry no longer has, or
+		// against a successor whose pre-run capture never landed (MarkReversible
+		// is generation-checked, so a capture finishing after a successor
+		// registered never marked it).
+		reg, ok := b.registration(scopeID)
+		if !ok || !reg.StillRunning {
+			// No live registration: the member the gauntlet saw has since ended.
 			return b.dropRecord(tick, source, scopeID, d.Action, d.Reason, d.Guidance,
 				supervisionapi.DropReasonNoRun, 0), true
 		}
+		if !reg.Redirectable {
+			return b.dropRecord(tick, source, scopeID, d.Action, d.Reason, d.Guidance,
+				supervisionapi.DropReasonNotRedirectable, reg.Generation), true
+		}
+		if d.Action == supervisionapi.ActionRevert && !reg.Reversible {
+			return b.dropRecord(tick, source, scopeID, d.Action, d.Reason, d.Guidance,
+				supervisionapi.DropReasonNotReversible, reg.Generation), true
+		}
+		gen := reg.Generation
 		handle, err := b.redirect(scopeID, gen, supervisionapi.RedirectRequest{
 			Guidance: guidance,
 			Revert:   d.Action == supervisionapi.ActionRevert,
@@ -957,7 +1102,6 @@ func (b *Batch) applyDecision(ctx context.Context, tick int, decisions []supervi
 		b.addClaim(scopeID, pendingClaim{
 			generation: handle.Gen,
 			action:     d.Action,
-			reason:     truncateWords(d.Reason, supervisionapi.MaxReasonWords),
 			guidance:   guidance,
 			tick:       tick,
 		})
@@ -1041,6 +1185,15 @@ func (b *Batch) applyRule(ctx context.Context, q queuedRule, tick int) []supervi
 func (b *Batch) applyRuleStop(ctx context.Context, q queuedRule, tick int) []supervisionapi.InterventionRecord {
 	source := supervisionapi.SourceRules
 	if b.cfg.Stop == nil {
+		// A batch built without BatchConfig.Stop turns EVERY rule stop into this
+		// drop, which reads from the records like a per-tick condition rather
+		// than the wiring mistake it is (the composition root forgot
+		// BatchConfig.Stop = svc.StopFunc()). Warned once per batch so the
+		// mispairing is observable without flooding a ticking loop.
+		b.noStopOnce.Do(func() {
+			slog.Warn("supervision: rule stop queued into a batch with no StopFunc configured; rule stops will be dropped",
+				"drop_reason", supervisionapi.DropReasonNoStopFunc)
+		})
 		return []supervisionapi.InterventionRecord{b.dropRecord(tick, source, q.scopeID,
 			supervisionapi.ActionStop, q.reason, "", supervisionapi.DropReasonNoStopFunc, 0)}
 	}
@@ -1088,7 +1241,8 @@ func (b *Batch) voidClaim(scopeID string, tick int) (supervisionapi.Intervention
 		return supervisionapi.InterventionRecord{}, false
 	}
 	return b.dropRecord(tick, supervisionapi.SourcePolicy, scopeID, claim.action,
-		claim.reason, claim.guidance, supervisionapi.DropReasonSupersededByStop, claim.generation), true
+		fmt.Sprintf("claim from tick %d superseded by rules stop", claim.tick),
+		claim.guidance, supervisionapi.DropReasonSupersededByStop, claim.generation), true
 }
 
 // cancelNotFatal reports whether a CancelGeneration failure leaves the claim
@@ -1152,7 +1306,43 @@ func (b *Batch) member(scopeID string) (supervisionapi.AgentSnapshot, bool) {
 	return m, ok
 }
 
-// coolingDown reports whether the scope is inside its cooldown window.
+// registration reads the scope's LIVE registration, tolerating a nil registry.
+// It is the claim-time re-validation read (see applyDecision): the registry lock
+// is taken without Batch.mu held, so the documented order (Batch.mu before
+// Registry.mu, never the reverse) is kept.
+func (b *Batch) registration(scopeID string) (Registration, bool) {
+	if b.runs == nil {
+		return Registration{}, false
+	}
+	return b.runs.LiveRegistration(scopeID)
+}
+
+// coolingSetLocked reports which scopes are inside their cooldown window at this
+// instant. Next captures it BEFORE the rules pass runs (see there): the POLICY
+// half reads this set, so a rule action taken in the same tick cannot cool out a
+// policy decision taken the same tick. Nil when the cooldown is disabled or
+// nothing has been acted on yet.
+func (b *Batch) coolingSetLocked() map[string]bool {
+	if b.cfg.CooldownTicks <= 0 || len(b.state) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(b.state))
+	for scopeID, st := range b.state {
+		if st.last == "" {
+			continue
+		}
+		if st.age < b.cfg.CooldownTicks {
+			out[scopeID] = true
+		}
+	}
+	return out
+}
+
+// coolingDown reports whether the scope is inside its cooldown window, read LIVE
+// from the current ages. The RULES half uses this — a rules steer must still
+// respect a cooldown set by an earlier tick — while the POLICY half reads the
+// pre-rules set from Next instead, so the rules half's own action this tick
+// cannot cool out a policy decision this tick.
 func (b *Batch) coolingDown(scopeID string) bool {
 	if b.cfg.CooldownTicks <= 0 {
 		return false

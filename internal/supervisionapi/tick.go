@@ -51,6 +51,17 @@ const (
 	// DropReasonRootScope means the decision targeted the root scope, which
 	// is never a target (the dispatching agent's own loop supervises).
 	DropReasonRootScope = "root_scope"
+	// DropReasonNotRedirectable means a redirect or revert named a scope
+	// whose registration cannot be claimed for a handoff: the session root
+	// (whose registration carries no handoff, and which is never
+	// redirectable by design — §4.2), or any run that registered no
+	// handoff at all. Redirectable is the ENFORCED boundary around the
+	// root, asked as a target-validation question (before the cooldown and
+	// the preconditions, because it is a fact about the target and not
+	// about this tick) and asked AGAIN at claim time against the live
+	// registration, so a claim is never made against an incarnation the
+	// decider's snapshot described but the registry has since replaced.
+	DropReasonNotRedirectable = "not_redirectable"
 	// DropReasonUnknownAction means the action is not in the decision
 	// vocabulary (none, steer, redirect, revert).
 	DropReasonUnknownAction = "unknown_action"

@@ -45,6 +45,17 @@ func agentSnap(scopeID string, running bool) supervisionapi.AgentSnapshot {
 	return supervisionapi.AgentSnapshot{ScopeID: scopeID, StillRunning: running, Through: -1}
 }
 
+// handoffSnap is a live agent whose registration may be claimed for a handoff
+// (and, with capture set, whose pre-run workspace capture exists): the two
+// facts a redirect or revert needs in the snapshot. A scope without them is
+// dropped at the gauntlet, which is the root-protection boundary.
+func handoffSnap(scopeID string, capture bool) supervisionapi.AgentSnapshot {
+	a := agentSnap(scopeID, true)
+	a.Redirectable = true
+	a.Reversible = capture
+	return a
+}
+
 // fakeRun is one registered run a test can inspect: the steering channel a
 // delivery would land in, and how many times the handoff was asked to stop it.
 type fakeRun struct {
@@ -97,11 +108,38 @@ func newBatchHarnessWithWait(t *testing.T, cfg BatchConfig, wait func(ctx contex
 }
 
 // run registers a run for the scope and returns its steering channel handle.
+// The registration is redirectable and carries a handoff function, which is what
+// the sub-agent runner supplies (Run.Redirectable); use runRootLike for the root
+// shape, which is neither.
 func (h *batchHarness) run(scopeID string) *fakeRun {
 	r := &fakeRun{steer: make(chan string, SteerBuffer)}
 	stop := func() { r.stopped++ }
-	h.runs.Register(scopeID, Run{SteerCh: r.steer, Cancel: stop, Handoff: stop})
+	h.runs.Register(scopeID, Run{SteerCh: r.steer, Cancel: stop, Handoff: stop, Redirectable: true})
 	return r
+}
+
+// runRootLike registers the shape the session root registers: a steering channel
+// and a cancellation, no handoff, and Redirectable false. A redirect or revert
+// targeting it must be dropped not_redirectable — that flag, not
+// BatchConfig.RootScopeID, is the enforced boundary.
+func (h *batchHarness) runRootLike(scopeID string) *fakeRun {
+	r := &fakeRun{steer: make(chan string, SteerBuffer)}
+	h.runs.Register(scopeID, Run{SteerCh: r.steer, Cancel: func() { r.stopped++ }})
+	return r
+}
+
+// capture marks the scope's live registration reversible, the post-capture
+// MarkReversible write the runner makes once the pre-run snapshot succeeded. The
+// claim-time re-validation reads this flag, not the snapshot's.
+func (h *batchHarness) capture(scopeID string) {
+	h.t.Helper()
+	gen, ok := h.runs.Generation(scopeID)
+	if !ok {
+		h.t.Fatalf("capture(%q): no live registration", scopeID)
+	}
+	if !h.runs.MarkReversible(scopeID, gen) {
+		h.t.Fatalf("capture(%q): MarkReversible at generation %d did not land", scopeID, gen)
+	}
 }
 
 func (h *batchHarness) render() string { return h.batch.SnapshotText(0) }
@@ -312,10 +350,9 @@ func TestBatch_DoneOnlyAfterEveryScopeFinished(t *testing.T) {
 func TestBatch_Precedence(t *testing.T) {
 	t.Run("rules stop beats a policy revert", func(t *testing.T) {
 		h := newBatchHarness(t, BatchConfig{})
-		a := agentSnap("scope:a", true)
-		a.Reversible = true
-		h.src.set(a)
+		h.src.set(handoffSnap("scope:a", true))
 		h.run("scope:a")
+		h.capture("scope:a")
 		h.render()
 
 		h.batch.QueueRuleStop("scope:a", "the rule says stop")
@@ -343,10 +380,9 @@ func TestBatch_Precedence(t *testing.T) {
 
 	t.Run("revert beats redirect beats steer", func(t *testing.T) {
 		h := newBatchHarness(t, BatchConfig{})
-		a := agentSnap("scope:a", true)
-		a.Reversible = true
-		h.src.set(a)
+		h.src.set(handoffSnap("scope:a", true))
 		run := h.run("scope:a")
+		h.capture("scope:a")
 		h.render()
 
 		res := h.next(
@@ -381,7 +417,7 @@ func TestBatch_Precedence(t *testing.T) {
 
 	t.Run("redirect beats steer", func(t *testing.T) {
 		h := newBatchHarness(t, BatchConfig{})
-		h.src.set(agentSnap("scope:a", true))
+		h.src.set(handoffSnap("scope:a", false))
 		h.run("scope:a")
 		h.render()
 
@@ -583,7 +619,7 @@ func TestBatch_Cap(t *testing.T) {
 // into a redirect — and nothing is claimed, cancelled, or steered on the way.
 func TestBatch_RevertOnNonReversibleScope(t *testing.T) {
 	h := newBatchHarness(t, BatchConfig{})
-	h.src.set(agentSnap("scope:a", true)) // Reversible stays false
+	h.src.set(handoffSnap("scope:a", false)) // no pre-run capture
 	run := h.run("scope:a")
 	h.render()
 
@@ -660,7 +696,7 @@ func TestBatch_RulesSteerInsideCooldownSuppressesPolicy(t *testing.T) {
 // with the generation it targeted.
 func TestBatch_RulesStopVoidsPendingClaim(t *testing.T) {
 	h := newBatchHarness(t, BatchConfig{})
-	h.src.set(agentSnap("scope:a", true))
+	h.src.set(handoffSnap("scope:a", false))
 	run := h.run("scope:a")
 	h.render()
 
@@ -689,6 +725,11 @@ func TestBatch_RulesStopVoidsPendingClaim(t *testing.T) {
 	}
 	if void.DropReason != supervisionapi.DropReasonSupersededByStop {
 		t.Errorf("void drop reason = %q, want superseded_by_stop", void.DropReason)
+	}
+	// The void record names the tick the claim was made in: the claimed record
+	// lives in that earlier tick, and the void line has to stand on its own.
+	if want := "claim from tick 1 superseded by rules stop"; void.Reason != want {
+		t.Errorf("void reason = %q, want the claim's provenance %q", void.Reason, want)
 	}
 	if void.Generation != claimed {
 		t.Errorf("void record generation = %d, want the claimed %d", void.Generation, claimed)
@@ -835,10 +876,10 @@ func TestBatch_ClaimSurvivesUnstoppableRun(t *testing.T) {
 	}
 
 	h := newBatchHarness(t, BatchConfig{})
-	h.src.set(agentSnap("scope:a", true))
+	h.src.set(handoffSnap("scope:a", false))
 	// A run with a steering channel but no cancellation: the claim wins and
 	// the stop cannot be delivered.
-	h.runs.Register("scope:a", Run{SteerCh: make(chan string, SteerBuffer)})
+	h.runs.Register("scope:a", Run{SteerCh: make(chan string, SteerBuffer), Redirectable: true})
 	h.render()
 
 	res := h.next(supervisionapi.Decision{
@@ -964,10 +1005,9 @@ func TestBatch_RulesRankBeatsArrivalOrder(t *testing.T) {
 // its gauntlet (design §4.6: stop > revert > redirect > steer).
 func TestBatch_RulesSteerDoesNotSuppressPolicyRevert(t *testing.T) {
 	h := newBatchHarness(t, BatchConfig{CooldownTicks: 0})
-	a := agentSnap("scope:a", true)
-	a.Reversible = true
-	h.src.set(a)
+	h.src.set(handoffSnap("scope:a", true))
 	run := h.run("scope:a")
+	h.capture("scope:a")
 	h.render()
 
 	h.batch.QueueRuleSteer("scope:a", "stuck", "try a different approach")
@@ -1015,7 +1055,7 @@ func TestBatch_StopNotDeliveredLeavesClaim(t *testing.T) {
 	}
 	setup := func(t *testing.T, h *batchHarness) {
 		t.Helper()
-		h.src.set(agentSnap("scope:a", true))
+		h.src.set(handoffSnap("scope:a", false))
 		h.run("scope:a")
 		h.render()
 	}
@@ -1081,7 +1121,7 @@ func TestBatch_StopNotDeliveredLeavesClaim(t *testing.T) {
 // itself halted the successor, which the claim's record does not describe.
 func TestBatch_StopDoesNotVoidAdoptedClaim(t *testing.T) {
 	h := newBatchHarness(t, BatchConfig{})
-	h.src.set(agentSnap("scope:a", true))
+	h.src.set(handoffSnap("scope:a", false))
 	h.run("scope:a")
 	h.render()
 
@@ -1487,6 +1527,386 @@ func TestService_StopFuncReportsRefusals(t *testing.T) {
 		}
 		if scope, ok := svc.mgr.Get("scope:sub-worker"); !ok || scope.State() != goatherd.ScopeDiscarded {
 			t.Errorf("scope state = %q (found %v), want discarded", scope.State(), ok)
+		}
+	})
+}
+
+// TestBatch_RootScopeIsNotRedirectable pins the ENFORCED root boundary: the
+// registration's Redirectable flag, not BatchConfig.RootScopeID, is what keeps a
+// redirect and a revert off the session's own loop. With no RootScopeID
+// configured the root is an ordinary member — which is why the flag has to carry
+// the protection — and a steer on it is a separate question, governed by the
+// RootScopeID guard alone.
+func TestBatch_RootScopeIsNotRedirectable(t *testing.T) {
+	setup := func(t *testing.T) (*batchHarness, *fakeRun) {
+		t.Helper()
+		h := newBatchHarness(t, BatchConfig{}) // no RootScopeID: the root is a member
+		h.src.set(agentSnap("scope:root", true))
+		root := h.runRootLike("scope:root")
+		h.render()
+		return h, root
+	}
+
+	t.Run("redirect is dropped", func(t *testing.T) {
+		h, root := setup(t)
+		res := h.next(supervisionapi.Decision{
+			Scope: "w1", Action: supervisionapi.ActionRedirect, Guidance: "restart it",
+		})
+		if got := res.Results[0]; got.Outcome != supervisionapi.OutcomeDropped ||
+			got.DropReason != supervisionapi.DropReasonNotRedirectable {
+			t.Fatalf("redirect on a root-like registration = %+v, want dropped/not_redirectable", got)
+		}
+		if len(res.Applied) != 0 || h.pendingClaims() != 0 {
+			t.Errorf("applied = %+v, claims = %d, want nothing claimed", res.Applied, h.pendingClaims())
+		}
+		if root.stopped != 0 {
+			t.Errorf("the root run was stopped (%d) by a dropped redirect", root.stopped)
+		}
+		// Proof by probe: the generation was never claimed.
+		gen, ok := h.runs.Generation("scope:root")
+		if !ok {
+			t.Fatal("the root run is gone: a dropped redirect must leave it running")
+		}
+		if _, err := h.runs.Redirect("scope:root", gen, supervisionapi.RedirectRequest{Guidance: "probe"}); err != nil {
+			t.Errorf("the generation is already claimed (%v): the dropped redirect reached Redirect", err)
+		}
+	})
+
+	t.Run("revert is dropped as not_redirectable", func(t *testing.T) {
+		h, _ := setup(t)
+		res := h.next(supervisionapi.Decision{
+			Scope: "w1", Action: supervisionapi.ActionRevert, Guidance: "undo and restart",
+		})
+		if got := res.Results[0]; got.DropReason != supervisionapi.DropReasonNotRedirectable {
+			t.Errorf("revert on a root-like registration = %+v, want not_redirectable (the boundary is asked first)", got)
+		}
+		if h.pendingClaims() != 0 {
+			t.Errorf("claims = %d, want none", h.pendingClaims())
+		}
+	})
+
+	t.Run("steer with the root scope ID set is dropped", func(t *testing.T) {
+		h := newBatchHarness(t, BatchConfig{RootScopeID: "scope:root"})
+		h.src.set(agentSnap("scope:root", true))
+		root := h.runRootLike("scope:root")
+		h.render()
+
+		res := h.next(supervisionapi.Decision{
+			Scope: "scope:root", Action: supervisionapi.ActionSteer, Guidance: "meddle with the parent",
+		})
+		if got := res.Results[0]; got.DropReason != supervisionapi.DropReasonRootScope {
+			t.Errorf("steer on the root with RootScopeID set = %+v, want root_scope", got)
+		}
+		if got := drainGuidance(root.steer); len(got) != 0 {
+			t.Errorf("the root run was steered: %q", got)
+		}
+	})
+
+	t.Run("steer with the root scope ID EMPTY is allowed by design", func(t *testing.T) {
+		// Pinned deliberately: Redirectable protects the root from a handoff,
+		// not from guidance. With no RootScopeID configured nothing names the
+		// root, so the steer is an ordinary steer — set the field to close it.
+		h, root := setup(t)
+		res := h.next(supervisionapi.Decision{
+			Scope: "scope:root", Action: supervisionapi.ActionSteer, Guidance: "nudge the parent",
+		})
+		if got := res.Results[0]; got.Outcome != supervisionapi.OutcomeApplied {
+			t.Fatalf("steer on a root with no RootScopeID configured = %+v, want applied (the documented gap)", got)
+		}
+		if got := drainGuidance(root.steer); len(got) != 1 || got[0] != "nudge the parent" {
+			t.Errorf("delivered = %q, want the steer: RootScopeID is what guards a root steer", got)
+		}
+	})
+}
+
+// TestBatch_SameTickRulesSteerDoesNotCoolOutPolicy pins the cooldown ordering
+// between the tick's two halves: the policy half reads the cooldown set as it
+// stood BEFORE the rules pass, so a rules steer applied in this tick cannot cool
+// out a higher-precedence policy revert on the same scope in the same tick. It
+// still cools NEXT tick, because ages bump at tick end.
+func TestBatch_SameTickRulesSteerDoesNotCoolOutPolicy(t *testing.T) {
+	h := newBatchHarness(t, BatchConfig{CooldownTicks: -1}) // the default: one tick
+	h.src.set(handoffSnap("scope:a", true))
+	run := h.run("scope:a")
+	h.capture("scope:a")
+	h.render()
+
+	h.batch.QueueRuleSteer("scope:a", "stuck", "try a different approach")
+	res := h.next(supervisionapi.Decision{
+		Scope: "w1", Action: supervisionapi.ActionRevert, Reason: "it broke the tree", Guidance: "undo and retry",
+	})
+	if len(res.Results) != 2 {
+		t.Fatalf("results = %+v, want the rules steer then the policy revert", res.Results)
+	}
+	if got := res.Results[0]; got.Source != supervisionapi.SourceRules || got.Outcome != supervisionapi.OutcomeApplied {
+		t.Errorf("results[0] = %+v, want the rules steer applied", got)
+	}
+	if got := res.Results[1]; got.Outcome != supervisionapi.OutcomeClaimed || got.Action != supervisionapi.ActionRevert {
+		t.Errorf("results[1] = %+v, want the revert claimed, not cooled out by this tick's own rules steer", got)
+	}
+	if len(res.Applied) != 2 {
+		t.Errorf("applied = %+v, want the steer and the claim", res.Applied)
+	}
+	if run.stopped != 1 {
+		t.Errorf("handoff stops = %d, want 1 (the claimed revert's own stop)", run.stopped)
+	}
+
+	// The rule's action does count from the NEXT tick on: the age bumped at tick
+	// end, so a steer on the same scope is inside the window now.
+	res = h.next(supervisionapi.Decision{Scope: "w1", Action: supervisionapi.ActionSteer, Guidance: "go again"})
+	if got := res.Results[0]; got.DropReason != supervisionapi.DropReasonCooldown {
+		t.Errorf("next-tick steer = %+v, want cooldown (this tick's action ages at tick end)", got)
+	}
+}
+
+// TestBatch_ClaimRevalidatesAgainstTheLiveRegistration pins the claim-time
+// incarnation check: the gauntlet's redirectable/reversible facts come from the
+// last ingested snapshot, so they are read again from the LIVE registration
+// before the claim — a successor whose capture never landed must not inherit the
+// predecessor's Reversible, and a run that vanished must not be claimed.
+func TestBatch_ClaimRevalidatesAgainstTheLiveRegistration(t *testing.T) {
+	setup := func(t *testing.T) *batchHarness {
+		t.Helper()
+		h := newBatchHarness(t, BatchConfig{})
+		h.src.set(handoffSnap("scope:a", true)) // the snapshot says: claimable, capture exists
+		h.run("scope:a")
+		h.capture("scope:a")
+		h.render()
+		return h
+	}
+	// assertUnclaimed proves the claim never reached Redirect: the live
+	// generation is still free for another claimer.
+	assertUnclaimed := func(t *testing.T, h *batchHarness) {
+		t.Helper()
+		if n := h.pendingClaims(); n != 0 {
+			t.Errorf("pending claims = %d, want 0", n)
+		}
+		gen, ok := h.runs.Generation("scope:a")
+		if !ok {
+			return // no live run: nothing could be claimed anyway
+		}
+		if _, err := h.runs.Redirect("scope:a", gen, supervisionapi.RedirectRequest{Guidance: "probe"}); err != nil {
+			t.Errorf("the live generation is already claimed (%v): the dropped decision reached Redirect", err)
+		}
+	}
+
+	t.Run("a successor without the capture", func(t *testing.T) {
+		h := setup(t)
+		// The incarnation is replaced between the ingest and the claim, and the
+		// successor's pre-run capture never landed.
+		h.runs.Unregister("scope:a")
+		h.run("scope:a")
+
+		res := h.next(supervisionapi.Decision{
+			Scope: "w1", Action: supervisionapi.ActionRevert, Reason: "it broke the tree", Guidance: "undo and retry",
+		})
+		if got := res.Results[0]; got.Outcome != supervisionapi.OutcomeDropped ||
+			got.DropReason != supervisionapi.DropReasonNotReversible {
+			t.Fatalf("revert against an unmarked successor = %+v, want dropped/not_reversible", got)
+		}
+		assertUnclaimed(t, h)
+	})
+
+	t.Run("a successor that cannot be redirected", func(t *testing.T) {
+		h := setup(t)
+		h.runs.Unregister("scope:a")
+		h.runRootLike("scope:a") // registers no handoff
+
+		res := h.next(supervisionapi.Decision{
+			Scope: "w1", Action: supervisionapi.ActionRedirect, Guidance: "start over",
+		})
+		if got := res.Results[0]; got.DropReason != supervisionapi.DropReasonNotRedirectable {
+			t.Fatalf("redirect against a non-redirectable successor = %+v, want not_redirectable", got)
+		}
+		assertUnclaimed(t, h)
+	})
+
+	t.Run("a run that ended", func(t *testing.T) {
+		h := setup(t)
+		h.runs.Unregister("scope:a")
+
+		res := h.next(supervisionapi.Decision{
+			Scope: "w1", Action: supervisionapi.ActionRedirect, Guidance: "start over",
+		})
+		if got := res.Results[0]; got.DropReason != supervisionapi.DropReasonNoRun {
+			t.Fatalf("redirect against a vanished run = %+v, want no_run", got)
+		}
+		if n := h.pendingClaims(); n != 0 {
+			t.Errorf("pending claims = %d, want 0", n)
+		}
+	})
+}
+
+// TestBatch_RuleQueueIsBounded pins maxQueuedRules: a composition that sets the
+// arbiter and then stops ticking cannot accumulate firings for the session's
+// life. The NEWEST firing is dropped, the drops are counted, and a tick still
+// drains what the queue holds.
+func TestBatch_RuleQueueIsBounded(t *testing.T) {
+	h := newBatchHarness(t, BatchConfig{})
+	extra := 5
+	for i := 0; i < maxQueuedRules+extra; i++ {
+		h.batch.QueueRuleSteer("scope:a", "stuck", "try something else")
+	}
+	h.batch.mu.Lock()
+	queued, dropped := len(h.batch.rules), h.batch.rulesDropped
+	h.batch.mu.Unlock()
+	if queued != maxQueuedRules {
+		t.Fatalf("queued rules = %d, want the cap %d", queued, maxQueuedRules)
+	}
+	if dropped != extra {
+		t.Errorf("dropped = %d, want %d", dropped, extra)
+	}
+	if got := h.batch.RulesDropped(); got != extra {
+		t.Errorf("RulesDropped() = %d, want %d", got, extra)
+	}
+
+	// A stop queued into the full queue is dropped the same way (the newest
+	// loses), and it does not displace a queued steer.
+	h.batch.QueueRuleStop("scope:a", "the rule says stop")
+	if got := h.batch.RulesDropped(); got != extra+1 {
+		t.Errorf("RulesDropped() after a stop into a full queue = %d, want %d", got, extra+1)
+	}
+
+	h.src.set(agentSnap("scope:a", true))
+	h.run("scope:a")
+	h.render()
+	h.next()
+	h.batch.mu.Lock()
+	after := len(h.batch.rules)
+	h.batch.mu.Unlock()
+	if after != 0 {
+		t.Errorf("queued rules after a tick = %d, want 0 (the queue drains)", after)
+	}
+}
+
+// TestBatch_AppliedRulesSteerSuppressesPolicySteer pins the OTHER half of the
+// rules-vs-policy steer boundary: a rules steer that actually lands this tick
+// suppresses a policy steer on the same scope (the cooldown-dropped variant is
+// TestBatch_RulesSteerInsideCooldownSuppressesPolicy), and it spends the budget
+// as an ordinary intervention.
+func TestBatch_AppliedRulesSteerSuppressesPolicySteer(t *testing.T) {
+	h := newBatchHarness(t, BatchConfig{})
+	h.src.set(agentSnap("scope:a", true))
+	run := h.run("scope:a")
+	h.render()
+
+	h.batch.QueueRuleSteer("scope:a", "stuck", "try a different approach")
+	res := h.next(supervisionapi.Decision{Scope: "w1", Action: supervisionapi.ActionSteer, Guidance: "policy says go"})
+	if len(res.Results) != 2 {
+		t.Fatalf("results = %+v, want the rules steer then the policy steer", res.Results)
+	}
+	if got := res.Results[0]; got.Source != supervisionapi.SourceRules || got.Outcome != supervisionapi.OutcomeApplied {
+		t.Errorf("results[0] = %+v, want the rules steer applied", got)
+	}
+	if got := res.Results[1]; got.Source != supervisionapi.SourcePolicy ||
+		got.DropReason != supervisionapi.DropReasonSuperseded {
+		t.Errorf("results[1] = %+v, want the policy steer dropped as superseded", got)
+	}
+	if len(res.Applied) != 1 {
+		t.Errorf("applied = %+v, want only the rules steer", res.Applied)
+	}
+	if got := drainGuidance(run.steer); len(got) != 1 || got[0] != "try a different approach" {
+		t.Errorf("delivered = %q, want the rules steer only", got)
+	}
+	if got := h.spent(); got != 1 {
+		t.Errorf("interventions = %d, want 1: a rules steer spends the cap like a policy steer", got)
+	}
+}
+
+// TestBatch_RulesSteerSpendsTheCap pins the accounting order across the two
+// halves: a rules steer spends the LAST unit of the budget, so the policy action
+// the same tick reports cap_reached.
+func TestBatch_RulesSteerSpendsTheCap(t *testing.T) {
+	h := newBatchHarness(t, BatchConfig{CooldownTicks: 0, MaxInterventions: 1})
+	h.src.set(agentSnap("scope:a", true), agentSnap("scope:b", true))
+	h.run("scope:a")
+	h.run("scope:b")
+	h.render()
+
+	h.batch.QueueRuleSteer("scope:a", "stuck", "try a different approach")
+	res := h.next(supervisionapi.Decision{Scope: "w2", Action: supervisionapi.ActionSteer, Guidance: "policy says go"})
+	if len(res.Results) != 2 {
+		t.Fatalf("results = %+v, want the rules steer then the policy steer", res.Results)
+	}
+	if got := res.Results[0]; got.Outcome != supervisionapi.OutcomeApplied {
+		t.Fatalf("results[0] = %+v, want the rules steer applied (it has the last unit)", got)
+	}
+	if got := res.Results[1]; got.DropReason != supervisionapi.DropReasonCapReached {
+		t.Errorf("results[1] = %+v, want cap_reached: the rules steer already spent the budget", got)
+	}
+	if got := h.spent(); got != 1 {
+		t.Errorf("interventions = %d, want 1", got)
+	}
+}
+
+// TestBatch_NilRegistryAndNilSource pins the documented degenerate
+// constructions. NewBatch(nil, nil, ...) yields the empty snapshot, so the batch
+// is Done at once — and a decision cannot even resolve a target, because the
+// empty snapshot knows no scope: the drop is stale, not no_run. The no_run
+// fallback is the NIL REGISTRY's ("nil makes every claim drop no_run"), which
+// needs a source that names a live scope to reach.
+func TestBatch_NilRegistryAndNilSource(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("nil source", func(t *testing.T) {
+		b := NewBatch(nil, nil, BatchConfig{Now: testClock})
+		res, err := b.Next(ctx, []supervisionapi.Decision{
+			{Scope: "w1", Action: supervisionapi.ActionSteer, Guidance: "hello"},
+		})
+		if err != nil {
+			t.Fatalf("Next = %v, want nil", err)
+		}
+		if !res.Done {
+			t.Error("Done with a nil snapshot source = false, want true (nothing is running that it can see)")
+		}
+		if len(res.Snapshot.Agents) != 0 {
+			t.Errorf("snapshot agents = %+v, want none", res.Snapshot.Agents)
+		}
+		if got := res.Results[0]; got.DropReason != supervisionapi.DropReasonStale {
+			t.Errorf("steer against the empty snapshot = %+v, want stale (no label and no scope resolves)", got)
+		}
+		if len(res.Applied) != 0 {
+			t.Errorf("applied = %+v, want none", res.Applied)
+		}
+	})
+
+	t.Run("nil registry", func(t *testing.T) {
+		src := &fakeSource{}
+		src.set(handoffSnap("scope:a", true))
+		b := NewBatch(nil, src, BatchConfig{
+			CooldownTicks: 0,
+			Now:           testClock,
+			Wait:          func(context.Context, time.Duration) error { return nil },
+		})
+		if text := b.SnapshotText(0); !strings.Contains(text, "w1") {
+			t.Fatalf("the render names no worker:\n%s", text)
+		}
+
+		res, err := b.Next(ctx, []supervisionapi.Decision{
+			{Scope: "w1", Action: supervisionapi.ActionSteer, Guidance: "hello"},
+		})
+		if err != nil {
+			t.Fatalf("Next = %v, want nil", err)
+		}
+		if got := res.Results[0]; got.DropReason != supervisionapi.DropReasonNoRun {
+			t.Errorf("steer with no registry = %+v, want no_run", got)
+		}
+
+		res, err = b.Next(ctx, []supervisionapi.Decision{
+			{Scope: "w1", Action: supervisionapi.ActionRedirect, Guidance: "start over"},
+		})
+		if err != nil {
+			t.Fatalf("Next = %v, want nil", err)
+		}
+		if got := res.Results[0]; got.DropReason != supervisionapi.DropReasonNoRun {
+			t.Errorf("redirect with no registry = %+v, want no_run", got)
+		}
+		if n := func() int {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			return len(b.claims)
+		}(); n != 0 {
+			t.Errorf("claims = %d, want none", n)
 		}
 	})
 }
