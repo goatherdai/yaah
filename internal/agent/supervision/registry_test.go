@@ -496,3 +496,217 @@ func TestRegistry_ClaimRacesFinalConsume_NoEmptyPayloadNoDrop(t *testing.T) {
 		}
 	}
 }
+
+// TestRegistry_CarriesSnapshotMetadata pins the yaah-k0x1 registration
+// fields end to end: what Register receives is what the live Entries and
+// the finished tail report — and Reversible, which has no registration
+// input, projects from MarkReversible's generation-checked write.
+func TestRegistry_CarriesSnapshotMetadata(t *testing.T) {
+	r := NewRegistry()
+	r.Register("scope:meta", Run{
+		SteerCh:      make(chan string, SteerBuffer),
+		Feature:      "fix the widget",
+		Redirectable: true,
+	})
+	gen, ok := r.Generation("scope:meta")
+	if !ok {
+		t.Fatal("Generation must report the live registration")
+	}
+	// Reversible has no registration input: only a successful pre-run
+	// capture's generation-checked MarkReversible may set it.
+	if !r.MarkReversible("scope:meta", gen) {
+		t.Fatal("MarkReversible on the live generation must land")
+	}
+	live := r.Entries()
+	if len(live) != 1 {
+		t.Fatalf("Entries = %d, want the registration", len(live))
+	}
+	if live[0].Feature != "fix the widget" || !live[0].Reversible || !live[0].Redirectable {
+		t.Errorf("live metadata = feature %q reversible %v redirectable %v, want the registered values",
+			live[0].Feature, live[0].Reversible, live[0].Redirectable)
+	}
+	r.Unregister("scope:meta")
+	done := r.RecentlyFinished()
+	if len(done) != 1 {
+		t.Fatalf("RecentlyFinished = %d, want the finished registration", len(done))
+	}
+	if done[0].Feature != "fix the widget" || !done[0].Reversible || !done[0].Redirectable {
+		t.Errorf("finished metadata = feature %q reversible %v redirectable %v, want the registered values",
+			done[0].Feature, done[0].Reversible, done[0].Redirectable)
+	}
+}
+
+// TestRegistry_MarkReversibleIsGenerationChecked pins the post-capture
+// mark: the live generation accepts it, a stale generation is refused and
+// leaves the successor's flag alone, and an unregistered scope refuses.
+func TestRegistry_MarkReversibleIsGenerationChecked(t *testing.T) {
+	r := NewRegistry()
+	r.Register("scope:rev", Run{SteerCh: make(chan string, SteerBuffer)})
+	gen1, _ := r.Generation("scope:rev")
+	if !r.MarkReversible("scope:rev", gen1) {
+		t.Fatal("the live generation must accept the mark")
+	}
+	if regs := r.Entries(); len(regs) != 1 || !regs[0].Reversible {
+		t.Fatalf("live entry = %+v, want reversible", regs)
+	}
+
+	// A successor Register: the stale mark is refused, and the
+	// replacement's own flag stays false.
+	r.Register("scope:rev", Run{SteerCh: make(chan string, SteerBuffer)})
+	gen2, _ := r.Generation("scope:rev")
+	if r.MarkReversible("scope:rev", gen1) {
+		t.Error("a stale generation must be refused")
+	}
+	if regs := r.Entries(); regs[0].Reversible {
+		t.Error("the successor must stay irreversible after a stale mark")
+	}
+	if !r.MarkReversible("scope:rev", gen2) {
+		t.Error("the live generation must accept the mark")
+	}
+	if regs := r.Entries(); !regs[0].Reversible {
+		t.Error("the successor must read reversible after its own mark")
+	}
+
+	if r.MarkReversible("scope:gone", gen2) {
+		t.Error("an unregistered scope must refuse the mark")
+	}
+}
+
+// TestRegistry_InFlightTableIsGenerationChecked pins the feed seam's
+// generation guard: a superseded generation hands out no table, and writes
+// into a dropped table never leak into the successor's view.
+func TestRegistry_InFlightTableIsGenerationChecked(t *testing.T) {
+	r := NewRegistry()
+	scope := "scope:feed"
+	r.Register(scope, Run{SteerCh: make(chan string, SteerBuffer)})
+	gen1, _ := r.Generation(scope)
+	stale := r.InFlightTable(scope, gen1)
+	if stale == nil {
+		t.Fatal("the first generation must hand out its table")
+	}
+
+	r.Register(scope, Run{SteerCh: make(chan string, SteerBuffer)})
+	gen2, _ := r.Generation(scope)
+	live := r.InFlightTable(scope, gen2)
+	if live == nil {
+		t.Fatal("the live generation must hand out its table")
+	}
+	if r.InFlightTable(scope, gen1) != nil {
+		t.Error("a superseded generation must hand out no table")
+	}
+
+	// Writes into the stale table are invisible: nobody reads it.
+	stale.Start(1, "bash", "{}", time.Now())
+	if got := r.InFlightCalls(scope, gen2, time.Now()); len(got) != 0 {
+		t.Errorf("stale table writes leaked into the live view: %+v", got)
+	}
+	live.Start(2, "edit", `{"filePath":"a.go"}`, time.Now())
+	got := r.InFlightCalls(scope, gen2, time.Now())
+	if len(got) != 1 || got[0].Name != "edit" {
+		t.Errorf("InFlightCalls = %+v, want the live table's open call", got)
+	}
+
+	// A finished scope reports none.
+	live.End(2)
+	r.Unregister(scope)
+	if got := r.InFlightCalls(scope, gen2, time.Now()); got != nil {
+		t.Errorf("a finished scope must report nil in-flight, got %+v", got)
+	}
+}
+
+// TestRegistry_InFlightCallsIsGenerationChecked pins the read-side guard
+// on the pair of reads a snapshot performs (review finding): the entry's
+// metadata is read first, its calls second, and a successor Register may
+// land between them. The replaced generation's entry — carrying ITS
+// generation — must read nil, never the successor's calls; the
+// successor's own generation reads its calls.
+func TestRegistry_InFlightCallsIsGenerationChecked(t *testing.T) {
+	r := NewRegistry()
+	scope := "scope:swap"
+	r.Register(scope, Run{SteerCh: make(chan string, SteerBuffer)})
+	gen1, _ := r.Generation(scope)
+
+	// The snapshot's first read: the live registration, carrying the
+	// generation it was stamped with.
+	regs := r.Entries()
+	if len(regs) != 1 || regs[0].Generation != gen1 {
+		t.Fatalf("Entries = %+v, want the live registration carrying generation %d", regs, gen1)
+	}
+	reg := regs[0]
+
+	// A successor registers, and ITS table sees a call.
+	r.Register(scope, Run{SteerCh: make(chan string, SteerBuffer)})
+	gen2, ok := r.Generation(scope)
+	if !ok || gen2 == gen1 {
+		t.Fatalf("Generation after the successor = %d/%v, want a new incarnation", gen2, ok)
+	}
+	tbl := r.InFlightTable(scope, gen2)
+	if tbl == nil {
+		t.Fatal("the successor must expose its table")
+	}
+	tbl.Start(1, "edit", `{"filePath":"a.go"}`, time.Now())
+
+	// The predecessor's entry, read with the generation it carries: nil —
+	// the successor's call must not bleed into it.
+	if got := r.InFlightCalls(reg.ScopeID, reg.Generation, time.Now()); got != nil {
+		t.Errorf("the replaced generation's call read = %+v, want nil", got)
+	}
+	// The successor's generation reads its own calls.
+	got := r.InFlightCalls(scope, gen2, time.Now())
+	if len(got) != 1 || got[0].Name != "edit" {
+		t.Errorf("the successor's call read = %+v, want its open call", got)
+	}
+}
+
+// TestRegistry_MarkReturnedClearsInFlight pins the return boundary
+// (yaah-k0x1): a returned run stays registered through its adoption
+// window and still reads as running in a snapshot, but nothing is
+// executing anymore — so MarkReturned clears the scope's in-flight table
+// and a call whose end event was lost to the loop's closing broker does
+// not linger and age as if hung.
+func TestRegistry_MarkReturnedClearsInFlight(t *testing.T) {
+	r := NewRegistry()
+	scope := "scope:returned"
+	r.Register(scope, Run{SteerCh: make(chan string, SteerBuffer)})
+	gen, ok := r.Generation(scope)
+	if !ok {
+		t.Fatal("Generation must report the live registration")
+	}
+	tbl := r.InFlightTable(scope, gen)
+	if tbl == nil {
+		t.Fatal("the live run must expose its in-flight table")
+	}
+	tbl.Start(1, "bash", `{"command":"go test"}`, time.Now())
+	if got := r.InFlightCalls(scope, gen, time.Now()); len(got) != 1 {
+		t.Fatalf("InFlightCalls before return = %+v, want the open call", got)
+	}
+
+	r.MarkReturned(scope, gen)
+
+	// The registration stays live through the adoption window, and the
+	// snapshot still reads the scope as running — but with no in-flight
+	// calls.
+	if !r.Has(scope) {
+		t.Fatal("MarkReturned must not unregister: the adoption window stays live")
+	}
+	a := (&Snapshotter{Runs: r}).Snapshot().Agents[0]
+	if !a.StillRunning {
+		t.Error("a returned run in its adoption window still reads as running")
+	}
+	if a.InFlight != nil {
+		t.Errorf("InFlight after MarkReturned = %+v, want nil — nothing is executing", a.InFlight)
+	}
+
+	// A stale generation must not clear a successor's table.
+	r.Register(scope, Run{SteerCh: make(chan string, SteerBuffer)})
+	gen2, _ := r.Generation(scope)
+	tbl2 := r.InFlightTable(scope, gen2)
+	if tbl2 == nil {
+		t.Fatal("the successor must expose its own table")
+	}
+	tbl2.Start(2, "edit", `{"filePath":"a.go"}`, time.Now())
+	r.MarkReturned(scope, gen) // the predecessor's stale generation
+	if got := r.InFlightCalls(scope, gen2, time.Now()); len(got) != 1 {
+		t.Errorf("a stale MarkReturned must leave the successor's table alone, got %+v", got)
+	}
+}

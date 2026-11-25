@@ -312,6 +312,29 @@ func resolveDispatchRoute(opts taskRunnerOpts, role subagent.SubAgentRole, param
 	return route
 }
 
+// revertOwnsSandbox reports whether the dispatch's sub-agent scope owns
+// an ISOLATED sandbox — a workspace a revert could reset wholesale
+// because no other writer shares it. A shared-lane dispatch (a plain fork
+// inherits the session's sandbox; a container session's root is every
+// sub-agent's workspace) fails this: a full-tree Apply would remove OTHER
+// writers' changes made after the capture (yaah-1050.1.3, PR #398 review
+// finding #5).
+func revertOwnsSandbox(subScope *goatherd.Scope) bool {
+	return subScope != nil && subScope.Sandbox() != nil && subScope.Sandbox().Capabilities().Isolated
+}
+
+// revertCanRollBack is the one reversibility predicate (yaah-k0x1): a
+// revert can restore this dispatch's workspace only when the pre-run
+// capture succeeded AND the scope owns an isolated sandbox. It gates both
+// MarkReversible calls and the adoption path's rollback, so the snapshot's
+// Reversible flag and the revert's actual capability cannot drift apart:
+// a dispatch on a shared sandbox proceeds with Reversible false (design
+// §4.2), and a revert claimed against it is dropped as not reversible,
+// never downgraded to a redirect (design §4.6).
+func revertCanRollBack(subScope *goatherd.Scope, captured bool) bool {
+	return captured && revertOwnsSandbox(subScope)
+}
+
 // makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
 // iteration caps, and nesting depth.
 //
@@ -493,6 +516,16 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			preRunOK = true
 		}
 
+		// The snapshot's feature description (yaah-k0x1): the dispatch
+		// label when one was supplied, otherwise the dispatch prompt
+		// trimmed, whitespace-collapsed, and clipped. Computed ONCE, before
+		// the bridge, from the ORIGINAL prompt — a redirect successor's
+		// first message is the supervisor's guidance, and the feature must
+		// keep describing the task the scope was dispatched for — so the
+		// registry never holds a full prompt. SubAgentParams carries no
+		// label today; when one lands, it takes the label seat.
+		feature := supervision.DeriveFeature("", prompt)
+
 		// Supervision bridge (adoption plans A2/A3): the run registers
 		// its steering channel and its cancellation under the scope ID,
 		// so the supervisor tool's inject and halt reach this loop
@@ -561,6 +594,15 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 					Role:      string(role),
 					Workdir:   params.Workdir,
 					StartedAt: time.Now(),
+					// Feature and Redirectable (yaah-k0x1): the feature
+					// description derived once above, and every sub-agent run
+					// is redirectable (the root scope's registration sets
+					// neither flag). Reversible is deliberately NOT set here:
+					// the pre-run capture below runs after this registration,
+					// so it lands through MarkReversible once it has actually
+					// succeeded.
+					Feature:      feature,
+					Redirectable: true,
 				})
 				// Register stamps a fresh generation on this incarnation;
 				// capture it now so the end-of-sequence teardown removes
@@ -573,6 +615,15 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			// Snapshot the workspace this generation starts from, so a
 			// revert claimed against THIS generation can restore it.
 			capturePreRun(ctx)
+			// Reversibility is fixed once the capture succeeds (yaah-k0x1):
+			// the registry's mark is generation-checked, so a capture that
+			// lands after a successor registered cannot mark the replacement,
+			// and a capture on a shared sandbox marks nothing — the same
+			// predicate the adoption path's rollback gates on
+			// (revertCanRollBack).
+			if revertCanRollBack(subScope, preRunOK) {
+				opts.runs.MarkReversible(bridgeScopeID, runGen)
+			}
 			bridgeLive = true
 			defer func() {
 				// Panic safety net only, mirroring the end-of-sequence
@@ -612,6 +663,18 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// once today; it is the seam yaah-8gxg.3 re-enters on the SAME
 		// scope and steerCh after a live redirect.
 		runOnce := func(ctx context.Context, prompt string) (string, error) {
+			// The feed seam (yaah-k0x1): THIS generation's in-flight table,
+			// fetched after registerBridge stamped runGen. The observer
+			// closure forwards the loop's tool start/end events into it; the
+			// per-run closure is what supplies the scope, since events carry
+			// none. A nil table — no bridge — leaves the observer nil and
+			// the loop exactly as before.
+			var eventObserver func(agent.Event)
+			if bridgeLive {
+				if tbl := opts.runs.InFlightTable(bridgeScopeID, runGen); tbl != nil {
+					eventObserver = tbl.Observe
+				}
+			}
 			subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
 				Permissions:            rolePermissions,
 				ProviderName:           subProviderName,
@@ -642,6 +705,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 				TraceCWD:               traceCWD,
 				RetainedContext:        traceContext,
 				SteerCh:                steerCh,
+				EventObserver:          eventObserver,
 				DestructiveGuard:       guardCheck,
 				ShellGuardAllow:        guardAllow,
 				ShellGuardDenyRec:      guardDenyRec,
@@ -850,20 +914,23 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 				// (review finding #5): only an isolated worktree belongs
 				// to THIS dispatch. A container or shared-root sandbox is
 				// shared with other writers — a wholesale Apply would roll
-				// THEIR changes back too.
-				sandboxOwned := subScope != nil && subScope.Sandbox() != nil && subScope.Sandbox().Capabilities().Isolated
+				// THEIR changes back too. The gate is revertCanRollBack,
+				// the same predicate both MarkReversible sites use, so the
+				// snapshot's Reversible flag and this rollback cannot drift
+				// apart; the cases below only choose WHICH note to surface
+				// when it does not hold.
 				switch {
 				case subScope == nil || subScope.Sandbox() == nil:
 					slog.Warn("live revert: workspace rollback skipped — the sub-agent scope has no sandbox (isolated/container sessions have no per-sub-agent rollback substrate); the successor loop starts on the workspace as it is",
 						"scope", bridgeScopeID)
-				case !sandboxOwned:
+				case !revertOwnsSandbox(subScope):
 					// A shared sandbox is not ours to roll back: the
 					// snapshot covers the full tree and applying it would
 					// remove OTHER writers' changes made after capture
 					// (PR #398 review finding).
 					slog.Warn("live revert: workspace rollback skipped — this dispatch shares its sandbox with the root workspace and a full-tree rollback could remove other writers' changes; the successor loop starts on the workspace as it is",
 						"scope", bridgeScopeID)
-				case !preRunOK:
+				case !revertCanRollBack(subScope, preRunOK): // the capture is the missing half
 					slog.Warn("live revert: workspace rollback skipped — no pre-run snapshot was captured for this run; the successor loop starts on the workspace as it is",
 						"scope", bridgeScopeID)
 				default:
@@ -883,6 +950,12 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 				break
 			}
 			capturePreRun(ctx)
+			// The successor's own mark (yaah-k0x1): the same predicate the
+			// first run's mark used, so the flag stays honest across the
+			// handoff.
+			if revertCanRollBack(subScope, preRunOK) {
+				opts.runs.MarkReversible(bridgeScopeID, runGen)
+			}
 			if req.Guidance != "" {
 				prompt = req.Guidance
 			}

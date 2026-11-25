@@ -103,6 +103,18 @@ type SubAgentConfig struct {
 	// loss window is only the final turn itself.
 	SteerCh chan string
 
+	// EventObserver, when non-nil, receives every event this loop
+	// publishes, in publish order, on the broker's forwarder goroutine —
+	// the same stream a View sees. The dispatch runner attaches one that
+	// forwards this run's tool start/end events into its scope's
+	// in-flight table (yaah-k0x1); events carry no scope ID, so the
+	// observer closure supplies it. The observer must be cheap and
+	// non-blocking, and must not write to the worker's context,
+	// workspace, or conversation: observing changes nothing about the
+	// worker's execution — no extra turns, no side effects. Nil leaves
+	// the loop exactly as before, on a bare NoopView.
+	EventObserver func(Event)
+
 	// DestructiveGuard, when non-nil, is the supervision service's
 	// blocking pre-dispatch check (goatherd-adoption plan B2): the
 	// loop's pipeline consults it before a tool call executes, and a
@@ -142,6 +154,29 @@ type SubAgentConfig struct {
 	RetainedContext *kerneltrace.RetainedContext
 }
 
+// subAgentView is a sub-agent loop's view: NoopView's swallow-everything
+// behavior, plus the dispatch's event observer when one was attached. A
+// dedicated forwarding type rather than a branch at each publish site, so
+// the loop's event path is untouched and no new event type is needed — the
+// observer sees the stream as-is and filters what it cares about.
+type subAgentView struct{ observer func(Event) }
+
+func (v subAgentView) HandleEvent(evt Event) {
+	if v.observer != nil {
+		v.observer(evt)
+	}
+}
+
+// newSubAgentView returns a sub-agent loop's View for the optional event
+// observer: a bare NoopView when there is none, so an unobserved loop is
+// byte-for-byte what it was before the seam existed.
+func newSubAgentView(observer func(Event)) View {
+	if observer == nil {
+		return NoopView{}
+	}
+	return subAgentView{observer: observer}
+}
+
 // NewSubAgentLoop creates a Loop optimized for sub-agent execution.
 // Sub-agents are ephemeral workers with limited turn budgets — they
 // skip persistence, compaction, sub-agent spawning, quality gates,
@@ -166,7 +201,13 @@ func NewSubAgentLoop(provider Provider, registry ToolRegistry, model, systemProm
 	l := &Loop{
 		Provider: provider,
 		Registry: normalizeRegistry(registry),
-		View:     NoopView{},
+		// The loop's view: NoopView, unless the dispatch attached an event
+		// observer — then a forwarder that hands each event to the
+		// observer and otherwise swallows everything, exactly like
+		// NoopView. HandleEvent runs sequentially on the broker's
+		// forwarder goroutine (see View), so the observer cannot run
+		// concurrently with itself.
+		View: newSubAgentView(cfg.EventObserver),
 		Config: LoopConfig{
 			Model:                  model,
 			Temperature:            cfg.Temperature,
