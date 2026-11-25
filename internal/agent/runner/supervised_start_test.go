@@ -484,3 +484,53 @@ func (p *reversibleProbeProvider) Send(context.Context, types.ChatRequest) (*typ
 		Usage: types.Usage{TotalTokens: 3},
 	}, nil
 }
+
+// sharedForkSandbox models a plain-Fork sub-scope: a fully working sandbox
+// whose capabilities report Isolated false — the session's shared tree, not a
+// world a revert owns.
+type sharedForkSandbox struct{ *failingCaptureSandbox }
+
+func (s *sharedForkSandbox) Capabilities() goatherdsandbox.SandboxCapabilities {
+	c := s.failingCaptureSandbox.Capabilities()
+	c.Isolated = false
+	return c
+}
+
+// TestTaskRunner_SupervisedSharedSandboxCaptureFailureProceeds pins rule 1's
+// narrowing (review M-r5): a failed pre-run capture is fatal only where the
+// capture decides anything — a scope that owns an ISOLATED sandbox. A plain
+// fork on the session's shared sandbox was never revertable with or without
+// the snapshot, so a transient snapshot failure there must not abort a
+// dispatch deliberately kept shared: without require_reversible it runs with
+// Reversible false, and with the flag rule 3 refuses it — with its own
+// sentinel, not the capture one.
+func TestTaskRunner_SupervisedSharedSandboxCaptureFailureProceeds(t *testing.T) {
+	initTestRoles(t)
+
+	runs := supervision.NewRegistry()
+	sb := &sharedForkSandbox{newFailingCaptureSandbox(t, runs)}
+	sb.fail.Store(true) // every dispatch capture from here on fails
+	mgr, store, root := newStartGateFixture(t, "sess-ugtl-shared-capture", sb)
+	provider := &countingProvider{}
+	runner := makeTaskRunner(startGateOpts(mgr, store, root.ID(), runs, provider, false), 0)
+
+	result, err := runner(tools.WithSupervisedDispatch(context.Background(), true), "fix the widget", tools.SubAgentParams{Role: "developer"})
+	if err != nil {
+		t.Fatalf("supervised dispatch on a SHARED sandbox with a failed capture = %v, want it to run: rule 1 fires only where the capture decides reversibility", err)
+	}
+	if result != "done" {
+		t.Errorf("result = %q, want the sub-agent's report", result)
+	}
+
+	// The same posture under require_reversible: rule 3 refuses — the shared
+	// sandbox is not revertable — with its own sentinel, not the capture one.
+	provider2 := &countingProvider{}
+	runnerStrict := makeTaskRunner(startGateOpts(mgr, store, root.ID(), runs, provider2, true), 0)
+	_, err = runnerStrict(tools.WithSupervisedDispatch(context.Background(), true), "fix the widget", tools.SubAgentParams{Role: "developer"})
+	if !errors.Is(err, ErrSupervisedNotReversible) {
+		t.Fatalf("under require_reversible = %v, want ErrSupervisedNotReversible (rule 3, not rule 1)", err)
+	}
+	if got := provider2.calls.Load(); got != 0 {
+		t.Errorf("the refused dispatch reached the model %d time(s); it must fail at start", got)
+	}
+}

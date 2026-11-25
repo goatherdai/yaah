@@ -616,8 +616,11 @@ func (t *DelegateTool) requireReversibleRefusal(override *bool, sessionPosture, 
 // dispatches, and the docs say so. It is not dead code to delete: it holds the
 // invariant for every OTHER lane source — a hand-built or plugin LaneForRole
 // that routes a workspace-mutating role to shared (which is exactly what the
-// hand-made fixtures in delegate_supervise_test.go construct), and the
-// nested/workflow seams design §4.11 and §9 add. Deleting it would not remove
+// hand-made fixtures in delegate_supervise_test.go construct), and any future
+// seam (design §4.11, §9) built that way. The nested seam is NOT such a case:
+// the nested delegate tool carries no Retained runtime, so no upgrade is
+// available there at all — under require_reversible a nested dispatch is
+// refused at the tool boundary instead. Deleting the guard would not remove
 // the invariant; it would move it into each of those lane sources, where
 // nothing enforces it.
 //

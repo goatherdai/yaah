@@ -382,3 +382,26 @@ agents:
 		t.Error("allow_commands must not disturb the guard's own switch")
 	}
 }
+
+// TestSupervisorDispatchSupervised pins D5's dispatch resolution where the
+// decision lives (review M-r5): only an EXPLICIT enabled: true arms the
+// supervised dispatch path, and the rules engine's default-on does not.
+func TestSupervisorDispatchSupervised(t *testing.T) {
+	yes, no := true, false
+	for _, tc := range []struct {
+		name string
+		en   *bool
+		want bool
+	}{
+		{"key absent is NOT armed", nil, false},
+		{"explicit true is armed", &yes, true},
+		{"explicit false is not armed", &no, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := SupervisorConfig{Enabled: tc.en}
+			if got := s.DispatchSupervised(); got != tc.want {
+				t.Errorf("DispatchSupervised() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -1437,16 +1437,12 @@ func wireLaneRouting(st *loopInfraStage) {
 }
 
 // supervisedDispatches reports whether this session's dispatches run
-// supervised (design §4.2, yaah-ugtl). Until the `supervisor.policy` key lands
-// (yaah-0nbb) an EXPLICIT supervisor.enabled: true is the only signal
-// available, and deliberately so: that key's documented default is on for the
-// advisory rules, and reading the default as "supervise every dispatch" would
-// upgrade every shared-lane dispatch and make a failed pre-run capture fatal
-// for sessions that never asked for supervision — against design D5, whose
-// whole claim is that the default is today's behavior.
+// supervised. A thin hop over config's own resolution — the D5 precedence and
+// its rationale live on SupervisorConfig.DispatchSupervised next to the other
+// supervisor resolutions (EngineEnabled and friends), so the wiring cannot
+// drift from them (review M-r5).
 func supervisedDispatches(cfg *config.Config) bool {
-	s := cfg.Agent.Default.Supervisor
-	return s.Enabled != nil && *s.Enabled
+	return cfg.Agent.Default.Supervisor.DispatchSupervised()
 }
 
 // requireReversibleDispatches reports whether supervisor.require_reversible

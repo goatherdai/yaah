@@ -434,12 +434,20 @@ func (in supervisedStart) hasSandbox() bool {
 //
 // Three rules, in that order:
 //
-//  1. A failed pre-run capture is fatal. Otherwise the run proceeds with
-//     Reversible false while the supervisor believes the revert capability it
-//     observed at dispatch start still holds — exactly the silent downgrade
-//     gap 7 of the design closes. This applies with require_reversible off
-//     too: the flag is about scopes that can never roll back, not about
-//     snapshots that failed to land.
+//  1. A failed pre-run capture is fatal WHERE THE CAPTURE DECIDES ANYTHING:
+//     a scope that owns an isolated sandbox. There, the run would otherwise
+//     proceed with Reversible false while the supervisor believes the revert
+//     capability it observed at dispatch start still holds — exactly the
+//     silent downgrade gap 7 of the design closes — and this applies with
+//     require_reversible off too: the flag is about scopes that can never
+//     roll back, not about snapshots that failed to land. A plain fork on
+//     the session's SHARED sandbox is the other case: it was never revertable
+//     with or without the snapshot (revertCanRollBack requires an isolated
+//     world), so a transient snapshot failure there breaks no guarantee and
+//     must not abort a dispatch deliberately kept shared (a read-only role,
+//     mode: shared). Rule 3 still refuses it under require_reversible, and
+//     without the flag it runs with Reversible false — capturePreRun's
+//     warning on the record (review M-r5).
 //
 //  2. A dispatch that HAS a workspace, HAD the seam that arms the capture
 //     (a runs registry — the supervision bridge), and never attempted it is
@@ -482,7 +490,7 @@ func supervisedStartRefusal(in supervisedStart) error {
 	if !in.supervised {
 		return nil
 	}
-	if in.captureErr != nil {
+	if in.captureErr != nil && revertOwnsSandbox(in.subScope) {
 		return fmt.Errorf("sub-agent %s: %w: %v — without the snapshot a revert has nothing to restore, so the dispatch stops here rather than run unrevertable", in.role, ErrSupervisedCaptureFailed, in.captureErr)
 	}
 	if in.hasSandbox() && in.runsAvailable && !in.captureAttempted {

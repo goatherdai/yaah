@@ -817,10 +817,14 @@ live tree from a dispatch that just reads it.
 already isolates a workspace-mutating dispatch: it goes to the proposal lane or
 the report lane, both of which own a world, and it reaches the shared lane only
 when the role cannot write. So in practice the upgrade fires for a lane source
-that is not the role registry — a hand-built or plugin `LaneForRole`, and the
-nested/workflow seams of design §4.11 and §9 — and the promise supervision
-delivers in a default session is the second one: a snapshot that cannot be
-captured fails the dispatch instead of running it unrevertable. The default (key
+that is not the role registry — a hand-built or plugin `LaneForRole` routing a
+workspace-mutating role to shared while a retained runtime exists (the nested
+seam is not one: a nested dispatch has no retained runtime and is refused under
+`require_reversible` instead) — and the promise supervision delivers in a
+default session is the second one: a snapshot that cannot be captured fails the
+dispatch instead of running it unrevertable, for a dispatch whose scope owns an
+isolated world; a dispatch on the session's shared sandbox was never revertable
+with or without the snapshot, so a capture failure there does not abort it. The default (key
 absent) does NOT arm any of this — the rules engine is on by default, and
 reading that as "supervise every dispatch" would change where every shared-lane
 dispatch runs for sessions that never asked. `supervisor.require_reversible:

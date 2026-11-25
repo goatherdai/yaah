@@ -302,7 +302,9 @@ on the shared workspace is moved to the report lane so that it gets its own
 workspace copy. *Shipped in yaah-ugtl. A guard rather than the everyday
 mechanism: role routing already isolates a workspace-mutating dispatch, so the
 upgrade fires for a lane source that is not the role registry (a plugin or
-hand-built resolver, the nested/workflow seams) — see `supervisedLane`.*
+hand-built resolver) with a retained runtime present — the nested seam is not
+one: a nested dispatch has no retained runtime and is refused under
+`require_reversible` instead. See `supervisedLane`.*
 
 **Redirectable** — a per-scope flag: false for the root scope,
 true otherwise. *Shipped in yaah-k0x1.*

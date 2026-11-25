@@ -128,6 +128,22 @@ func (s SupervisorConfig) EngineEnabled() bool {
 	return s.Enabled == nil || *s.Enabled
 }
 
+// DispatchSupervised reports whether this session's DISPATCHES run supervised
+// (design §4.2 decision D5, yaah-ugtl): only an EXPLICIT enabled: true arms
+// the supervised dispatch path. The rules engine's default-on (EngineEnabled)
+// deliberately does NOT arm it, and until the `supervisor.policy` key lands
+// (yaah-0nbb) no other signal exists: reading the default as "supervise every
+// dispatch" would upgrade every shared-lane dispatch and make a failed pre-run
+// capture fatal for sessions that never asked for supervision — against D5,
+// whose whole claim is that the default is today's behavior.
+//
+// Like the other resolutions on this type, this is the single place the
+// decision is derived: cmd wiring calls it instead of re-deriving the pointer
+// test (review M-r5).
+func (s SupervisorConfig) DispatchSupervised() bool {
+	return s.Enabled != nil && *s.Enabled
+}
+
 // DestructiveRuleEnabled reports the advisory destructive rule's
 // switch, defaulting to enabled when unconfigured.
 func (s SupervisorConfig) DestructiveRuleEnabled() bool {

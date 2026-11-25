@@ -7,6 +7,12 @@ import (
 	"strings"
 )
 
+// superviseParamDescription is the "supervise" parameter's schema text. One
+// const, two consumers: both schema builders embed it verbatim, so the two
+// cannot drift (review L-r5). internal/prompts/tools/delegate.md carries the
+// human-facing restatement.
+const superviseParamDescription = "Optional per-dispatch supervision override. Under supervision a dispatch that WOULD run on the shared workspace, and whose role can change it, is upgraded to the isolated report lane, so its work can be reverted by construction; role routing already isolates a mutating dispatch, so in practice the upgrade covers a non-standard lane source, while a dispatch that owns an isolated workspace and whose pre-run snapshot cannot be captured fails instead of running unrevertable. A read-only role keeps the shared lane, and a dispatch whose scope has no workspace of its own starts with Reversible false (only supervisor.require_reversible refuses it). false keeps the lane the role's routing chose; true requires the session itself to be supervised. Omitted follows the session."
+
 func (t *DelegateTool) Schema() json.RawMessage {
 	known := t.roleNames()
 	if len(known) > 0 {
@@ -28,7 +34,7 @@ func (t *DelegateTool) Schema() json.RawMessage {
 			"seed_mode": {"type": "string", "enum": ["workspace", "conversation"], "description": "seed_from only: workspace (default) seeds the sealed worktree state; conversation also seeds the captured messages and is same-role only."},
 			"provider": {"type": "string", "description": "Optional provider override for this dispatch (must be a configured provider name). Prefer omitting — the role file or config decides. Omitted falls back to the role's resolution chain."},
 			"model": {"type": "string", "description": "Optional model override for this dispatch. Omitted falls back to the role's resolution chain (call > config role entry > role file > parent session model > config default)."},
-			"supervise": {"type": "boolean", "description": "Optional per-dispatch supervision override. Under supervision a dispatch that WOULD run on the shared workspace, and whose role can change it, is upgraded to the isolated report lane, so its work can be reverted by construction; role routing already isolates a mutating dispatch, so in practice the upgrade covers a non-standard lane source, while a dispatch whose pre-run snapshot cannot be captured fails instead of running unrevertable. A read-only role keeps the shared lane, and a dispatch whose scope has no workspace of its own starts with Reversible false (only supervisor.require_reversible refuses it). false keeps the lane the role's routing chose; true requires the session itself to be supervised. Omitted follows the session."}
+			"supervise": {"type": "boolean", "description": "` + superviseParamDescription + `"}
 		},
 		"additionalProperties": false,
 		"required": ["description", "prompt", "role"]
@@ -175,7 +181,7 @@ func BuildDelegateSchemaFiltered(roleNames []string, roleDescriptions map[string
 			},
 			"supervise": map[string]any{
 				"type":        "boolean",
-				"description": "Optional per-dispatch supervision override. Under supervision a dispatch that WOULD run on the shared workspace, and whose role can change it, is upgraded to the isolated report lane, so its work can be reverted by construction; role routing already isolates a mutating dispatch, so in practice the upgrade covers a non-standard lane source, while a dispatch whose pre-run snapshot cannot be captured fails instead of running unrevertable. A read-only role keeps the shared lane, and a dispatch whose scope has no workspace of its own starts with Reversible false (only supervisor.require_reversible refuses it). false keeps the lane the role's routing chose; true requires the session itself to be supervised. Omitted follows the session.",
+				"description": superviseParamDescription,
 			},
 		},
 		"additionalProperties": false,

@@ -82,11 +82,15 @@ func TestSupervisedDispatches(t *testing.T) {
 
 func boolPtr(b bool) *bool { return &b }
 
-// TestRequireReversibleDispatches pins the config hop for
-// supervisor.require_reversible: buildDelegateTool reads the key through this
-// helper, so a wiring refactor that drops it fails here instead of silently
-// disarming both enforcement sites (the tool's refusals and the runner start
-// gate).
+// TestRequireReversibleDispatches pins the config→predicate hop for
+// supervisor.require_reversible. It does NOT pin the one-line field
+// assignment in buildDelegateTool that consumes the predicate — deleting
+// that line would leave this test green (review M-r5). The runner half of
+// the enforcement is pinned end to end by
+// TestNewDelegateToolCarriesRequireReversible (runner package); pinning the
+// wiring literal itself would need an integration test that drives
+// buildDelegateTool, which its stage dependencies make disproportionate
+// here.
 func TestRequireReversibleDispatches(t *testing.T) {
 	cfg := &config.Config{}
 	if got := requireReversibleDispatches(cfg); got {
@@ -170,11 +174,22 @@ func TestWireLaneRoutingMutability(t *testing.T) {
 		names = reg.Names()
 	}
 	if len(names) == 0 {
-		// No role registry is installed in this test binary, so there is
-		// nothing to check the two hooks against. The wiring fact this test
-		// exists for — both hooks installed — is already asserted above.
-		t.Log("no role registry installed; the hook install is the assertion")
-		return
+		// The meaningful half of this test — the role→lane/mutability
+		// agreement loop — must not depend on suite ordering (review L-r5):
+		// when no registry is installed, install a deterministic fixture for
+		// this test's duration and restore the previous global afterwards.
+		prev := subagent.DefaultRegistry()
+		fx := subagent.NewRoleRegistry()
+		if err := fx.LoadBytes(map[string][]byte{
+			"report-mutating.md":   []byte("---\noutput: report\ntools: [read, bash]\n---\nbody"),
+			"report-readonly.md":   []byte("---\noutput: report\ntools: [read, grep, glob]\n---\nbody"),
+			"unmarked-mutating.md": []byte("---\ntools: [read, write]\n---\nbody"),
+		}); err != nil {
+			t.Fatalf("load fixture registry: %v", err)
+		}
+		subagent.SetDefaultRoleRegistry(fx)
+		t.Cleanup(func() { subagent.SetDefaultRoleRegistry(prev) })
+		names = fx.Names()
 	}
 	for _, name := range names {
 		role := subagent.SubAgentRole(name)
