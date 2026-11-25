@@ -977,6 +977,17 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			// what the envelope carries (yaah-938). WithoutCancel keeps the write
 			// alive when a timeout ended the run.
 			tools.CaptureSubAgentDenials(context.WithoutCancel(ctx), denials.list())
+			// Hand the run the supervisor's account of it: every decision and
+			// rules action that named this scope, in tick order (yaah-vaxv,
+			// design §4.10). The trace already holds each record as a fact
+			// (supervision.ScopeRecordSink writes it where it is made); this is
+			// the envelope half, the only half the orchestrator reads. Drained
+			// rather than read: the run that just returned is the run those
+			// records were about, and a redirect successor opens its own
+			// account on the same scope. WithoutCancel keeps the capture alive
+			// when a timeout ended the run — a halted dispatch is exactly the
+			// one whose interventions matter.
+			tools.CaptureSubAgentInterventions(context.WithoutCancel(ctx), opts.runs.DrainInterventions(bridgeScopeID))
 			recordSubAgentUsage(context.WithoutCancel(ctx), opts.traceStore, subTraceID, opts.parentSession, string(role), subModel, params.Lane, runGen, subLoop.OwnUsage())
 			// Record the jail the body actually ran under, not just the one the
 			// previous fact resolved: a backend can pass its availability check and

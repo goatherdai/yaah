@@ -303,12 +303,15 @@ func runDispatchContainer(
 	}
 	runCtx = substrate.WithDispatchWorkspace(runCtx, sandbox.Workspace())
 	// The container is another world for the same child; its guard refusals
-	// must reach the envelope just as the worktree lane's do (yaah-938).
+	// must reach the envelope just as the worktree lane's do (yaah-938), and so
+	// must the supervisor's interventions on it (yaah-vaxv).
 	var denials []jobs.SubAgentDenial
+	var interventions []jobs.SubAgentIntervention
 	runCtx = jobs.WithSubAgentDenials(runCtx, &denials)
+	runCtx = jobs.WithSubAgentInterventions(runCtx, &interventions)
 
 	report, err := rt.Runner(runCtx, prompt, sp)
-	return retainedRunResult{Report: report, Warnings: denialWarnings(denials)}, err
+	return retainedRunResult{Report: report, Warnings: append(denialWarnings(denials), interventionWarnings(interventions)...)}, err
 }
 
 // runDispatchContainerProposal runs one proposal dispatch inside its own
@@ -384,9 +387,12 @@ func runDispatchContainerProposal(
 	}
 	runCtx = substrate.WithDispatchWorkspace(runCtx, sandbox.Workspace())
 	var denials []jobs.SubAgentDenial
+	var interventions []jobs.SubAgentIntervention
 	runCtx = jobs.WithSubAgentDenials(runCtx, &denials)
+	runCtx = jobs.WithSubAgentInterventions(runCtx, &interventions)
 	result, bodyErr := rt.Runner(runCtx, prompt, sp)
 	env.Warnings = append(env.Warnings, denialWarnings(denials)...)
+	env.Warnings = append(env.Warnings, interventionWarnings(interventions)...)
 	runErrState := runCtx.Err()
 	parentErr := ctx.Err()
 	if cancel != nil {

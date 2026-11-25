@@ -60,6 +60,42 @@ type firingSource interface {
 	Firings() []supervisionapi.Firing
 }
 
+// interventionSink is the OPTIONAL record half of the run bridge: a bridge that
+// keeps the session's intervention log accepts the records a root action makes,
+// so the run the action touched carries them into its dispatch envelope
+// (yaah-vaxv, design §4.10). It is asserted for rather than declared on
+// runBridge: a fake bridge, or any wiring that predates the log, still
+// satisfies runBridge and simply records nothing.
+type interventionSink interface {
+	RecordInterventions(recs ...supervisionapi.InterventionRecord)
+}
+
+// recordRootAction appends one action the dispatching agent took through this
+// tool, with Source = "root" — the third source in the record vocabulary, and
+// the only one that is not the policy loop or a rule.
+//
+// Tick is 0: a human- or orchestrator-driven action is outside the tick loop.
+// gen is the incarnation the action targeted, so a record and the redirect claim
+// it came from name the same run.
+func recordRootAction(runs runBridge, scopeID string, action supervisionapi.Action, reason, guidance, outcome, dropReason string, gen uint64) {
+	sink, ok := runs.(interventionSink)
+	if !ok || portIsNil(sink) {
+		return
+	}
+	sink.RecordInterventions(supervisionapi.InterventionRecord{
+		At:         time.Now(),
+		Tick:       0,
+		Scope:      scopeID,
+		Source:     supervisionapi.SourceRoot,
+		Action:     action,
+		Reason:     reason,
+		Guidance:   guidance,
+		Outcome:    outcome,
+		DropReason: dropReason,
+		Generation: gen,
+	})
+}
+
 // haltQuiesceTimeout bounds the wait for a halted run to stop before
 // the kernel-side sandbox teardown proceeds anyway — the same
 // cancel-then-join-bounded shape as the jobs manager's CloseAndWait.
@@ -247,6 +283,10 @@ func executeInject(mgr *goatherd.ScopeManager, runs runBridge, scopeID, guidance
 	if err := scope.Inject(guidance); err != nil {
 		return "", fmt.Errorf("supervisor: inject failed: %w", err)
 	}
+	var gen uint64
+	if runs != nil {
+		gen, _ = runs.Generation(scopeID)
+	}
 	// Supervision bridge (adoption plan A2): the trace fact above is the
 	// record; the registry delivery is the intervention. Every outcome
 	// below reports exactly what happened — the fact that the trace
@@ -258,15 +298,23 @@ func executeInject(mgr *goatherd.ScopeManager, runs runBridge, scopeID, guidance
 	}
 	switch err := runs.Inject(scopeID, guidance); {
 	case err == nil:
+		recordRootAction(runs, scopeID, supervisionapi.ActionSteer, injectReason, guidance, supervisionapi.OutcomeApplied, "", gen)
 		return fmt.Sprintf("Injected guidance into %s; delivered to the running loop.", scopeID), nil
 	case errors.Is(err, supervisionapi.ErrNoRun):
+		recordRootAction(runs, scopeID, supervisionapi.ActionSteer, injectReason, guidance, supervisionapi.OutcomeDropped, supervisionapi.DropReasonNoRun, gen)
 		return fmt.Sprintf("Guidance recorded in the trace for %s; no active run to deliver it to (the scope is not currently executing).", scopeID), nil
 	case errors.Is(err, supervisionapi.ErrSteerBusy):
+		recordRootAction(runs, scopeID, supervisionapi.ActionSteer, injectReason, guidance, supervisionapi.OutcomeDropped, supervisionapi.DropReasonSteerBusy, gen)
 		return fmt.Sprintf("Guidance recorded in the trace for %s, but the run's steering buffer is full — it is not consuming guidance; consider halting the scope instead.", scopeID), nil
 	default:
 		return "", fmt.Errorf("supervisor: inject delivery failed: %w", err)
 	}
 }
+
+// injectReason is the record's reason for an inject this tool performed: the
+// action is the dispatching agent's own, not a rule's or the policy loop's, and
+// the guidance is what it asked for.
+const injectReason = "supervisor tool inject"
 
 func executeHalt(mgr *goatherd.ScopeManager, runs runBridge, scopeID string) (string, error) {
 	scope, ok := mgr.Get(scopeID)
@@ -289,7 +337,9 @@ func executeHalt(mgr *goatherd.ScopeManager, runs runBridge, scopeID string) (st
 	// reports what happened; a finished run's halt stays a trace-side
 	// record, never a phantom cancellation.
 	var cancelled, quiesced, waited bool
+	var gen uint64
 	if runs != nil {
+		gen, _ = runs.Generation(scopeID)
 		quiesce, err := runs.Cancel(scopeID)
 		switch {
 		case err == nil:
@@ -316,13 +366,22 @@ func executeHalt(mgr *goatherd.ScopeManager, runs runBridge, scopeID string) (st
 	}
 	switch {
 	case cancelled && (!waited || quiesced):
+		recordRootAction(runs, scopeID, supervisionapi.ActionStop, haltReason, "", supervisionapi.OutcomeApplied, "", gen)
 		return fmt.Sprintf("Halted %s; the running loop was cancelled and has stopped.", scopeID), nil
 	case cancelled:
+		recordRootAction(runs, scopeID, supervisionapi.ActionStop, haltReason, "", supervisionapi.OutcomeApplied, "", gen)
 		return fmt.Sprintf("Halted %s; the run was cancelled but had not stopped within %s — an in-flight tool may have been interrupted by the sandbox teardown.", scopeID, haltQuiesceTimeout), nil
 	default:
+		// The kernel-side halt landed with no run behind it, which is the
+		// honest "nothing was cancelled" case: recorded as a drop so the
+		// scope's envelope does not claim a run was stopped.
+		recordRootAction(runs, scopeID, supervisionapi.ActionStop, haltReason, "", supervisionapi.OutcomeDropped, supervisionapi.DropReasonNoRun, gen)
 		return fmt.Sprintf("Halted %s in the trace; no active run to cancel (the scope is not currently executing).", scopeID), nil
 	}
 }
+
+// haltReason is the record's reason for a stop this tool performed.
+const haltReason = "supervisor tool halt"
 
 // executeRedirect claims the scope's live run for a handoff, deposits
 // the successor's payload (guidance, plus revert's workspace-rollback
@@ -352,10 +411,15 @@ func executeRedirect(mgr *goatherd.ScopeManager, runs runBridge, scopeID, guidan
 	// The claim carries the complete payload in ONE registry publication
 	// (PR #398 review finding: the old empty-slot claim let the parent
 	// loop consume an empty request before the guidance landed).
+	recordAction := supervisionapi.ActionRedirect
+	if revert {
+		recordAction = supervisionapi.ActionRevert
+	}
 	handle, err := runs.Redirect(scopeID, gen, supervisionapi.RedirectRequest{Guidance: guidance, Revert: revert})
 	switch {
 	case err == nil:
 	case errors.Is(err, supervisionapi.ErrAlreadyClaimed):
+		recordRootAction(runs, scopeID, recordAction, rootReason(revert), guidance, supervisionapi.OutcomeDropped, supervisionapi.DropReasonAlreadyClaimed, gen)
 		return fmt.Sprintf("A handoff is already claimed and in progress for %s; nothing was claimed. Let the current handoff finish, or use halt to stop the run.", scopeID), nil
 	case errors.Is(err, supervisionapi.ErrNoRun):
 		// The inspected generation finished (or was superseded, or passed
@@ -363,6 +427,7 @@ func executeRedirect(mgr *goatherd.ScopeManager, runs runBridge, scopeID, guidan
 		// claim: the race is a normal inspection-to-claim gap, not a
 		// fault (PR #400 review finding 1). Report it as an outcome so
 		// the supervisor re-inspects instead of taking a tool failure.
+		recordRootAction(runs, scopeID, recordAction, rootReason(revert), guidance, supervisionapi.OutcomeDropped, supervisionapi.DropReasonNoRun, gen)
 		return fmt.Sprintf("No active run on %s to hand off — the run inspected finished or was replaced before it could be claimed; nothing was claimed. Re-inspect the scope (list_scopes) and redirect again if a new run is executing.", scopeID), nil
 	default:
 		return "", fmt.Errorf("supervisor: redirect claim failed: %w", err)
@@ -373,6 +438,9 @@ func executeRedirect(mgr *goatherd.ScopeManager, runs runBridge, scopeID, guidan
 		what = "revert plus guidance"
 		verb = "Revert requested"
 	}
+	// The claim landed: the record says claimed, the outcome word the arbiter
+	// uses for a handoff whose adoption is still to come.
+	recordRootAction(runs, handle.ScopeID, recordAction, rootReason(revert), guidance, supervisionapi.OutcomeClaimed, "", handle.Gen)
 	// Stop the claimed generation, generation-checked: if it already
 	// finished and a successor registered, that replacement carries the
 	// guidance and must NOT be cancelled (PR #398 review finding).
@@ -380,6 +448,16 @@ func executeRedirect(mgr *goatherd.ScopeManager, runs runBridge, scopeID, guidan
 		return fmt.Sprintf("%s for %s (generation %d), but the run had already finished: if a replacement started it carries the %s; nothing else was cancelled.", verb, scopeID, handle.Gen, what), nil
 	}
 	return fmt.Sprintf("%s for %s (generation %d): the run is stopping and a replacement loop starts with %s when it returns; a supervisor halt in that window supersedes the handoff.", verb, scopeID, handle.Gen, what), nil
+}
+
+// rootReason is the record's reason for a handoff this tool requested: the
+// dispatching agent's own action, named as such so a reader can tell it from a
+// policy decision on the same scope.
+func rootReason(revert bool) string {
+	if revert {
+		return "supervisor tool revert"
+	}
+	return "supervisor tool redirect"
 }
 
 func executeStatus(mgr *goatherd.ScopeManager, runs runBridge, svc firingSource) (string, error) {

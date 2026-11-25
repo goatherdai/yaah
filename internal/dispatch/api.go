@@ -311,11 +311,17 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 		// orchestrator reads this envelope rather than the trace.
 		var denials []jobs.SubAgentDenial
 		runCtx = jobs.WithSubAgentDenials(runCtx, &denials)
+		// The interventions this run's supervisor made (yaah-vaxv, design
+		// §4.10): the runner drains them from the session's intervention log
+		// at settle, and they ride the envelope beside the guard refusals.
+		var interventions []jobs.SubAgentIntervention
+		runCtx = jobs.WithSubAgentInterventions(runCtx, &interventions)
 		result, err := runner(runCtx, req.Prompt, params)
 		out := ClassifyRunnerResult(result, err, role, timeout, runCtx).
 			withMeta(meta.after(time.Since(attemptStarted)))
 		out.FailureClass = failedAttemptClass(parent, RetainedStageNone, out, err)
 		out.Warnings = append(out.Warnings, denialWarnings(denials)...)
+		out.Warnings = append(out.Warnings, interventionWarnings(interventions)...)
 		return out
 	}
 

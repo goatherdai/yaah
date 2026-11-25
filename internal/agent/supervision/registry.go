@@ -264,6 +264,11 @@ type Registry struct {
 	// ends: the entry leaves runs (so Inject and Has stop claiming a live
 	// bridge) while the metadata stays readable here.
 	finished []Registration
+	// records is the session's intervention log (yaah-vaxv): every decision
+	// and every rules action, per scope, drained by the run it names at
+	// settle. It is a value so a zero Registry still records safely, and it
+	// carries its own mutex — nothing here takes r.mu to append.
+	records interventionLog
 	// now stamps FinishedAt. A field, not a direct time.Now call, so a
 	// test can pin the clock without a sleep.
 	now func() time.Time

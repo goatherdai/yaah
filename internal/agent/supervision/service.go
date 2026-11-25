@@ -707,9 +707,11 @@ func NewService(mgr *goatherd.ScopeManager, bus *kerneltrace.EffectBus, runs *Re
 //     ticking (a batch that is never driven turns rules off).
 //   - the trace-side record moves. deliverInject's supervisor:inject fact (the
 //     A2 "the fact is the record" invariant) does not happen on the queued
-//     path: the Batch's InterventionRecord is the record instead, which is what
-//     yaah-vaxv carries into the dispatch envelope. A caller that needs the
-//     trace fact must not set an arbiter.
+//     path: the Batch's InterventionRecord is the record instead, appended to
+//     the session's intervention log and — with a record sink installed
+//     (Registry.SetRecordSink, ScopeRecordSink) — to the trace as a
+//     yaah.supervision.intervention.v1 fact (yaah-vaxv). A caller that needs
+//     the historic supervisor:inject fact specifically must not set an arbiter.
 //
 // Safe to call at any time — the field is read under the same mutex the drain
 // uses for its lifecycle checks — and a nil arbiter restores direct delivery.
@@ -1053,11 +1055,15 @@ func (s *Service) drain() {
 				// middleware; rule-driven session steering is out of
 				// B1's scope (and the plan's exit criterion is
 				// explicit: the parent session stays untouched). The
-				// firing is deliberately not recorded — the trace fact
-				// is the record of a delivered intervention, and this
-				// one is dropped by policy, not lost in transit.
+				// trace fact is the record of a DELIVERED intervention,
+				// and this one is dropped by policy rather than lost in
+				// transit — but a drop is still a thing that happened to
+				// the scope, so the intervention log names it
+				// (yaah-vaxv, design §4.10: never silently skipped).
 				slog.Debug("supervisor: rule firing against the root scope dropped",
 					"scope", scopeID)
+				s.recordRuleAction(scopeID, supervisionapi.ActionSteer, ruleSteerReason, guidance,
+					supervisionapi.OutcomeDropped, supervisionapi.DropReasonRootScope, s.generation(scopeID))
 				continue
 			}
 			if arb := s.ruleArbiter(); arb != nil {
@@ -1085,6 +1091,8 @@ func (s *Service) drain() {
 				if s.rootScopeID != "" && scopeID == s.rootScopeID && !s.haltRoot {
 					slog.Debug("supervisor: rule halt against the root scope dropped",
 						"scope", scopeID)
+					s.recordRuleAction(scopeID, supervisionapi.ActionStop, guidance, "",
+						supervisionapi.OutcomeDropped, supervisionapi.DropReasonRootScope, s.generation(scopeID))
 					continue
 				}
 				// Queued, not delivered: the batch's next tick delivers it,
@@ -1121,7 +1129,16 @@ func (s *Service) drain() {
 // lines: deliverHaltReport holds the verdict, and the batch's StopFunc
 // adapter (StopFunc) is its reader.
 func (s *Service) deliverHalt(scopeID, reason string) {
-	_, _ = s.deliverHaltReport(context.Background(), scopeID, reason)
+	gen := s.generation(scopeID)
+	delivered, err := s.deliverHaltReport(context.Background(), scopeID, reason)
+	outcome, dropReason := supervisionapi.OutcomeApplied, ""
+	switch {
+	case err != nil:
+		outcome, dropReason = supervisionapi.OutcomeDropped, supervisionapi.DropReasonStopFailed
+	case !delivered:
+		outcome, dropReason = supervisionapi.OutcomeDropped, supervisionapi.DropReasonStopRefused
+	}
+	s.recordRuleAction(scopeID, supervisionapi.ActionStop, reason, "", outcome, dropReason, gen)
 }
 
 // deliverHaltReport is deliverHalt with its verdict returned. delivered
@@ -1222,27 +1239,75 @@ func (s *Service) StopFunc() StopFunc {
 // cannot be addressed at all — and in both the run is over, so there
 // is nothing left to steer anyway.
 func (s *Service) deliverInject(scopeID, guidance string) {
+	gen := s.generation(scopeID)
 	scope, ok := s.mgr.Get(scopeID)
 	if !ok {
 		slog.Warn("supervisor: firing not delivered — scope not addressable", "scope", scopeID)
+		s.recordRuleAction(scopeID, supervisionapi.ActionSteer, ruleSteerReason, guidance,
+			supervisionapi.OutcomeDropped, supervisionapi.DropReasonNotDelivered, gen)
 		return
 	}
 	if err := scope.Inject(guidance); err != nil {
 		slog.Warn("supervisor: firing not delivered — not recorded in the trace",
 			"scope", scopeID, "err", err)
+		s.recordRuleAction(scopeID, supervisionapi.ActionSteer, ruleSteerReason, guidance,
+			supervisionapi.OutcomeDropped, supervisionapi.DropReasonNotDelivered, gen)
 		return
 	}
 	switch err := s.runs.Inject(scopeID, guidance); {
 	case err == nil:
 		slog.Info("supervisor: guidance delivered", "scope", scopeID, "guidance", guidance)
+		s.recordRuleAction(scopeID, supervisionapi.ActionSteer, ruleSteerReason, guidance,
+			supervisionapi.OutcomeApplied, "", gen)
 	case errors.Is(err, ErrNoRun):
 		// The firing is recorded in the trace; the scope simply has no
 		// loop to steer right now (finished, or a root between runs).
 		slog.Debug("supervisor: firing recorded, no active run", "scope", scopeID)
+		s.recordRuleAction(scopeID, supervisionapi.ActionSteer, ruleSteerReason, guidance,
+			supervisionapi.OutcomeDropped, supervisionapi.DropReasonNoRun, gen)
 	case errors.Is(err, ErrSteerBusy):
 		slog.Warn("supervisor: run not consuming guidance; consider halting the scope",
 			"scope", scopeID)
+		s.recordRuleAction(scopeID, supervisionapi.ActionSteer, ruleSteerReason, guidance,
+			supervisionapi.OutcomeDropped, supervisionapi.DropReasonSteerBusy, gen)
 	default:
 		slog.Warn("supervisor: inject delivery failed", "scope", scopeID, "err", err)
+		s.recordRuleAction(scopeID, supervisionapi.ActionSteer, ruleSteerReason, guidance,
+			supervisionapi.OutcomeDropped, supervisionapi.DropReasonNotDelivered, gen)
 	}
+}
+
+// generation reads a scope's live generation for a record, so the record names
+// the incarnation the action targeted. Zero when nothing is registered.
+func (s *Service) generation(scopeID string) uint64 {
+	if s.runs == nil {
+		return 0
+	}
+	gen, _ := s.runs.Generation(scopeID)
+	return gen
+}
+
+// recordRuleAction appends one rules action this service DELIVERED ITSELF to the
+// session's intervention log (yaah-vaxv, design §4.10).
+//
+// Tick is 0 on purpose: no batch arbitrated this action, so there is no tick to
+// name, and the envelope renders 0 as "outside the tick loop". The queued path
+// records nothing here — the Batch records those with the tick that ran them,
+// which is what keeps one action from producing two records.
+//
+// reason and guidance are bounded the way the arbiter bounds them, so a record
+// is the same size whichever half of supervision made it.
+func (s *Service) recordRuleAction(scopeID string, action supervisionapi.Action, reason, guidance, outcome, dropReason string, gen uint64) {
+	s.runs.RecordInterventions(supervisionapi.InterventionRecord{
+		At:         time.Now(),
+		Tick:       0,
+		Scope:      scopeID,
+		Source:     supervisionapi.SourceRules,
+		Action:     action,
+		Reason:     truncateWords(reason, supervisionapi.MaxReasonWords),
+		Guidance:   truncateWords(guidance, supervisionapi.MaxGuidanceWords),
+		Outcome:    outcome,
+		DropReason: dropReason,
+		Generation: gen,
+	})
 }

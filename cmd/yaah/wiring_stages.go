@@ -1135,6 +1135,15 @@ func buildGoatherdInfra(st *loopInfraStage, cfg *config.Config, ws *workspaceSta
 			// registers against the session's own steering channel,
 			// so an inject into the root steers the session itself.
 			st.runs = supervision.NewRegistry()
+			// The intervention record sink (yaah-vaxv, design §4.10): every
+			// record the arbiter or the rules engine makes is appended as a
+			// yaah.supervision.intervention.v1 fact on the recorded scope's own
+			// trace path, where that scope's other facts live. Installed here,
+			// once, and independent of whether the rules engine or the supervise
+			// tool came up — the trace half is not a property of either caller.
+			// The envelope half needs no wiring: the runner drains the same log
+			// when the supervised run settles.
+			st.runs.SetRecordSink(supervision.ScopeRecordSink(mgr))
 
 			// Root scope (adoption plan D1): local mode shares the
 			// in-place git sandbox — never destroyed, the kernel's

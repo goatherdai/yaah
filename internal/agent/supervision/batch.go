@@ -19,12 +19,16 @@
 //   - the headless Decider plus `supervisor.policy`/`policy_model` config and
 //     the locked v1 prompt wiring (yaah-0nbb; the prompt asset and the
 //     renderer are landed, the binding is not);
-//   - the dispatch-envelope records that cite TickResult (yaah-vaxv);
 //   - revert by construction — lane upgrade, fatal pre-run capture — which is
 //     what makes a revert reachable on a dispatched scope at all (yaah-ugtl).
 //     Until that lands, a revert is only as good as the registration says
 //     (Registration.Reversible), which is exactly what this arbiter reads: a
 //     revert on a scope with no capture is dropped, never downgraded.
+//
+// What it DOES do with its records, since yaah-vaxv: every tick hands its
+// results to the session's intervention log (recordInterventions), which is
+// where the dispatch envelope finds them when the supervised run settles. See
+// records.go.
 package supervision
 
 import (
@@ -472,9 +476,7 @@ func (b *Batch) QueueRuleSteer(scopeID, reason, guidance string) {
 	if scopeID == "" {
 		return
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.queueRuleLocked(queuedRule{scopeID: scopeID, reason: reason, guidance: guidance})
+	b.queueRule(queuedRule{scopeID: scopeID, reason: reason, guidance: guidance})
 }
 
 // QueueRuleStop queues an advisory rule's stop of a scope for the next tick.
@@ -488,9 +490,27 @@ func (b *Batch) QueueRuleStop(scopeID, reason string) {
 	if scopeID == "" {
 		return
 	}
+	b.queueRule(queuedRule{stop: true, scopeID: scopeID, reason: reason})
+}
+
+// queueRule queues one firing and records the ones the full queue discards.
+//
+// The record is made AFTER the lock is released (recording can reach the trace
+// through the log's sink) and it carries Tick 0: this refusal happens on the
+// rules engine's goroutine, between ticks, so there is no tick to name. Without
+// it a discarded firing would be a drop nobody can see — the count RulesDropped
+// reports names no scope and no action.
+func (b *Batch) queueRule(q queuedRule) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.queueRuleLocked(queuedRule{stop: true, scopeID: scopeID, reason: reason})
+	queued := b.queueRuleLocked(q)
+	b.mu.Unlock()
+	if queued {
+		return
+	}
+	gen, _ := b.generation(q.scopeID)
+	b.recordInterventions([]supervisionapi.InterventionRecord{b.dropRecord(0,
+		supervisionapi.SourceRules, q.scopeID, q.action(), q.reason, q.guidance,
+		supervisionapi.DropReasonQueueFull, gen)})
 }
 
 // queueRuleLocked appends a firing unless the queue is full, in which case the
@@ -611,14 +631,18 @@ func (b *Batch) Next(ctx context.Context, decisions []supervisionapi.Decision) (
 		b.bumpAgesLocked()
 		done := len(b.members) == 0
 		b.mu.Unlock()
-		return supervisionapi.TickResult{
+		// A cancelled tick's interventions really happened, so they are
+		// recorded like any other tick's: the caller sees them in the
+		// returned result AND the envelope sees them at settle.
+		res := supervisionapi.TickResult{
 			Snapshot: last,
 			Applied:  appliedOf(results),
 			Results:  results,
 			Done:     done,
-		}, err
+		}
+		b.recordInterventions(res.Results)
+		return res, err
 	}
-
 	fresh := b.takeSnapshot()
 	b.mu.Lock()
 	prev := b.snapshot
@@ -634,12 +658,14 @@ func (b *Batch) Next(ctx context.Context, decisions []supervisionapi.Decision) (
 	// is vacuously done — deliberately, because the caller waiting on it
 	// (fy28's wait:settled) must not hang on a dispatch universe that never
 	// had a worker in it.
-	return supervisionapi.TickResult{
+	res := supervisionapi.TickResult{
 		Snapshot: fresh,
 		Applied:  appliedOf(results),
 		Results:  results,
 		Done:     done,
-	}, nil
+	}
+	b.recordInterventions(res.Results)
+	return res, nil
 }
 
 // action is the record action a queued rule names.
@@ -1438,6 +1464,18 @@ func appliedOf(results []supervisionapi.InterventionRecord) []supervisionapi.Int
 		}
 	}
 	return out
+}
+
+// recordInterventions hands records to the session's intervention log (yaah-vaxv,
+// design §4.10): the half the dispatch envelope reads when the supervised run
+// settles. The records are appended AFTER the tick has finished its own
+// bookkeeping, so a record never observes a half-applied tick, and a batch built
+// without a registry (every claim drops no_run) records nothing.
+func (b *Batch) recordInterventions(results []supervisionapi.InterventionRecord) {
+	if b.runs == nil || len(results) == 0 {
+		return
+	}
+	b.runs.RecordInterventions(results...)
 }
 
 // truncateWords keeps the first max whitespace-separated words and drops the
