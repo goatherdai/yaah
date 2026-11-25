@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.210.0](https://github.com/goatherdai/yaah/compare/v0.209.1...v0.210.0) (2026-11-25)
+
+
+### Features
+
+* **providers:** refresh models.dev snapshot to resolve GLM-5.4 context window ([#402](https://github.com/goatherdai/yaah/issues/402)) ([25c92ee](https://github.com/goatherdai/yaah/commit/25c92ee783e7699e53945404a77be1dbc4e9d8e2))
+
 ## [0.209.1](https://github.com/goatherdai/yaah/compare/v0.209.0...v0.209.1) (2026-11-25)
 
 
