@@ -109,3 +109,15 @@ func roleMutatesWorkspace(tools []string) bool {
 	}
 	return false
 }
+
+// RoleMutatesWorkspace reports whether the ROLE (as the live registry
+// resolves it) can change the workspace — the same predicate DispatchLaneFor
+// routes on, exported because one other decision needs it: a supervised
+// dispatch (design §4.2, yaah-ugtl) only upgrades a dispatch that owns no
+// world when the work could actually modify the tree. A read-only dispatch
+// has nothing to revert, and the shared lane's fresh reads are worth more
+// than an isolated fork. A role the registry does not know resolves to the
+// built-in profile, exactly as DispatchLaneFor resolves it.
+func RoleMutatesWorkspace(role SubAgentRole) bool {
+	return roleMutatesWorkspace(RoleProfileFor(role).Tools)
+}

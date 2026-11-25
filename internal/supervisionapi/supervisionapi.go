@@ -35,11 +35,33 @@ var (
 	// revert whose snapshot never landed has nothing to restore.
 	//
 	// It lives HERE, not in the runner that returns it, so the dispatch
-	// boundary can classify it: the refusal is a deterministic
-	// configuration outcome, and a retry policy must not re-provision a
-	// world for it. The runner re-exports it, so errors.Is identity holds
-	// on both sides.
+	// boundary can classify it (internal/dispatch/failure_class.go) — and
+	// the shipped class is preflight_transient, NOT final. The capture was
+	// taken once against the world that attempt had just provisioned, and
+	// that world is not coming back; but a capture can fail for a transient
+	// host reason (a full disk, a lock another writer holds), and a RETRY
+	// provisions a FRESH world and takes a FRESH capture in it, so the same
+	// snapshot may well land. Nothing the attempt did survives the retry,
+	// which is what makes a re-provision the honest policy. What stays
+	// deterministic is the decision for THIS dispatch: under
+	// require_reversible the runner's start gate reads the snapshot as
+	// absent and refuses the same dispatch rather than run it unrevertable.
+	// The runner re-exports it, so errors.Is identity holds on both sides.
 	ErrSupervisedCaptureFailed = errors.New("supervised dispatch refused at start: the pre-run workspace capture failed")
+
+	// ErrSupervisedCaptureSkipped is the runner's start gate reading a
+	// dispatch that OWNS a workspace and never ATTEMPTED the capture at all
+	// (design §4.2, yaah-ugtl). That is not a capture that failed, it is a
+	// wiring invariant violation: the capture is taken unconditionally for
+	// any scope with a sandbox, so "never asked" means the seam that arms it
+	// did not run. It is therefore classified `configuration` (a final
+	// class, internal/dispatch/failure_class.go) — the same broken wiring
+	// would skip the capture again, so a retry policy must not re-provision
+	// a world for it. Keeping it distinct from ErrSupervisedCaptureFailed is
+	// the point: that one is a preflight transient a fresh world may clear,
+	// and conflating them would let a deterministic bug be retried as if it
+	// were a full disk.
+	ErrSupervisedCaptureSkipped = errors.New("supervised dispatch refused at start: no pre-run workspace capture was attempted for a dispatch that owns a workspace")
 
 	// ErrSupervisedNotReversible is supervisor.require_reversible refusing
 	// a supervised dispatch that owns no isolated workspace (design §4.2):

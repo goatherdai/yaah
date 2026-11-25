@@ -3,7 +3,9 @@ package yaah
 import (
 	"testing"
 
+	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/tools"
 )
 
 // Plan 7 Phase 2: the retained lane is the default; agents.subagent.mode:
@@ -90,5 +92,49 @@ func TestRequireReversibleDispatches(t *testing.T) {
 	cfg.Agent.Default.Supervisor.RequireReversible = true
 	if got := requireReversibleDispatches(cfg); !got {
 		t.Error("requireReversibleDispatches with the key on = false, want true")
+	}
+}
+
+// TestWireLaneRoutingMutability pins the second hook wireLaneRouting installs
+// (yaah-ugtl review: the supervised lane upgrade spent a fork on read-only
+// roles). The upgrade forks only where a revert has something to undo, so the
+// lane a role routes to and its ability to change the workspace must be read
+// from the same live registry and must agree: a role on the shared lane that
+// reads as workspace-mutating is the disagreement that would either lose the
+// isolation supervision promises or buy a world for a dispatch that cannot
+// write.
+func TestWireLaneRoutingMutability(t *testing.T) {
+	st := &loopInfraStage{taskTool: &tools.DelegateTool{}}
+	wireLaneRouting(st)
+	if st.taskTool.LaneForRole == nil || st.taskTool.RoleMutatesWorkspace == nil {
+		t.Fatal("wireLaneRouting must install both role-contract hooks")
+	}
+	names := []string{}
+	if reg := subagent.DefaultRegistry(); reg != nil {
+		names = reg.Names()
+	}
+	if len(names) == 0 {
+		// No role registry is installed in this test binary, so there is
+		// nothing to check the two hooks against. The wiring fact this test
+		// exists for — both hooks installed — is already asserted above.
+		t.Log("no role registry installed; the hook install is the assertion")
+		return
+	}
+	for _, name := range names {
+		role := subagent.SubAgentRole(name)
+		if got, want := st.taskTool.RoleMutatesWorkspace(name), subagent.RoleMutatesWorkspace(role); got != want {
+			t.Errorf("RoleMutatesWorkspace(%q) = %v, want %v", name, got, want)
+		}
+		switch st.taskTool.LaneForRole(name) {
+		case tools.LaneShared:
+			if st.taskTool.RoleMutatesWorkspace(name) {
+				t.Errorf("role %q routes to the shared lane but reads as workspace-mutating", name)
+			}
+		case tools.LaneProposal, tools.LaneReport:
+			// Isolated lanes: whether the role mutates only decides the
+			// substrate the runtime already picks, not this hook.
+		default:
+			t.Errorf("role %q routes to unknown lane %q", name, st.taskTool.LaneForRole(name))
+		}
 	}
 }

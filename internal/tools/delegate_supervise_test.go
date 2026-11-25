@@ -29,20 +29,21 @@ func decodeStatusLane(t *testing.T, result string) (status, lane, world string) 
 }
 
 // TestExecute_SupervisedUpgradesSharedLaneToReport pins the lane upgrade: a
-// role whose lane routing says "shared" gets the isolated report lane when
-// the dispatch is supervised — an isolated worktree, a plain report, and the
-// worktree torn down — because that is what makes the work revertable by
-// construction. The unsupervised twin keeps the shared lane (pinned by
-// TestExecute_LaneForRoleRouting, unchanged).
+// role whose lane routing says "shared" AND whose tools can change the tree
+// gets the isolated report lane when the dispatch is supervised — an isolated
+// worktree, a plain report, and the worktree torn down — because that is what
+// makes the work revertable by construction. The unsupervised twin keeps the
+// shared lane (pinned by TestExecute_LaneForRoleRouting, unchanged).
 func TestExecute_SupervisedUpgradesSharedLaneToReport(t *testing.T) {
 	runner := &sessionRunner{responses: []runnerResponse{{result: "shared report"}}}
 	rt := newRetainedTestEnv(t, runner)
 	tt := &DelegateTool{
-		RoleNames:   []string{"counter"},
-		Runner:      runner.run(),
-		Retained:    &rt,
-		LaneForRole: func(string) DelegateLane { return LaneShared },
-		Supervised:  true,
+		RoleNames:            []string{"counter"},
+		Runner:               runner.run(),
+		Retained:             &rt,
+		LaneForRole:          func(string) DelegateLane { return LaneShared },
+		RoleMutatesWorkspace: func(string) bool { return true },
+		Supervised:           true,
 	}
 
 	res, err := tt.Execute(context.Background(), `{"description":"d","prompt":"p","role":"counter"}`)
@@ -62,6 +63,42 @@ func TestExecute_SupervisedUpgradesSharedLaneToReport(t *testing.T) {
 	}
 	if _, serr := os.Stat(wd); !os.IsNotExist(serr) {
 		t.Errorf("the report world must be torn down after the dispatch (stat err=%v)", serr)
+	}
+}
+
+// TestExecute_SupervisedReadOnlyRoleKeepsSharedLane pins the other half of the
+// upgrade's condition (yaah-ugtl review: the upgrade bought nothing for a
+// read-only role). Lane routing only hands back the shared lane for a role with
+// no workspace-mutating tool, so upgrading it forked a world at HEAD, hid the
+// session's live tree from a dispatch that only reads it, and tore the world
+// down again — a revert has nothing to undo when nothing can be written. A
+// read-only supervised dispatch keeps the shared lane; a mutating one still
+// upgrades (the test above).
+func TestExecute_SupervisedReadOnlyRoleKeepsSharedLane(t *testing.T) {
+	runner := &sessionRunner{responses: []runnerResponse{{result: "shared report"}}}
+	rt := newRetainedTestEnv(t, runner)
+	tt := &DelegateTool{
+		RoleNames:            []string{"counter"},
+		Runner:               runner.run(),
+		Retained:             &rt,
+		LaneForRole:          func(string) DelegateLane { return LaneShared },
+		RoleMutatesWorkspace: func(string) bool { return false },
+		Supervised:           true,
+	}
+
+	res, err := tt.Execute(context.Background(), `{"description":"d","prompt":"p","role":"counter"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	status, lane, world := decodeStatusLane(t, res)
+	if status != "shared" || lane != string(LaneShared) {
+		t.Errorf("read-only supervised dispatch = status %q lane %q, want the shared lane kept", status, lane)
+	}
+	if world != "shared" {
+		t.Errorf("world = %q, want shared — no world may be provisioned for a dispatch that cannot write", world)
+	}
+	if wd := runner.workdirFor(t, 0); wd != "" {
+		t.Errorf("a read-only dispatch must not be provisioned a world, got %q", wd)
 	}
 }
 

@@ -278,9 +278,20 @@ func causeFailureClass(err error) string {
 	// land. It is therefore preflight_transient: the attempt failed before
 	// its body ran, and nothing it did survives the retry.
 	//
+	// A capture that was never even ATTEMPTED for a dispatch that owns a
+	// workspace is neither of those (yaah-ugtl review: the backstop shared
+	// the retryable sentinel). The capture runs unconditionally for any scope
+	// with a sandbox, so "never asked" is a wiring invariant violation, not a
+	// host condition: a retry re-runs the same broken wiring and reaches the
+	// identical refusal, having paid for a world to do it. It is
+	// configuration — final, like the unrevertable scope above.
+	//
 	// The sentinels live in supervisionapi (a leaf package) so this boundary
 	// can name them without importing the runner, which imports this package.
 	if errors.Is(err, supervisionapi.ErrSupervisedNotReversible) {
+		return FailureClassConfiguration
+	}
+	if errors.Is(err, supervisionapi.ErrSupervisedCaptureSkipped) {
 		return FailureClassConfiguration
 	}
 	if errors.Is(err, supervisionapi.ErrSupervisedCaptureFailed) {

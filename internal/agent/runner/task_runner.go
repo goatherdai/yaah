@@ -362,8 +362,16 @@ func revertCanRollBack(subScope *goatherd.Scope, captured bool) bool {
 var (
 	// ErrSupervisedCaptureFailed: the pre-run workspace capture failed, so
 	// the revert supervision promises has nothing to restore. Today's
-	// unsupervised behavior downgrades this to a warning.
+	// unsupervised behavior downgrades this to a warning. The dispatch
+	// boundary classifies it preflight_transient: a retry provisions a
+	// fresh world and takes a fresh capture in it.
 	ErrSupervisedCaptureFailed = supervisionapi.ErrSupervisedCaptureFailed
+
+	// ErrSupervisedCaptureSkipped: a dispatch that owns a workspace never
+	// ATTEMPTED the capture. That is a wiring invariant violation, so the
+	// boundary classifies it configuration (final) — a retry would skip the
+	// capture again (yaah-ugtl review M4).
+	ErrSupervisedCaptureSkipped = supervisionapi.ErrSupervisedCaptureSkipped
 
 	// ErrSupervisedNotReversible: supervisor.require_reversible is on and
 	// this dispatch owns no isolated workspace, so a revert has nothing it
@@ -419,15 +427,22 @@ func (in supervisedStart) hasSandbox() bool {
 //     gap 7 of the design closes. This applies with require_reversible off
 //     too: the flag is about scopes that can never roll back, not about
 //     snapshots that failed to land.
+//
 //  2. A dispatch that HAS a workspace and never attempted the capture is
 //     refused for the same reason, read from the other side: the gate cannot
 //     tell a capture that was skipped from one that succeeded, so it treats
 //     "never asked" as "no snapshot" rather than assuming the better case.
 //     A scope with no sandbox at all (a pure-causal fork) is not this rule's
-//     case — it has nothing to capture, and rule 3 decides it. This rule
-//     shares rule 1's sentinel: a dispatch refused HERE never ran a capture,
-//     so ErrSupervisedCaptureFailed in an envelope is not evidence that one
-//     was attempted and failed — the message says which refusal fired.
+//     case — it has nothing to capture, and rule 3 decides it.
+//
+//     This rule has its own sentinel (ErrSupervisedCaptureSkipped), and the
+//     message no longer has to name which refusal fired. The capture is taken
+//     unconditionally for any scope with a sandbox, so "never asked" can only
+//     mean the wiring that arms it did not run — a deterministic bug, which
+//     the dispatch boundary classifies `configuration` and does NOT retry. Rule
+//     1's failure is the opposite: a real capture against a world a fresh
+//     attempt may capture cleanly, so it is a retryable preflight transient.
+//
 //  3. With require_reversible on, a scope that owns no isolated sandbox (a
 //     container session's root is every sub-agent's workspace, a shared root
 //     is the session's, a pure-causal fork has none) is refused. Off, it
@@ -444,7 +459,7 @@ func supervisedStartRefusal(in supervisedStart) error {
 		return fmt.Errorf("sub-agent %s: %w: %v — without the snapshot a revert has nothing to restore, so the dispatch stops here rather than run unrevertable", in.role, ErrSupervisedCaptureFailed, in.captureErr)
 	}
 	if in.hasSandbox() && !in.captureAttempted {
-		return fmt.Errorf("sub-agent %s: %w: no pre-run capture was attempted for a dispatch that has a workspace — the gate cannot prove this run is revertable, so it stops here", in.role, ErrSupervisedCaptureFailed)
+		return fmt.Errorf("sub-agent %s: %w: the gate cannot prove this run is revertable, so it stops here", in.role, ErrSupervisedCaptureSkipped)
 	}
 	if in.requireReversible && !revertCanRollBack(in.subScope, in.captured) {
 		scopeID := ""
@@ -1138,11 +1153,16 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			// deposited its guidance — failing here would destroy the
 			// supervisor's decision. The successor simply reads Reversible
 			// false, which is the honest report; capturePreRun has already
-			// warned. The result REPLACES the first run's: a stale failure
-			// must not veto the mark below when this capture succeeded
-			// (review finding L5).
-			captureErr = capturePreRun(ctx)
-			preRunOK = captureErr == nil
+			// warned.
+			//
+			// The error is discarded on purpose, and nothing is lost: the
+			// closure maintains preRunOK itself (cleared on entry, set only on
+			// success), so the call REPLACES the first run's outcome — a stale
+			// failure cannot veto the mark below when this capture succeeded
+			// (review finding L5) — and the start gate that reads captureErr
+			// already ran, before the sequence. A second writer of preRunOK here
+			// would be two owners for one invariant.
+			_ = capturePreRun(ctx)
 			// The successor's own mark (yaah-k0x1): the same predicate the
 			// first run's mark used, so the flag stays honest across the
 			// handoff.

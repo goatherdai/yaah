@@ -69,6 +69,17 @@ type DelegateTool struct {
 	// proposal lane — the historical behavior.
 	LaneForRole func(role string) DelegateLane
 
+	// RoleMutatesWorkspace, when non-nil, reports whether a role's tool set
+	// can change the workspace — the same property LaneForRole routes on
+	// (subagent.DispatchLaneFor). One decision needs it separately: the
+	// supervised lane upgrade (supervisedLane, design §4.2) is worth its fork
+	// only for a dispatch that could modify the tree, so a read-only
+	// supervised dispatch keeps the shared lane and its fresh reads. Nil is
+	// read as "assume it can mutate", which keeps the upgrade — the
+	// conservative direction, and the pre-review behavior for hand-built
+	// tools and tests.
+	RoleMutatesWorkspace func(role string) bool
+
 	// RoleDescriptions maps role name to a one-line description of what
 	// the role does. Included in the delegate schema's role
 	// parameter so the orchestrator can choose roles without calling
@@ -292,8 +303,9 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 
 	// Resolve the lane once: LaneForRole reads the live role registry, so a
 	// second call could disagree with the first if a role is created or
-	// edited mid-dispatch.
-	lane := supervisedLane(t.laneFor(params.Role), supervised, t.Retained != nil)
+	// edited mid-dispatch. Whether the role can mutate the workspace comes
+	// from the same live registry, read here for the same reason.
+	lane := supervisedLane(t.laneFor(params.Role), supervised, t.Retained != nil, t.roleMutates(params.Role))
 	conflictLane := ConflictLaneShared
 	if t.Retained != nil && lane != LaneShared {
 		conflictLane = ConflictLaneRetained
@@ -493,6 +505,16 @@ func (t *DelegateTool) laneFor(role string) DelegateLane {
 	return LaneProposal
 }
 
+// roleMutates reports whether the role can change the workspace. A nil
+// RoleMutatesWorkspace answers true: an unknown mutability is treated as
+// mutating, so the supervised path isolates rather than trusts.
+func (t *DelegateTool) roleMutates(role string) bool {
+	if t.RoleMutatesWorkspace == nil {
+		return true
+	}
+	return t.RoleMutatesWorkspace(role)
+}
+
 // supervisedDispatch resolves THIS dispatch's supervision posture (design
 // §4.2, §4.9): the per-call override when supplied, the session posture
 // otherwise.
@@ -558,13 +580,25 @@ func (t *DelegateTool) requireReversibleRefusal(override *bool, supervised bool)
 // world, plain result, world torn down afterwards. Only where the work runs
 // changes; what comes back does not.
 //
+// The upgrade is for dispatches that could CHANGE the tree (roleCanMutate),
+// because those are the ones a revert has anything to undo. A read-only role
+// has no work to revert, and paying for it would be a regression in kind: the
+// report world is forked at HEAD and torn down, so the dispatch would read the
+// committed tree instead of the shared workspace's live state — exactly the
+// freshness the shared lane exists to keep (docs/sub-agents.md), plus a fork
+// and a teardown to buy nothing. Today's routing already sends read-only
+// report roles to the shared lane and passes mutating report roles to the
+// report lane, so this guard is what keeps the upgrade from firing on the one
+// lane it cannot help; it still protects a lane source that disagrees with the
+// role's tool set (a hand-built LaneForRole, a plugin-provided role).
+//
 // isolatedAvailable reports whether the session has an isolated lane at all
 // (a retained runtime: worktree or per-dispatch container). Without one the
 // lane stays shared and the decision moves to the runner, which refuses the
 // dispatch under supervisor.require_reversible and otherwise runs it with
 // Reversible false — the honest report for a host that cannot isolate.
-func supervisedLane(lane DelegateLane, supervised, isolatedAvailable bool) DelegateLane {
-	if supervised && isolatedAvailable && lane == LaneShared {
+func supervisedLane(lane DelegateLane, supervised, isolatedAvailable, roleCanMutate bool) DelegateLane {
+	if supervised && isolatedAvailable && roleCanMutate && lane == LaneShared {
 		return LaneReport
 	}
 	return lane

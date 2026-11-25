@@ -227,8 +227,8 @@ func TestSupervisedStartRefusalFailsClosedWithoutACapture(t *testing.T) {
 		role:       subagent.SubAgentRole("developer"),
 		subScope:   sub,
 		// captureAttempted and captured both false: nothing snapshotted.
-	}); !errors.Is(gaterr, ErrSupervisedCaptureFailed) {
-		t.Fatalf("gate verdict = %v, want ErrSupervisedCaptureFailed for an unsnapshotted start", gaterr)
+	}); !errors.Is(gaterr, ErrSupervisedCaptureSkipped) {
+		t.Fatalf("gate verdict = %v, want ErrSupervisedCaptureSkipped for an unsnapshotted start", gaterr)
 	}
 
 	// The same posture with the capture attempted AND successful passes: the

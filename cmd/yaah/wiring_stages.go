@@ -1418,6 +1418,14 @@ func wireLaneRouting(st *loopInfraStage) {
 			return tools.LaneProposal
 		}
 	}
+	// RoleMutatesWorkspace carries the same live-role fact the routing above
+	// decides on. The supervised lane upgrade (design §4.2, yaah-ugtl) reads
+	// it because a fork is only worth buying where a revert has something to
+	// undo: a read-only supervised dispatch keeps the shared lane, and the
+	// fresh reads that lane exists for.
+	st.taskTool.RoleMutatesWorkspace = func(role string) bool {
+		return subagent.RoleMutatesWorkspace(subagent.SubAgentRole(role))
+	}
 }
 
 // supervisedDispatches reports whether this session's dispatches run

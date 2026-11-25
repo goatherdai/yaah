@@ -121,6 +121,7 @@ func TestSupervisionRefusalClassification(t *testing.T) {
 		want     string
 	}{
 		{"capture failed", supervisionapi.ErrSupervisedCaptureFailed, FailureClassPreflightTransient},
+		{"capture skipped", supervisionapi.ErrSupervisedCaptureSkipped, FailureClassConfiguration},
 		{"not reversible", supervisionapi.ErrSupervisedNotReversible, FailureClassConfiguration},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,6 +156,7 @@ func TestSupervisionRefusalRetrySplit(t *testing.T) {
 		wantClass    string
 	}{
 		{"capture failed is retryable", supervisionapi.ErrSupervisedCaptureFailed, 3, FailureClassPreflightTransient},
+		{"capture skipped is final", supervisionapi.ErrSupervisedCaptureSkipped, 1, FailureClassConfiguration},
 		{"not reversible is final", supervisionapi.ErrSupervisedNotReversible, 1, FailureClassConfiguration},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
