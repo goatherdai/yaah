@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.213.0](https://github.com/goatherdai/yaah/compare/v0.212.0...v0.213.0) (2026-11-25)
+
+
+### Features
+
+* **supervision:** Batch tick engine with the shared rules/policy arbiter (yaah-3l34) ([#409](https://github.com/goatherdai/yaah/issues/409)) ([33814e4](https://github.com/goatherdai/yaah/commit/33814e4dc213cab3cbed546eb3231d36a7d4532d))
+
 ## [0.212.0](https://github.com/goatherdai/yaah/compare/v0.211.0...v0.212.0) (2026-11-25)
 
 
