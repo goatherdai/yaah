@@ -167,13 +167,16 @@ func aggregateConflicts(slice kerneltrace.Slice, session string, legacyParents m
 			parent = owner
 		}
 		parentByOwner[owner] = parent
-		if lane == "" {
-			lane = "unknown"
-		}
-		report.Dispatches[lane]++
 		if session != "" && parent != session {
 			continue
 		}
+		if lane == "" {
+			lane = "unknown"
+		}
+		// The lane totals belong to the report's window: a session-filtered
+		// run must not count other sessions' dispatches (qodo review
+		// follow-up on PR #400).
+		report.Dispatches[lane]++
 		sessionsSeen[parent] = true
 		sessionDispatches[parent]++
 	}

@@ -211,3 +211,81 @@ func TestTraceConflictsRedirectedDispatchNotFanout(t *testing.T) {
 		t.Errorf("fanout = %d/%d, want 0/0 — a redirect is not a fan-out", got.FanoutSessions, got.FanoutSessionsWithConflicts)
 	}
 }
+
+// TestTraceConflictsSessionFilterCountsOnlyRequestedSession pins the
+// qodo follow-up on PR #400: in a --session-filtered report the lane
+// totals must count only the requested session's dispatches — always,
+// including the per-owner pass. Two sessions with disjoint lanes must
+// each appear alone in their own window.
+func TestTraceConflictsSessionFilterCountsOnlyRequestedSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("YAAH_HOME", home)
+	dir := filepath.Join(home, "traces")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setTestTraceConfig(t, home, dir)
+
+	path := filepath.Join(dir, "trace.sqlite")
+	store, err := kerneltrace.NewSQLiteTraceStore(path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close(context.Background())
+
+	appendUsage := func(owner, parent, lane, intent string) {
+		t.Helper()
+		_, err := store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
+			AppendIntentID: intent,
+			Groups: []kerneltrace.AppendGroup{{
+				TraceOwnerID: owner,
+				FactDrafts: []kerneltrace.RecordDraft{{
+					Mode:      kerneltrace.Capture,
+					SchemaRef: "yaah.subagent.usage.v1",
+					KindLabel: "subagent:usage",
+					Payload:   map[string]any{"lane": lane, "parent_session": parent},
+				}},
+			}},
+		})
+		if err != nil {
+			t.Fatalf("append usage for %s: %v", owner, err)
+		}
+	}
+	appendUsage("sub-a1", "sess-a", "retained", "sub-a1:usage:g1")
+	appendUsage("sub-a2", "sess-a", "retained", "sub-a2:usage:g1")
+	appendUsage("sub-b1", "sess-b", "shared", "sub-b1:usage:g1")
+	appendUsage("sub-b2", "sess-b", "shared", "sub-b2:usage:g2")
+
+	run := func(args ...string) conflictAggregate {
+		t.Helper()
+		var buf bytes.Buffer
+		cmd := newGoatherdTraceConflictsCmd()
+		cmd.SetOut(&buf)
+		cmd.SetErr(&buf)
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("Execute(%v): %v", args, err)
+		}
+		var got conflictAggregate
+		if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+			t.Fatalf("report is not JSON: %v\n%s", err, buf.String())
+		}
+		return got
+	}
+
+	a := run("--json", "--session", "sess-a")
+	if a.Dispatches["retained"] != 2 || a.Dispatches["shared"] != 0 {
+		t.Errorf("sess-a dispatches = %+v, want retained=2 shared=0 (no sess-b leakage)", a.Dispatches)
+	}
+	if a.Sessions != 1 {
+		t.Errorf("sess-a sessions = %d, want 1", a.Sessions)
+	}
+
+	b := run("--json", "--session", "sess-b")
+	if b.Dispatches["shared"] != 2 || b.Dispatches["retained"] != 0 {
+		t.Errorf("sess-b dispatches = %+v, want shared=2 retained=0 (no sess-a leakage)", b.Dispatches)
+	}
+	if b.Sessions != 1 {
+		t.Errorf("sess-b sessions = %d, want 1", b.Sessions)
+	}
+}
