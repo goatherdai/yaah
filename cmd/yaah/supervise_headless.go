@@ -124,6 +124,13 @@ func resolveHeadlessPolicyModel(cfg *config.Config) (agent.Provider, string, err
 	}
 	providerName, model := resolveProviderName(cfg), name
 	if parts := strings.SplitN(name, "/", 2); len(parts) == 2 {
+		if strings.TrimSpace(parts[1]) == "" {
+			// The "provider/" spelling with an empty model half would make
+			// EVERY tick's completion fail (PR #417 review round 2, finding 7):
+			// refused once here, naming the key, instead of arming a loop that
+			// can never decide.
+			return nil, "", fmt.Errorf("supervisor.policy_model %q names no model after its provider prefix: use \"provider/model\" or a bare model on the session's default provider", name)
+		}
 		if _, ok := cfg.Providers[parts[0]]; ok {
 			providerName, model = parts[0], parts[1]
 		}

@@ -7,6 +7,7 @@ package yaah
 // paper's ~3K-token budget is comparable at.
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -216,5 +217,15 @@ func TestResolveHeadlessPolicyModel(t *testing.T) {
 	cfg.Agent.Default.Supervisor.PolicyModel = "gpt-local"
 	if _, got, err := resolveHeadlessPolicyModel(cfg); err != nil || got != "gpt-local" {
 		t.Errorf("a bare model resolved to (%q, %v), want it on the session's default provider", got, err)
+	}
+
+	// The "provider/" spelling with an empty model half must be refused HERE,
+	// once, naming the key — not fail every tick's completion after the loop
+	// is armed (PR #417 review round 2, finding 7).
+	for _, bad := range []string{"local/", "remote/  "} {
+		cfg.Agent.Default.Supervisor.PolicyModel = bad
+		if _, _, err := resolveHeadlessPolicyModel(cfg); err == nil || !strings.Contains(err.Error(), "policy_model") {
+			t.Errorf("resolveHeadlessPolicyModel(%q) = %v, want an error naming policy_model", bad, err)
+		}
 	}
 }

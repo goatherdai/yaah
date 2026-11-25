@@ -357,10 +357,10 @@ func TestHeadlessHost_StartsOneLoopArmsTheArbiterAndJoins(t *testing.T) {
 		Release:     func() { releases.Add(1) },
 		JoinTimeout: 5 * time.Second,
 	}
-	if !host.Start(context.Background()) {
+	if host.Start(context.Background()) != StartStarted {
 		t.Fatal("Start reported no loop on a fresh host")
 	}
-	if host.Start(context.Background()) {
+	if host.Start(context.Background()) != StartAlreadyRunning {
 		t.Error("a second Start must not launch a second loop")
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -379,7 +379,7 @@ func TestHeadlessHost_StartsOneLoopArmsTheArbiterAndJoins(t *testing.T) {
 	// A stopped host restarts cleanly: a new dispatch after the loop settled
 	// must get a fresh loop (and a fresh arming), not a dead one.
 	src.calls.Store(0)
-	if !host.Start(context.Background()) {
+	if host.Start(context.Background()) != StartStarted {
 		t.Fatal("Start after a settled loop must launch a fresh one")
 	}
 	if got := arms.Load(); got != 2 {
@@ -447,7 +447,7 @@ func TestHeadlessHost_StopJoinsACancelledLoop(t *testing.T) {
 		},
 		JoinTimeout: 5 * time.Second,
 	}
-	if !host.Start(context.Background()) {
+	if host.Start(context.Background()) != StartStarted {
 		t.Fatal("Start reported no loop")
 	}
 	host.Stop()
@@ -505,4 +505,111 @@ func TestHeadlessHost_SettleKeepsTheLoopUnderOnChangeWhileAWorkerLives(t *testin
 		t.Fatal("Settle did not stop the loop after the last worker finished")
 	}
 	host.Stop()
+}
+
+// TestHeadlessHost_SettleStopsWithoutWaitingForATick pins round-2 finding 1:
+// the liveness answer at settle must come from a FRESH poll (RefreshLive), not
+// the cached membership. The cache still contains the scope that just settled
+// — the run unregisters only after the hook returns — so a cached answer
+// keeps the loop alive to its own next Done tick: an extra interval of model
+// calls the measurement counts and an arbiter left armed after the last
+// supervised dispatch is over. The interval here is an hour, so no second tick
+// can rescue a cached answer: ONE settle call must stop and join the loop.
+func TestHeadlessHost_SettleStopsWithoutWaitingForATick(t *testing.T) {
+	var live atomic.Bool
+	live.Store(true)
+	src := &scriptedSource{agents: func(int64) []supervisionapi.AgentSnapshot {
+		if !live.Load() {
+			return nil
+		}
+		return []supervisionapi.AgentSnapshot{liveAgent("scope:sub-a")}
+	}}
+	var decides atomic.Int64
+	host := &HeadlessHost{
+		NewBatch: func() *Batch {
+			return NewBatch(nil, src, BatchConfig{
+				// An hour: no second tick can come, so only a fresh-poll
+				// Settle can end this loop inside the test's lifetime.
+				Interval: time.Hour,
+				Wait:     instantWait,
+			})
+		},
+		Decider: &HeadlessDecider{
+			Prompt: "p",
+			Complete: func(context.Context, string, string) (string, error) {
+				decides.Add(1)
+				return noDecisionsReply, nil
+			},
+		},
+		JoinTimeout: 5 * time.Second,
+	}
+	settle := host.RunHook(context.Background(), "scope:sub-a")
+	if !host.Running() {
+		t.Fatal("the run hook must start the loop")
+	}
+	// Wait until the loop has taken its FIRST decide call: that proves the
+	// bootstrap ingest ran while the worker was live, so the batch's cached
+	// membership contains it — the exact stale cache a cached-Live Settle
+	// would misread. Without this the test races the goroutine's startup.
+	deadline := time.Now().Add(5 * time.Second)
+	for decides.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if decides.Load() == 0 {
+		t.Fatal("the loop never reached its first decide call")
+	}
+	// The worker finishes; the batch's cache does not know yet.
+	live.Store(false)
+	settle()
+	if host.Running() {
+		t.Fatal("Settle left the loop running although a fresh poll shows no live worker: with an hour-long interval it would ride to the timeout instead of stopping at settle")
+	}
+}
+
+// TestHeadlessHost_StartClaimsAFinishedRun pins round-2 finding 2: a run whose
+// loop has ENDED (Done) but whose goroutine has not yet cleared the slot must
+// not answer Start with "already running" — a dispatch started in that window
+// would run unsupervised behind a dead loop, with the arbiter released under
+// it. The finished flag makes the window observable and Start claims it,
+// arming a successor whose identity-guarded clearing the stale goroutine
+// cannot touch.
+func TestHeadlessHost_StartClaimsAFinishedRun(t *testing.T) {
+	src := &scriptedSource{agents: func(int64) []supervisionapi.AgentSnapshot {
+		return []supervisionapi.AgentSnapshot{liveAgent("scope:sub-a")}
+	}}
+	var releases atomic.Int64
+	host := &HeadlessHost{
+		NewBatch: func() *Batch { return newLoopBatch(src, TriggerAlways) },
+		Decider: &HeadlessDecider{
+			Prompt:   "p",
+			Complete: func(context.Context, string, string) (string, error) { return noDecisionsReply, nil },
+		},
+		Release:     func() { releases.Add(1) },
+		JoinTimeout: 5 * time.Second,
+	}
+	// Simulate the terminal window directly: a run whose loop function has
+	// returned (finished set) but which still holds the slot. No goroutine
+	// will ever clear it — that is exactly the window Start must claim.
+	stale := &headlessRun{
+		cancel: func() {},
+		done:   make(chan struct{}),
+		batch:  newLoopBatch(src, TriggerAlways),
+	}
+	stale.finished.Store(true)
+	host.run = stale
+
+	if got := host.Start(context.Background()); got != StartStarted {
+		t.Fatalf("Start over a finished-but-uncleared run = %v, want StartStarted: reporting AlreadyRunning here hands the dispatch a dead loop", got)
+	}
+	if host.run == stale {
+		t.Fatal("Start left the finished run in the slot instead of claiming it")
+	}
+	// The successor is a real, stoppable loop with intact release wiring.
+	host.Stop()
+	if host.Running() {
+		t.Fatal("Stop did not claim the successor run")
+	}
+	if releases.Load() == 0 {
+		t.Error("the successor's slot claim released nothing: the Arm/Release cycle must survive a terminal-window start")
+	}
 }

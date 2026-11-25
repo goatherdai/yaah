@@ -98,15 +98,21 @@ func TestSuperviseTool_RegisteredOnlyUnderAgentPolicy(t *testing.T) {
 	}
 }
 
-// TestSuperviseBatchConfig_PinsProductionDefaults pins the BatchConfig the
-// production factory builds. CooldownTicks must be the design's DEFAULT
-// SELECTOR (negative), never zero: zero disables the cooldown outright, so a
-// zero-valued field here would silently drop the `cooldown_ticks: 1` brake that
-// design §4.9 and the tool's doc both promise. supervision tests pin that a
-// negative value normalizes to supervision.DefaultCooldownTicks
-// (internal/agent/supervision/batch_test.go TestBatch_Cooldown, which asserts
-// the batch's own cfg after BatchConfig.normalized runs) — this test pins the
-// CONFIG, that one pins what it becomes, so neither duplicates the other.
+// TestSuperviseBatchConfig_PinsProductionDefaults pins the DEFAULTS half of
+// the config → BatchConfig mapping (yaah-0nbb): an absent supervisor stanza
+// must resolve to the design's defaults — the 5s interval, the one-tick
+// cooldown, the always trigger, all three actions, no cap — because each would
+// be a different behavior if it were zero-valued (a zero interval is a busy
+// loop, a zero cooldown removes the brake design §4.9 promises, and a nil
+// action mask is "all three" only by the batch's own default). The OVERRIDES
+// half — an explicit stanza whose keys each beat their default, including the
+// explicit `cooldown_ticks: 0` that means "no cooldown" — is pinned in
+// supervise_headless_test.go, and what the batch makes of these values
+// (normalization) in internal/agent/supervision's batch tests, so none of the
+// three duplicates another. (Before 0nbb this comment claimed CooldownTicks
+// had to be the negative default SELECTOR; that stopped being the shape when
+// the config accessors took over resolution — PR #417 review round 2,
+// finding 4.)
 func TestSuperviseBatchConfig_PinsProductionDefaults(t *testing.T) {
 	stopCalled := false
 	stop := func(_ context.Context, _, _ string, _ func()) (bool, error) {

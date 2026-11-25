@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	renderer "github.com/goatherdai/yaah/internal/supervision"
@@ -302,10 +303,12 @@ func decodeReplyObject(s string) (map[string]any, bool) {
 //   - The renderer's text is the BATCH's (SnapshotText), so the labels the model
 //     names are the ones Batch.Next resolves, threaded across ticks by the
 //     batch's own label map.
-//   - A decider error is logged ONCE for that tick and the loop continues with
-//     no decisions: a provider hiccup, a timeout or a garbled reply must not
-//     end supervision, because the next tick is a fresh call with a fresh
-//     snapshot.
+//   - A decider error never ends supervision — a provider hiccup, a timeout or
+//     a garbled reply costs one tick's decisions, because the next tick is a
+//     fresh call with a fresh snapshot. The failure is logged at WARN once at
+//     the start of a failure run and once at its end (with the count); the
+//     ticks in between stay at Debug, so a persistently failing provider
+//     cannot flood the log at tick cadence.
 //   - Next applies the decisions (or just advances the clock), and Done ends
 //     the loop: the batch's membership is every live non-root scope, so Done is
 //     "there is no worker left to supervise".
@@ -324,6 +327,8 @@ func RunHeadlessLoop(ctx context.Context, batch *Batch, dec *HeadlessDecider, lo
 	if log == nil {
 		log = dec.logger()
 	}
+	// Consecutive failed decide calls, for the rate-limited Warn (finding 6).
+	failedTicks := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -337,9 +342,27 @@ func RunHeadlessLoop(ctx context.Context, batch *Batch, dec *HeadlessDecider, lo
 				// that is teardown, not a failed tick.
 				return ctx.Err()
 			case err != nil:
-				log.Warn("supervision: headless tick produced no decisions (fail-closed); the loop continues on the next tick",
-					"tick", batch.Tick(), "budget_tokens", dec.budget(), "err", err)
+				// Rate-limited, the noStopOnce rationale: a persistently failing
+				// provider would otherwise emit one WARN per tick for the whole
+				// dispatch (720/hour at 5s), and the flood is not 720 facts — it
+				// is one. The FIRST failure warns in full, the rest stay in
+				// Debug, and the first SUCCESS after a failure run warns once
+				// with the count, so the operator sees both edges (PR #417
+				// review round 2, finding 6).
+				failedTicks++
+				if failedTicks == 1 {
+					log.Warn("supervision: headless tick produced no decisions (fail-closed); the loop continues on the next tick",
+						"tick", batch.Tick(), "budget_tokens", dec.budget(), "err", err)
+				} else {
+					log.Debug("supervision: headless tick produced no decisions (fail-closed)",
+						"tick", batch.Tick(), "consecutive_failed_ticks", failedTicks, "err", err)
+				}
 			default:
+				if failedTicks > 0 {
+					log.Warn("supervision: headless ticks are deciding again after a failure run",
+						"tick", batch.Tick(), "failed_ticks_behind", failedTicks)
+					failedTicks = 0
+				}
 				decisions = got
 			}
 		}
@@ -428,7 +451,33 @@ type headlessRun struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	batch  *Batch
+	// finished is set the moment the loop's RunHeadlessLoop returns, BEFORE the
+	// goroutine re-takes h.mu to clear the slot. It makes the terminal window
+	// observable to Start: a run that is finished but not yet cleared must not
+	// answer a new dispatch's start with "already running" — that loop is dead,
+	// and the dispatch would run unsupervised (PR #417 review round 2,
+	// finding 2).
+	finished atomic.Bool
 }
+
+// StartResult distinguishes the three situations Start finds. The old bool
+// folded "a healthy loop is already running" and "this host cannot run any
+// loop" into one false, and left the terminal-window case silently
+// unsupervised; a caller (RunHook) owes the operator a loud line for the
+// second and a fresh loop for the third.
+type StartResult int
+
+const (
+	// StartStarted means this call armed a fresh loop.
+	StartStarted StartResult = iota
+	// StartAlreadyRunning means a healthy loop is live and supervising; the
+	// dispatch joins its batch's universe as a member.
+	StartAlreadyRunning
+	// StartCannotRun means no loop exists or was started: the host has no batch
+	// constructor or no decider (a construction bug — the composition root
+	// refuses to install such a host), or the constructor returned nil.
+	StartCannotRun
+)
 
 // log returns the host's logger, defaulted.
 func (h *HeadlessHost) log() *slog.Logger {
@@ -452,25 +501,44 @@ func (h *HeadlessHost) joinTimeout() time.Duration {
 // not one scope — and is part of the signature so a caller that later wants a
 // per-scope bound has it without a second seam.
 func (h *HeadlessHost) RunHook(ctx context.Context, _ string) func() {
-	h.Start(ctx)
+	if h.Start(ctx) == StartCannotRun {
+		// The composition root refuses to install a half-built host, but a host
+		// that cannot run a loop must not pass a dispatch through unsupervised
+		// without saying so — the same loud-once rule registration follows.
+		h.log().Warn("supervision: a supervised dispatch started with NO headless loop — the host has no batch constructor or no decider")
+	}
 	return func() { h.Settle() }
 }
 
-// Start arms the loop if it is not already running. It reports whether THIS call
-// started one (false means a loop was already live, or the host cannot run).
-func (h *HeadlessHost) Start(ctx context.Context) bool {
+// Start arms the loop if it is not already running. The result distinguishes
+// the three situations a caller can land in (see StartResult): a fresh loop
+// this call started, a healthy loop already supervising, or a host that cannot
+// run any loop. A run that has FINISHED but not yet cleared its slot does not
+// answer AlreadyRunning — this call claims the slot and arms a successor, so a
+// dispatch starting in that window is supervised rather than silently left
+// alone behind a dead loop.
+func (h *HeadlessHost) Start(ctx context.Context) StartResult {
 	if h == nil || h.NewBatch == nil || h.Decider == nil {
-		return false
+		return StartCannotRun
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.run != nil {
-		return false
+	if h.run != nil && !h.run.finished.Load() {
+		return StartAlreadyRunning
 	}
 	batch := h.NewBatch()
 	if batch == nil {
-		return false
+		return StartCannotRun
 	}
+	// A FINISHED run still in the slot — the loop ended at Done but its
+	// goroutine has not reached the clearing section yet — is claimed here:
+	// the clearing is identity-guarded, so it cannot touch this successor, and
+	// its Release is skipped because the Arm below already rebinds the single
+	// arbiter slot. Without the claim, a dispatch starting in that window gets
+	// an "already running" answer from a loop that is dead — silently
+	// unsupervised, with the arbiter released under it (PR #417 review round
+	// 2, finding 2).
+	//
 	// WithoutCancel: one dispatch ending must not switch supervision off for the
 	// others (see the type comment). Stop, Settle, Done and Close are the bounds.
 	loopCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -480,7 +548,7 @@ func (h *HeadlessHost) Start(ctx context.Context) bool {
 	run := &headlessRun{cancel: cancel, done: make(chan struct{}), batch: batch}
 	h.run = run
 	go h.loop(run, loopCtx)
-	return true
+	return StartStarted
 }
 
 // loop is the goroutine: it runs the tick loop, then clears its slot and
@@ -488,7 +556,14 @@ func (h *HeadlessHost) Start(ctx context.Context) bool {
 // case the release is theirs and a second one would disarm a successor loop.
 func (h *HeadlessHost) loop(run *headlessRun, ctx context.Context) {
 	defer close(run.done)
+	// Release the loop context on EVERY exit, including the Done return nobody
+	// cancels: the WithCancel resources go away with the goroutine.
+	defer run.cancel()
 	err := RunHeadlessLoop(ctx, run.batch, h.Decider, h.log())
+	// Mark finished BEFORE the clearing section below: from this instant a
+	// concurrent Start may claim the slot and arm a successor (see Start), and
+	// the identity guard here keeps this goroutine from touching it.
+	run.finished.Store(true)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		h.log().Warn("supervision: the headless loop stopped early", "err", err, "ticks", run.batch.Tick())
 	}
@@ -517,17 +592,23 @@ func (h *HeadlessHost) Running() bool {
 // settles: the common case (the last worker finished) ends the loop at settle
 // instead of one interval later, and the concurrent case keeps supervising.
 //
-// Liveness is Batch.Live — NOT ShouldDecide, which folds in the trigger: under
-// TriggerOnChange a quiet tick makes ShouldDecide false while other workers are
-// still live, and stopping there would leave the settling dispatch's siblings
-// unsupervised with nothing logged (PR #417 review finding 1).
+// Liveness is Batch.RefreshLive — a FRESH poll, not the cached membership
+// Live/ShouldDecide read: at settle time the cache still contains the scope
+// that just settled (the run unregisters only after the hook returns), so a
+// cached answer would keep the loop alive to its own next Done tick — one
+// more interval of model calls the measurement counts, and the arbiter armed
+// past the last supervised dispatch (PR #417 review round 2, finding 1).
+// RefreshLive, not ShouldDecide, for the round-1 reason too: ShouldDecide
+// folds in the trigger, and under TriggerOnChange a quiet tick would stop the
+// loop while siblings are still live.
 //
 // The membership read and the slot claim happen under ONE lock, so a new
 // dispatch starting at that instant either sees a live loop (and settles into it
 // on its own) or starts a fresh one — it can never be left supervised by a loop
 // that is already being torn down (PR #417 review finding 2). Only the cancel
 // and the join run outside the lock: they must not hold it while a goroutine
-// winds down.
+// winds down. Lock order: host-mu BEFORE batch-mu (RefreshLive polls under
+// this lock); nothing in the package takes them the other way round.
 func (h *HeadlessHost) Settle() {
 	if h == nil {
 		return
@@ -538,7 +619,7 @@ func (h *HeadlessHost) Settle() {
 		h.mu.Unlock()
 		return
 	}
-	if run.batch.Live() {
+	if run.batch.RefreshLive() {
 		h.mu.Unlock()
 		return
 	}

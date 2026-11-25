@@ -114,8 +114,12 @@ var configShowCmd = &cobra.Command{
 			}
 			cmd.Printf("  cooldown_ticks:     %d\n", sup.CooldownTicks())
 			cmd.Printf("  max_interventions:  %d (0 = unlimited)\n", sup.MaxInterventions())
-			cmd.Printf("  prompt:             %s\n", sup.PromptVersion())
 			if sup.PolicyHeadless() {
+				// prompt is read by headless mode only — in agent mode the
+				// decider is the model itself and the meta-prompt asset is
+				// never consulted (PR #417 review round 2, finding 8), so the
+				// line renders only under the mode that consumes it.
+				cmd.Printf("  prompt:             %s\n", sup.PromptVersion())
 				cmd.Printf("  policy_model:       %s\n", sup.PolicyModelName())
 			}
 		}

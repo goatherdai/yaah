@@ -10,20 +10,14 @@
 // Batch is the SHARED ARBITER, not the caller's decider. It owns no model and
 // forms no opinion: the caller renders the snapshot (SnapshotText), has its
 // decider act on that text, and hands the decision list back to Next. The same
-// arbiter serves three callers — the `supervise` tool (agent mode), the
-// headless one-shot decider, and (phase 2) a `fanout` workflow node — which is
+// arbiter serves three callers — the `supervise` tool (agent mode, yaah-fy28),
+// the headless one-shot decider (HeadlessDecider + RunHeadlessLoop in
+// headless.go, yaah-0nbb), and (phase 2) a `fanout` workflow node — which is
 // what makes the two measured modes comparable at all.
 //
-// What this file deliberately does NOT do, and which bead adds it:
-//   - the `supervise` tool surface and its embedded doc (yaah-fy28);
-//   - the headless Decider plus `supervisor.policy`/`policy_model` config and
-//     the locked v1 prompt wiring (yaah-0nbb; the prompt asset and the
-//     renderer are landed, the binding is not);
-//   - revert by construction — lane upgrade, fatal pre-run capture — which is
-//     what makes a revert reachable on a dispatched scope at all (yaah-ugtl).
-//     Until that lands, a revert is only as good as the registration says
-//     (Registration.Reversible), which is exactly what this arbiter reads: a
-//     revert on a scope with no capture is dropped, never downgraded.
+// A revert is only as good as the registration says (Registration.Reversible,
+// backed since yaah-ugtl by the runner's pre-run capture): a revert on a scope
+// with no capture is dropped, never downgraded.
 //
 // What it DOES do with its records, since yaah-vaxv: every tick hands its
 // results to the session's intervention log (recordInterventions), which is
@@ -435,6 +429,33 @@ func (b *Batch) Live() bool {
 	b.ensureIngested()
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return len(b.members) > 0
+}
+
+// RefreshLive polls a FRESH snapshot, updates the batch's membership (and its
+// changed flag, so the trigger stays coherent), and reports whether any member
+// is live. It is the liveness question a loop-lifecycle caller asks AT SETTLE
+// (HeadlessHost.Settle): Live reads the cache the last ingest left, and at
+// settle time that cache still contains the scope that just settled — the run
+// unregisters only after the hook returns — so answering from the cache would
+// keep the loop running to its own next Done tick: one more interval of model
+// calls the measurement would count and an arbiter left armed after the last
+// supervised dispatch is over (PR #417 review round 2, finding 1).
+//
+// Callers may hold the HOST's lock while calling this (Settle does): the lock
+// order is host-mu before batch-mu, and nothing in this package takes them the
+// other way round.
+func (b *Batch) RefreshLive() bool {
+	fresh := b.takeSnapshot()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	prev := b.snapshot
+	b.ingested = true
+	b.snapshot = fresh
+	b.members = membersOf(fresh, b.cfg.RootScopeID)
+	b.pruneClaimsLocked()
+	b.bumpAgesLocked()
+	b.changed = changedSince(prev, b.members)
 	return len(b.members) > 0
 }
 
