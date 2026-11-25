@@ -65,6 +65,31 @@ func TestExecute_SupervisedUpgradesSharedLaneToReport(t *testing.T) {
 	}
 }
 
+// TestExecute_SupervisedSharedLaneWithoutIsolation pins the other branch of
+// supervisedLane (review finding L4): a supervised dispatch whose host has no
+// isolated lane available (no retained runtime — a container session, §9)
+// STAYS on the shared lane. The lane must not pretend to isolate, and the
+// decision moves to the runner's start gate: with require_reversible off the
+// dispatch runs, reporting Reversible false honestly.
+func TestExecute_SupervisedSharedLaneWithoutIsolation(t *testing.T) {
+	runner := &sessionRunner{responses: []runnerResponse{{result: "shared result"}}}
+	tt := &DelegateTool{
+		RoleNames:  []string{"counter"},
+		Runner:     runner.run(),
+		Retained:   nil, // no retained runtime: isolated worlds unavailable
+		Supervised: true,
+	}
+
+	res, err := tt.Execute(context.Background(), `{"description":"d","prompt":"p","role":"counter"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v, want the dispatch to run on the shared lane", err)
+	}
+	status, lane, _ := decodeStatusLane(t, res)
+	if status == "report" || lane == string(LaneReport) {
+		t.Errorf("supervised dispatch without isolation = status %q lane %q, want the shared lane kept", status, lane)
+	}
+}
+
 // TestExecute_SuperviseFalseKeepsRoutedLane pins the opt-out: `supervise:
 // false` leaves the lane the role's routing chose, so an opted-out dispatch
 // on a supervised session runs exactly where it always ran.

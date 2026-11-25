@@ -424,7 +424,10 @@ func (in supervisedStart) hasSandbox() bool {
 //     tell a capture that was skipped from one that succeeded, so it treats
 //     "never asked" as "no snapshot" rather than assuming the better case.
 //     A scope with no sandbox at all (a pure-causal fork) is not this rule's
-//     case — it has nothing to capture, and rule 3 decides it.
+//     case — it has nothing to capture, and rule 3 decides it. This rule
+//     shares rule 1's sentinel: a dispatch refused HERE never ran a capture,
+//     so ErrSupervisedCaptureFailed in an envelope is not evidence that one
+//     was attempted and failed — the message says which refusal fired.
 //  3. With require_reversible on, a scope that owns no isolated sandbox (a
 //     container session's root is every sub-agent's workspace, a shared root
 //     is the session's, a pure-causal fork has none) is refused. Off, it
@@ -1135,8 +1138,11 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			// deposited its guidance — failing here would destroy the
 			// supervisor's decision. The successor simply reads Reversible
 			// false, which is the honest report; capturePreRun has already
-			// warned.
-			capturePreRun(ctx)
+			// warned. The result REPLACES the first run's: a stale failure
+			// must not veto the mark below when this capture succeeded
+			// (review finding L5).
+			captureErr = capturePreRun(ctx)
+			preRunOK = captureErr == nil
 			// The successor's own mark (yaah-k0x1): the same predicate the
 			// first run's mark used, so the flag stays honest across the
 			// handoff.

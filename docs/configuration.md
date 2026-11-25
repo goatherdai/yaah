@@ -786,7 +786,7 @@ steering into the running sub-agent loops.
 agents:
   default:
     supervisor:
-      enabled: true          # master switch (default on when tracing is on)
+      enabled: true          # arms the SUPERVISED DISPATCH path only on explicit true (D5); the rules engine's default-on is separate
       halt_root: false       # allow halting the session's root scope
       require_reversible: false  # refuse a supervised dispatch that cannot roll back
       rules:
@@ -831,6 +831,7 @@ supervised dispatch path upgrades a shared-lane dispatch to the report lane,
 which needs a retained runtime to provision an isolated world. A session with
 no retained runtime therefore runs its supervised dispatches on the shared
 workspace with `Reversible` false, and `supervisor.require_reversible: true`
+refuses every dispatch after the scope is forked.
 
 `require_reversible: true` also refuses two model-reachable escapes: a per-call `supervise: false` on a supervised session (operator authority beats the opt-out — remove the argument or turn the key off), and a NESTED dispatch, i.e. a sub-agent calling `delegate` itself. A nested dispatch has no proposal runtime of its own, so its child runs on the session tree, outside the isolated world a revert of the parent rolls back; refusing it is what keeps the key's promise until nested dispatches inherit a lane (design §9). Without the key both run exactly as before.
 
