@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.216.0](https://github.com/goatherdai/yaah/compare/v0.215.0...v0.216.0) (2026-11-25)
+
+
+### Features
+
+* **supervision:** intervention records in the dispatch envelope (yaah-vaxv) ([#415](https://github.com/goatherdai/yaah/issues/415)) ([ac7be68](https://github.com/goatherdai/yaah/commit/ac7be68a4aecd6c53749ff881ab036dd0a29079d))
+
 ## [0.215.0](https://github.com/goatherdai/yaah/compare/v0.214.0...v0.215.0) (2026-11-25)
 
 
