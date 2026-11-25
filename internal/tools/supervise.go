@@ -123,9 +123,13 @@ type SuperviseBatch interface {
 // the batch alone cannot express: the rules engine must route into the batch
 // WHILE it ticks, and must fall back to direct delivery when the loop stops —
 // otherwise later rule firings queue into a batch nothing drives and drop past
-// its queue cap, silently degrading the session's rules surface. Arm and
-// Release are the two ends of that lifetime; either may be nil (no rules
-// engine wired, in which case there is nothing to bind or unbind).
+// its queue cap (supervision.Batch's maxQueuedRules, batch.go, which is where
+// the drop-and-count rule is documented), silently degrading the session's
+// rules surface. Arm and Release are the two ends of that lifetime; either may
+// be nil (no rules engine wired, in which case there is nothing to bind or
+// unbind). The tool doc (internal/prompts/tools/supervise.md) states the
+// consequence the model owns: a loop it abandons mid-session strands delivery
+// until teardown releases the routing.
 type SuperviseBinding struct {
 	// Batch is the batch the tool ticks. Nil is a binding failure.
 	Batch SuperviseBatch
@@ -287,6 +291,18 @@ func (t *SuperviseTool) tick(ctx context.Context, batch SuperviseBatch, decision
 			// the honest reply is the busy result and not a failed turn.
 			return superviseBusyResult(), nil
 		}
+		// A cancelled tick is not a tick that did nothing: the batch returns the
+		// records its completed pass made BESIDE the cancellation (batch.go's
+		// cancelled-wait branch keeps results and applied interventions and bumps
+		// the ages). Dropping them would fail the call while erasing the only
+		// report of what the decisions did — a steer already delivered, a revert
+		// already claimed — so a non-empty pass rides the error the way a
+		// cancelled settle does: an error, because the tick did not finish, naming
+		// every record it made. A refused Next returns the zero TickResult and did
+		// no work, so it keeps the plain message.
+		if len(res.Results) > 0 || len(res.Applied) > 0 || res.Done {
+			return superviseResult{}, interrupted("the tick was interrupted", projectTicks([]supervisionapi.TickResult{res}, 1), err)
+		}
 		return superviseResult{}, fmt.Errorf("supervise: the tick did not complete: %w", err)
 	}
 	return t.result(batch, []supervisionapi.TickResult{res}, 1), nil
@@ -322,7 +338,7 @@ func (t *SuperviseTool) settle(ctx context.Context, batch SuperviseBatch, decisi
 		// same interruption as a cancelled wait, reported with the records the
 		// completed ticks really made.
 		if err := ctx.Err(); err != nil {
-			return superviseResult{}, settleInterrupted(t.result(batch, ticks, ran), err)
+			return superviseResult{}, interrupted("waiting for the batch to settle was interrupted", projectTicks(ticks, ran), err)
 		}
 		res, err := batch.Next(ctx, next)
 		if err != nil {
@@ -343,7 +359,7 @@ func (t *SuperviseTool) settle(ctx context.Context, batch SuperviseBatch, decisi
 				ran++
 				ticks = retainTick(ticks, res)
 			}
-			return superviseResult{}, settleInterrupted(t.result(batch, ticks, ran), err)
+			return superviseResult{}, interrupted("waiting for the batch to settle was interrupted", projectTicks(ticks, ran), err)
 		}
 		ran++
 		ticks = retainTick(ticks, res)
@@ -362,13 +378,22 @@ func (t *SuperviseTool) settle(ctx context.Context, batch SuperviseBatch, decisi
 	}
 }
 
-// settleInterrupted states an interrupted settle: an error, because the loop
-// did not finish, naming the ticks that ran, the records they made and what
-// took effect so the model still sees what its decisions triggered.
-func settleInterrupted(partial superviseResult, err error) error {
-	return fmt.Errorf(
-		"supervise: waiting for the batch to settle was interrupted after %d tick(s) with %d decision record(s) and %d applied intervention(s)%s: %w",
-		partial.Ticks, len(partial.Results), len(partial.Applied), appliedSummary(partial.Applied), err)
+// interrupted states a call that did not finish: an error, because the loop did
+// not finish, naming the ticks that ran, the records they made, what took effect
+// and the records themselves — so the model still sees what its decisions
+// triggered instead of a bare cancellation. Both wait modes report an
+// interruption this way, so a partial pass is never lost from the report.
+//
+// The records ride the ERROR rather than a result because the agent loop
+// replaces a tool result string with the error text: a JSON body returned beside
+// an error would never reach the model.
+func interrupted(headline string, partial superviseResult, err error) error {
+	msg := fmt.Sprintf("supervise: %s after %d tick(s) with %d decision record(s) and %d applied intervention(s)%s",
+		headline, partial.Ticks, len(partial.Results), len(partial.Applied), appliedSummary(partial.Applied))
+	if detail := recordsSummary(partial.Results); detail != "" {
+		msg += "; records: " + detail
+	}
+	return fmt.Errorf("%s: %w", msg, err)
 }
 
 // retainTick appends one tick's result to the retained history, keeping the most
@@ -395,6 +420,16 @@ func retainTick(ticks []supervisionapi.TickResult, res supervisionapi.TickResult
 // reply whose retained window dropped the earliest ticks still reports the work
 // the call actually did, and says so in its note.
 func (t *SuperviseTool) result(batch SuperviseBatch, ticks []supervisionapi.TickResult, ran int) superviseResult {
+	out := projectTicks(ticks, ran)
+	out.Snapshot = batch.SnapshotText(t.BudgetTokens)
+	return out
+}
+
+// projectTicks folds the ticks into the reply shape WITHOUT rendering the
+// snapshot. It is what an interrupted call reports from: its payload rides the
+// error (see interrupted), no text reaches the caller, and rendering would
+// repoint the label map of the last render for a snapshot nobody reads.
+func projectTicks(ticks []supervisionapi.TickResult, ran int) superviseResult {
 	out := superviseResult{
 		Applied: make([]superviseApplied, 0, 4),
 		Results: make([]superviseRecord, 0, 4),
@@ -411,7 +446,6 @@ func (t *SuperviseTool) result(batch SuperviseBatch, ticks []supervisionapi.Tick
 		out.Results = append(out.Results, superviseRecords(tick.Results)...)
 		out.Done = tick.Done
 	}
-	out.Snapshot = batch.SnapshotText(t.BudgetTokens)
 	if dropped := ran - len(ticks); dropped > 0 {
 		out.addNote(fmt.Sprintf("%d earlier tick(s) are not repeated here: a reply keeps the most recent %d ticks' records (of %d run)", dropped, maxReportedTicks, ran))
 	}
@@ -508,10 +542,18 @@ func (t *SuperviseTool) end(release bool) {
 // simply stop calling the tool — an abandoned plan, an exhausted turn budget, a
 // session shutting down with workers still live — and Service.SetArbiter(batch)
 // routing would then persist forever: rule firings queue into a batch nothing
-// ticks and drop past its queue cap (the failure supervise_batch.go documents),
-// silently degrading the session's rules surface. The session teardown calls
-// this before it closes the rules service, so the service's own drain delivers
-// directly instead of queueing into a dead batch.
+// ticks and drop past its queue cap (the failure supervise_batch.go documents,
+// with the queue rule itself in supervision.Batch's maxQueuedRules doc in
+// batch.go), silently degrading the session's rules surface. The session
+// teardown calls this before it closes the rules service, so the service's own
+// drain delivers directly instead of queueing into a dead batch.
+//
+// The mid-session case is the one Close cannot reach: a model that abandons the
+// loop while the session stays open leaves the routing armed until the session
+// ends, because nothing here is time-based (a staleness release would need a
+// clock seam this tool does not own). That is why the tool doc states it to the
+// model: while a batch is bound, the rules path is only as reliable as the loop
+// calling this tool.
 //
 // It releases the routing and nothing else: it does not wait for an in-flight
 // call (the flight holds no lock across a tick, so there is nothing to wait on)
@@ -599,11 +641,40 @@ func (out *superviseResult) addNote(line string) {
 }
 
 // maxErrAppliedDetails caps how many applied interventions an interrupted
-// settle's error names, so the error stays one readable line.
+// call's error names, so the error stays one readable line.
 const maxErrAppliedDetails = 5
 
-// appliedSummary states what an interrupted settle managed to apply, so the
-// model still sees what its decisions triggered.
+// maxErrRecordDetails caps how many decision records an interrupted call's
+// error names, for the same reason and by the same rule (the dropped ones
+// matter most: they are how the model learns a decision did nothing).
+const maxErrRecordDetails = 5
+
+// recordsSummary names each decision record an interrupted call made — scope,
+// action, outcome, and the drop reason when there is one — so the records
+// survive the interruption instead of being reduced to a count.
+func recordsSummary(records []superviseRecord) string {
+	if len(records) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, rec := range records {
+		if i == maxErrRecordDetails {
+			fmt.Fprintf(&b, ", (+%d more)", len(records)-maxErrRecordDetails)
+			break
+		}
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%s %s %s", rec.Scope, rec.Action, rec.Outcome)
+		if rec.DropReason != "" {
+			fmt.Fprintf(&b, " (%s)", rec.DropReason)
+		}
+	}
+	return b.String()
+}
+
+// appliedSummary states what an interrupted call managed to apply, so the model
+// still sees what its decisions triggered.
 func appliedSummary(applied []superviseApplied) string {
 	if len(applied) == 0 {
 		return ""

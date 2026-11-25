@@ -27,9 +27,13 @@ import (
 func liveSnapshot() *supervision.Snapshotter { return &supervision.Snapshotter{} }
 
 // liveInfra returns the loopInfraStage fields registerSuperviseTool's guard
-// requires beside the snapshotter: the run registry and the scope manager the
-// batch binds on. A real in-memory pair, because the guard checks them — an
-// empty stage would take the degraded path (review L2-r2).
+// requires beside the snapshotter: the run registry, the scope manager the
+// batch binds on, and the root scope the tool is registered with as its calling
+// scope. A real in-memory pair, because the guard checks them — an empty stage
+// would take the degraded path (review L2-r2) — and a non-empty rootScopeID,
+// because the tool refuses every call without one: begin() resolves the calling
+// scope from it, so "no root scope" is its own degraded path (review r3
+// finding 3) and the live fixture must not accidentally sit on it.
 func liveInfra(t *testing.T) *loopInfraStage {
 	t.Helper()
 	store, err := kerneltrace.NewSQLiteTraceStore(":memory:")
@@ -38,8 +42,9 @@ func liveInfra(t *testing.T) *loopInfraStage {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 	return &loopInfraStage{
-		runs:     supervision.NewRegistry(),
-		scopeMgr: goatherd.NewScopeManager(store),
+		runs:        supervision.NewRegistry(),
+		scopeMgr:    goatherd.NewScopeManager(store),
+		rootScopeID: "scope:root",
 	}
 }
 
@@ -173,10 +178,12 @@ func TestSuperviseTool_AdmissionWidensAnExplicitToolList(t *testing.T) {
 }
 
 // TestSuperviseTool_DegradedWithoutRegistryOrScopeManager pins the extended
-// guard (review L2-r2): the batch binds on the run registry AND the scope
-// manager as well as the snapshotter, so a session missing any of the three
-// takes the same loud degraded path — tool absent, recorded as omitted —
-// instead of registering a tool whose every tick reports an empty, done batch.
+// guard (review L2-r2, widened in r3): the batch binds on the run registry AND
+// the scope manager as well as the snapshotter, and the tool is registered with
+// the root scope as its caller — so a session missing any of them takes the same
+// loud degraded path (tool absent, recorded as omitted) instead of registering a
+// tool whose every tick reports an empty, done batch, or a tool whose every call
+// fails with "no calling scope is configured".
 func TestSuperviseTool_DegradedWithoutRegistryOrScopeManager(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -184,6 +191,12 @@ func TestSuperviseTool_DegradedWithoutRegistryOrScopeManager(t *testing.T) {
 	}{
 		{"no run registry", func(st *loopInfraStage) { st.runs = nil }},
 		{"no scope manager", func(st *loopInfraStage) { st.scopeMgr = nil }},
+		// CreateRootScope failed (ErrRootTerminal, or a degraded
+		// buildGoatherdInfra): the other three inputs are present, so
+		// without this arm the guard would register a supervise tool whose
+		// CallerScopeID is "" and whose every call refuses. The
+		// degradation must be recorded like the others.
+		{"no root scope", func(st *loopInfraStage) { st.rootScopeID = "" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{}
@@ -197,10 +210,13 @@ func TestSuperviseTool_DegradedWithoutRegistryOrScopeManager(t *testing.T) {
 			registerSuperviseTool(st, cfg, tr, liveSnapshot())
 
 			if tr.reg.Get("supervise") != nil {
-				t.Error("the tool must not register when a batch input is missing")
+				t.Error("the tool must not register when a batch input or the calling scope is missing")
 			}
 			if !slices.Contains(tr.omittedTools, "supervise") {
 				t.Errorf("the degradation must be recorded as omitted (omittedTools = %v)", tr.omittedTools)
+			}
+			if !tr.belt.Knows("supervise") {
+				t.Error("the belt must still know the name so a persona naming supervise is not reported as a typo")
 			}
 		})
 	}

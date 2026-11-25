@@ -139,9 +139,10 @@ func executeSupervise(t *testing.T, tool *SuperviseTool, args string) (supervise
 // batch cannot produce on demand: a refused tick, and a tick held open across a
 // second call.
 type stubBatch struct {
-	next  func(ctx context.Context, decisions []supervisionapi.Decision) (supervisionapi.TickResult, error)
-	text  string
-	calls int
+	next      func(ctx context.Context, decisions []supervisionapi.Decision) (supervisionapi.TickResult, error)
+	text      string
+	calls     int
+	textCalls int
 }
 
 func (s *stubBatch) Next(ctx context.Context, decisions []supervisionapi.Decision) (supervisionapi.TickResult, error) {
@@ -149,7 +150,10 @@ func (s *stubBatch) Next(ctx context.Context, decisions []supervisionapi.Decisio
 	return s.next(ctx, decisions)
 }
 
-func (s *stubBatch) SnapshotText(int) string { return s.text }
+func (s *stubBatch) SnapshotText(int) string {
+	s.textCalls++
+	return s.text
+}
 
 func stubTool(batch SuperviseBatch) *SuperviseTool {
 	return &SuperviseTool{
@@ -755,6 +759,83 @@ func TestSuperviseTool_CancelledCallReleasesArbiter(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSuperviseTool_InterruptedTickKeepsPartialRecords pins review r3 finding 2:
+// a tick the ctx cancels mid-call is not a tick that did nothing. The batch
+// returns the records its completed pass made BESIDE the cancellation (batch.go
+// keeps results and applied interventions on a cancelled wait, and bumps the
+// ages), so dropping them would fail the call while erasing the only report of
+// what the decisions did — a steer already delivered, a revert already claimed.
+// They therefore ride the error the way a cancelled settle's do, named scope by
+// scope, with the dropped ones keeping their reason. A refused Next (the zero
+// TickResult) keeps the plain message, and neither path renders the snapshot: no
+// text reaches the caller, so a render would only repoint the label map.
+func TestSuperviseTool_InterruptedTickKeepsPartialRecords(t *testing.T) {
+	t.Run("partial pass survives", func(t *testing.T) {
+		applied := supervisionapi.InterventionRecord{
+			Tick: 1, Scope: "scope:sub-a", Source: supervisionapi.SourcePolicy,
+			Action: supervisionapi.ActionSteer, Outcome: "applied",
+		}
+		batch := &stubBatch{
+			next: func(context.Context, []supervisionapi.Decision) (supervisionapi.TickResult, error) {
+				return supervisionapi.TickResult{
+					Results: []supervisionapi.InterventionRecord{
+						applied,
+						{
+							Tick: 1, Scope: "scope:sub-b", Source: supervisionapi.SourcePolicy,
+							Action: supervisionapi.ActionRevert, Outcome: "dropped",
+							DropReason: supervisionapi.DropReasonNotReversible,
+						},
+					},
+					Applied: []supervisionapi.InterventionRecord{applied},
+				}, context.Canceled
+			},
+			text: "w1 ...",
+		}
+		out, err := stubTool(batch).Execute(context.Background(), `{}`)
+		if err == nil {
+			t.Fatal("err = nil, want the interruption reported: the tick did not finish")
+		}
+		if out != "" {
+			t.Errorf("result = %q, want empty: the error text replaces the tool result, so anything else is discarded", out)
+		}
+		for _, want := range []string{
+			"the tick was interrupted",
+			"after 1 tick(s)",
+			"2 decision record(s)",
+			"1 applied intervention(s)",
+			"scope:sub-a steer applied",
+			"scope:sub-b revert dropped (not_reversible)",
+			"context canceled",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not carry %q: a cancelled tick's records must survive the interruption", err, want)
+			}
+		}
+		if batch.textCalls != 0 {
+			t.Errorf("SnapshotText calls = %d, want 0: an interrupted call's payload rides the error, so rendering would repoint the label map for a text nobody reads", batch.textCalls)
+		}
+	})
+
+	t.Run("refused tick keeps the plain message", func(t *testing.T) {
+		batch := &stubBatch{
+			next: func(context.Context, []supervisionapi.Decision) (supervisionapi.TickResult, error) {
+				return supervisionapi.TickResult{}, context.Canceled
+			},
+			text: "w1 ...",
+		}
+		_, err := stubTool(batch).Execute(context.Background(), `{}`)
+		if err == nil {
+			t.Fatal("err = nil, want the cancellation reported")
+		}
+		if !strings.Contains(err.Error(), "the tick did not complete") {
+			t.Errorf("error = %q, want the plain did-not-complete message for a tick that made no records", err)
+		}
+		if strings.Contains(err.Error(), "records:") {
+			t.Errorf("error = %q, want no record list for a tick that made none", err)
+		}
+	})
 }
 
 // TestSuperviseTool_SettleBusyIsTheBusyReply pins finding 3: a settle call that

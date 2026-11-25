@@ -284,7 +284,13 @@ type agentSession struct {
 	// Nil when tracing is off or the engine is disabled in config.
 	// Closed FIRST in teardown — a drain mid-delivery must finish
 	// before the registry it delivers through goes away.
-	supervisor *supervision.Service
+	//
+	// The field's type is the narrow rulesService rather than the concrete
+	// *supervision.Service because teardown needs exactly one method from it
+	// (Close), and the ORDER that Close runs in relative to the supervise
+	// tool's release is the thing worth testing: a fake closer lets a test
+	// pin it with an ordered log (session_supervise_teardown_test.go).
+	supervisor rulesService
 	reaper     *supervision.Reaper // stale dispatch-scope sweeper (yaah-95ri.4)
 
 	// roleWatcher polls the role search paths and reloads the default
@@ -509,6 +515,11 @@ func (s *agentSession) shutdown() {
 	// makes — the same reason a tick reporting Done releases it mid-session. The
 	// tool refuses later calls once closed, so a wake turn racing teardown cannot
 	// re-arm it.
+	//
+	// The ordering is pinned by TestSessionTeardownReleasesSuperviseBeforeRulesClose
+	// (session_supervise_teardown_test.go): it runs this teardown with a registry
+	// holding an armed tool and a rules service that records its Close, so moving
+	// this block after the Close below, or losing either type-switch branch, fails.
 	if s.toolReg != nil {
 		// A type switch, not a checked assertion: the assertion form cannot tell
 		// "no supervise tool in this session" (nil — policy none, or the degraded
@@ -713,6 +724,31 @@ func handleTerminationSignal(sigs <-chan os.Signal, closeFn func(), exitFn func(
 // interface is what lets a test drive the seam without a live store.
 type sessionEnder interface {
 	EndSession(id string, endedAt int64, tokensIn int, tokensOut int, tokensCached, subTokensIn, subTokensOut int) error
+}
+
+// rulesService is the slice of the session's advisory rules service that
+// teardown needs: Close stops its drain goroutine and joins it.
+//
+// It is an interface for the same reason sessionEnder is one: the ORDER of
+// teardown steps relative to the rules service's Close is load-bearing (the
+// supervise tool must release the engine's routing back to direct delivery
+// first, or the drain's remaining firings queue into a batch nothing ticks),
+// and that ordering is only observable through a closer a test can watch.
+// *supervision.Service is the production implementation.
+type rulesService interface {
+	Close()
+}
+
+// rulesServiceOf adapts the composition root's *supervision.Service to the
+// teardown's narrow interface, mapping the typed nil a disabled engine produces
+// to a nil interface. The mapping is load-bearing: a nil pointer stored in the
+// interface is a NON-nil interface, so the teardown's `!= nil` guard would pass
+// and Close would nil-panic on the way out of every tracing-off session.
+func rulesServiceOf(svc *supervision.Service) rulesService {
+	if svc == nil {
+		return nil
+	}
+	return svc
 }
 
 // endSessionRow durably records the session's terminal row: ended_at plus the
