@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.218.1](https://github.com/goatherdai/yaah/compare/v0.218.0...v0.218.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* **safety:** deny gate scans verbs, not data arguments (yaah-0lx8) ([#421](https://github.com/goatherdai/yaah/issues/421)) ([3c1e29c](https://github.com/goatherdai/yaah/commit/3c1e29cd408e5d854fe7aa5ff0b5ddeb75dc31ce))
+
 ## [0.218.0](https://github.com/goatherdai/yaah/compare/v0.217.0...v0.218.0) (2026-11-25)
 
 
