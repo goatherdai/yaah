@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.218.0](https://github.com/goatherdai/yaah/compare/v0.217.0...v0.218.0) (2026-11-25)
+
+
+### Features
+
+* **reports:** paged lazy retrieval for dispatch reports (yaah-okcl) ([#419](https://github.com/goatherdai/yaah/issues/419)) ([eec636a](https://github.com/goatherdai/yaah/commit/eec636a8fa6c76bfc1af39c3bb027fc356fde897))
+
 ## [0.217.0](https://github.com/goatherdai/yaah/compare/v0.216.0...v0.217.0) (2026-11-25)
 
 
