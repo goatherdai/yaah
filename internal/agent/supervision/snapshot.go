@@ -131,23 +131,37 @@ func (s *Snapshotter) Snapshot() supervisionapi.Snapshot {
 
 	out.Agents = make([]supervisionapi.AgentSnapshot, 0, len(regs))
 	for _, reg := range regs {
-		out.Agents = append(out.Agents, s.agent(ctx, reg))
+		out.Agents = append(out.Agents, s.agent(ctx, reg, now))
 	}
 	return out
 }
 
 // agent builds one agent's snapshot from its registration plus its facts.
-func (s *Snapshotter) agent(ctx context.Context, reg Registration) supervisionapi.AgentSnapshot {
+// now is the snapshot's clock: it ages the run and its in-flight calls, so
+// one poll reads one instant.
+func (s *Snapshotter) agent(ctx context.Context, reg Registration, now time.Time) supervisionapi.AgentSnapshot {
 	out := supervisionapi.AgentSnapshot{
-		ScopeID:      reg.ScopeID,
-		OwnerID:      ownerOf(reg.ScopeID),
-		Role:         reg.Role,
-		Label:        reg.Label,
+		ScopeID: reg.ScopeID,
+		OwnerID: ownerOf(reg.ScopeID),
+		Role:    reg.Role,
+		Label:   reg.Label,
+		// Feature is already clipped by the registrant's DeriveFeature;
+		// the clip is defensive, for a registrant that did not derive it.
+		Feature:      clipRunes(reg.Feature, supervisionapi.MaxFeatureRunes),
 		Workdir:      reg.Workdir,
 		StillRunning: reg.StillRunning,
+		Reversible:   reg.Reversible,
+		Redirectable: reg.Redirectable,
 		StartedAt:    reg.StartedAt,
 		FinishedAt:   reg.FinishedAt,
 		Through:      -1,
+	}
+	// In-flight calls come from the registry's per-run table, not the
+	// trace: only a live run can have them, and a finished one reports
+	// nil — the property that makes a call cut off by cancellation
+	// disappear.
+	if reg.StillRunning && s.Runs != nil {
+		out.InFlight = s.Runs.InFlightCalls(reg.ScopeID, now)
 	}
 	if s.Store == nil || out.OwnerID == "" {
 		out.Note = "trace store unavailable for this session"
@@ -268,6 +282,15 @@ func foldAgentFacts(out *supervisionapi.AgentSnapshot, slice kerneltrace.Slice) 
 			out.Calls++
 			if !capture.success {
 				out.Errors++
+				// ConsecutiveErrors counts over the FULL fact stream, not
+				// the capped trail: a streak that opened outside the
+				// trailing window is the stuck signal a supervisor acts on
+				// (yaah-k0x1). A success resets it; an unpaired call —
+				// a pending call, or a capture append that failed — is
+				// not an observed failure, so it neither counts nor resets.
+				out.ConsecutiveErrors++
+			} else {
+				out.ConsecutiveErrors = 0
 			}
 		}
 		// A file is "modified" only when the call that named it returned

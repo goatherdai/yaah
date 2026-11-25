@@ -493,6 +493,16 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			preRunOK = true
 		}
 
+		// The snapshot's feature description (yaah-k0x1): the dispatch
+		// label when one was supplied, otherwise the dispatch prompt
+		// trimmed, whitespace-collapsed, and clipped. Computed ONCE, before
+		// the bridge, from the ORIGINAL prompt — a redirect successor's
+		// first message is the supervisor's guidance, and the feature must
+		// keep describing the task the scope was dispatched for — so the
+		// registry never holds a full prompt. SubAgentParams carries no
+		// label today; when one lands, it takes the label seat.
+		feature := supervision.DeriveFeature("", prompt)
+
 		// Supervision bridge (adoption plans A2/A3): the run registers
 		// its steering channel and its cancellation under the scope ID,
 		// so the supervisor tool's inject and halt reach this loop
@@ -561,6 +571,15 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 					Role:      string(role),
 					Workdir:   params.Workdir,
 					StartedAt: time.Now(),
+					// Feature and Redirectable (yaah-k0x1): the feature
+					// description derived once above, and every sub-agent run
+					// is redirectable (the root scope's registration sets
+					// neither flag). Reversible is deliberately NOT set here:
+					// the pre-run capture below runs after this registration,
+					// so it lands through MarkReversible once it has actually
+					// succeeded.
+					Feature:      feature,
+					Redirectable: true,
 				})
 				// Register stamps a fresh generation on this incarnation;
 				// capture it now so the end-of-sequence teardown removes
@@ -573,6 +592,12 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			// Snapshot the workspace this generation starts from, so a
 			// revert claimed against THIS generation can restore it.
 			capturePreRun(ctx)
+			// Reversibility is fixed once the capture succeeds (yaah-k0x1):
+			// the registry's mark is generation-checked, so a capture that
+			// lands after a successor registered cannot mark the replacement.
+			if preRunOK {
+				opts.runs.MarkReversible(bridgeScopeID, runGen)
+			}
 			bridgeLive = true
 			defer func() {
 				// Panic safety net only, mirroring the end-of-sequence
@@ -612,6 +637,18 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// once today; it is the seam yaah-8gxg.3 re-enters on the SAME
 		// scope and steerCh after a live redirect.
 		runOnce := func(ctx context.Context, prompt string) (string, error) {
+			// The feed seam (yaah-k0x1): THIS generation's in-flight table,
+			// fetched after registerBridge stamped runGen. The observer
+			// closure forwards the loop's tool start/end events into it; the
+			// per-run closure is what supplies the scope, since events carry
+			// none. A nil table — no bridge — leaves the observer nil and
+			// the loop exactly as before.
+			var eventObserver func(agent.Event)
+			if bridgeLive {
+				if tbl := opts.runs.InFlightTable(bridgeScopeID, runGen); tbl != nil {
+					eventObserver = tbl.Observe
+				}
+			}
 			subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
 				Permissions:            rolePermissions,
 				ProviderName:           subProviderName,
@@ -642,6 +679,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 				TraceCWD:               traceCWD,
 				RetainedContext:        traceContext,
 				SteerCh:                steerCh,
+				EventObserver:          eventObserver,
 				DestructiveGuard:       guardCheck,
 				ShellGuardAllow:        guardAllow,
 				ShellGuardDenyRec:      guardDenyRec,
@@ -883,6 +921,9 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 				break
 			}
 			capturePreRun(ctx)
+			if preRunOK {
+				opts.runs.MarkReversible(bridgeScopeID, runGen)
+			}
 			if req.Guidance != "" {
 				prompt = req.Guidance
 			}

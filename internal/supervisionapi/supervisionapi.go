@@ -1,8 +1,11 @@
-// Package supervisionapi holds the small vocabulary the supervisor tool and
-// the agent's supervision service share, without either importing the other.
-// The error sentinels keep errors.Is identity across the boundary; Firing is
-// the read-only summary the status view renders, and Snapshot is the batched
-// per-agent view the effect stream yields (yaah-1050.1.1).
+// Package supervisionapi holds the small vocabulary the supervisor tool
+// and the agent's supervision service share, without either importing the
+// other. The error sentinels keep errors.Is identity across the boundary;
+// Firing is the read-only summary the status view renders, Snapshot is the
+// batched per-agent view the effect stream yields (yaah-1050.1.1), and the
+// decision/tick types carry the supervisor policy loop's vocabulary
+// (yaah-k0x1): one decider call per tick returns a list of decisions, and
+// TickResult records what became of each.
 package supervisionapi
 
 import (
@@ -94,6 +97,23 @@ type ToolCallDigest struct {
 	Error   string
 }
 
+// MaxFeatureRunes caps a snapshot's feature description, counted in runes
+// so a multi-byte summary cannot exceed the cap. The design's §4.2 carries
+// the paper's "feature description (≤ 350 chars)" as a rune count: a
+// character limit that a byte cap would break on the first non-ASCII
+// summary.
+const MaxFeatureRunes = 350
+
+// InFlightCall is a tool call that has started and has not returned.
+type InFlightCall struct {
+	Name string
+	// Args is the abbreviated argument text the start event carried,
+	// bounded by the snapshot's existing args cap.
+	Args string
+	// Age is the time since the call started, at the snapshot's time.
+	Age time.Duration
+}
+
 // AgentSnapshot is one agent's compact, batched state as the supervisor sees
 // it: who is running, what it has done lately, and what it has touched.
 //
@@ -120,7 +140,13 @@ type AgentSnapshot struct {
 	// registers none today (SubAgentParams carries no label), so it is
 	// empty for every dispatch; a labelled registration fills it without
 	// changing this vocabulary.
-	Label   string
+	Label string
+	// Feature is the snapshot's feature description: the dispatch label
+	// when one was supplied, otherwise a summary of the dispatch prompt —
+	// trimmed, whitespace-collapsed, and clipped to MaxFeatureRunes runes.
+	// What the supervisor reads to decide whether the agent's work still
+	// matches its task.
+	Feature string
 	Workdir string
 
 	// StillRunning distinguishes a live registration from one that has
@@ -131,6 +157,16 @@ type AgentSnapshot struct {
 	StartedAt    time.Time
 	// FinishedAt is zero while the run is live.
 	FinishedAt time.Time
+
+	// Reversible and Redirectable are fixed by the registration, not
+	// derived: Reversible says a pre-run workspace capture exists, so a
+	// revert can roll the scope back to it (marked after the capture
+	// succeeds, never at registration); Redirectable is false for the
+	// root scope, which a redirect must never target. The decider reads
+	// both before choosing an action, so a revert on a non-reversible
+	// scope is dropped rather than proposed.
+	Reversible   bool
+	Redirectable bool
 
 	// LastAction is the kind label of the most recent tool call, and
 	// LastArgs its bounded argument text. Empty when the agent has called
@@ -147,11 +183,25 @@ type AgentSnapshot struct {
 	// outside the reader's known set contributes nothing.
 	ModifiedFiles []string
 
+	// InFlight is the calls that have started and not returned, oldest
+	// first, with their age at the snapshot's time. Fed from the host's
+	// tool-start events and held in memory only — a scope that is no
+	// longer running reports nil, which is what makes a call cut off by
+	// cancellation disappear.
+	InFlight []InFlightCall
+
 	// Calls and Errors are totals over the facts the reader observed —
 	// not just the capped trail — so an agent with 300 calls and 4
 	// failures reports 300/4 while showing its last 25 calls.
 	Calls  int
 	Errors int
+	// ConsecutiveErrors is the paired failed calls since the last paired
+	// success, derived over the full fact stream — not the capped trail —
+	// so a streak that started outside the trailing window still shows.
+	// A paired success resets it to zero, and an unpaired call (a pending
+	// call, or a capture append that failed) neither counts nor resets:
+	// it was not observed to fail.
+	ConsecutiveErrors int
 	// Through is the highest trace ordinal observed for the owner — the
 	// cursor a later incremental read resumes from — and -1 when the
 	// owner path held no facts (a run that has not appended anything, or

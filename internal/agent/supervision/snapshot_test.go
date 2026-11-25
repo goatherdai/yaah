@@ -327,3 +327,269 @@ func TestSnapshotter_FinishedCapKeepsNewest(t *testing.T) {
 func TestSnapshotSourceIsSatisfied(t *testing.T) {
 	var _ supervisionapi.SnapshotSource = (*Snapshotter)(nil)
 }
+
+// appendDeclaration writes one tool call's declaration with NO capture —
+// the pending-call shape, or the failed-append shape the streak derivation
+// must ignore.
+func appendDeclaration(t *testing.T, store *kerneltrace.SQLiteTraceStore, owner, name, args string) {
+	t.Helper()
+	if _, err := store.Append(context.Background(), kerneltrace.TrustedAppendContext, kerneltrace.AppendBatch{
+		AppendIntentID: fmt.Sprintf("%s:tool:%d", owner, nextCallSeq()),
+		Groups: []kerneltrace.AppendGroup{{
+			TraceOwnerID: owner,
+			FactDrafts: []kerneltrace.RecordDraft{{
+				Mode:      kerneltrace.Declaration,
+				SchemaRef: "yaah.tool." + name + ".v1",
+				KindLabel: name,
+				Payload:   map[string]any{"tool": name, "args": args},
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("append declaration: %v", err)
+	}
+}
+
+// TestSnapshotter_ConsecutiveErrors pins the streak derivation (yaah-k0x1):
+// paired failures count, a paired success resets, an unpaired declaration
+// neither counts nor resets, and the count runs over the FULL fact stream —
+// a streak that opened outside the 25-call trail still shows in full.
+func TestSnapshotter_ConsecutiveErrors(t *testing.T) {
+	snapshotAgent := func(t *testing.T, store *kerneltrace.SQLiteTraceStore, owner string) supervisionapi.AgentSnapshot {
+		t.Helper()
+		runs := NewRegistry()
+		registerRun(t, runs, owner, "builder", "")
+		agents := (&Snapshotter{Runs: runs, Store: store}).Snapshot().Agents
+		if len(agents) != 1 {
+			t.Fatalf("agents = %d, want 1", len(agents))
+		}
+		return agents[0]
+	}
+
+	t.Run("success resets the streak", func(t *testing.T) {
+		store := newSnapshotStore(t)
+		owner := "sub-streak-reset"
+		appendCall(t, store, owner, "bash", `{"command":"x"}`, false, "boom")
+		appendCall(t, store, owner, "bash", `{"command":"x"}`, false, "boom")
+		appendCall(t, store, owner, "read", `{"filePath":"a.go"}`, true, "")
+		a := snapshotAgent(t, store, owner)
+		if a.ConsecutiveErrors != 0 {
+			t.Errorf("ConsecutiveErrors = %d, want 0 after the paired success", a.ConsecutiveErrors)
+		}
+		if a.Errors != 2 {
+			t.Errorf("Errors = %d, want the 2 failures", a.Errors)
+		}
+	})
+
+	t.Run("failures count and an unpaired call neither counts nor resets", func(t *testing.T) {
+		store := newSnapshotStore(t)
+		owner := "sub-streak-unpaired"
+		appendCall(t, store, owner, "read", `{"filePath":"a.go"}`, true, "")
+		appendCall(t, store, owner, "bash", `{"command":"x"}`, false, "boom")
+		appendDeclaration(t, store, owner, "write", `{"filePath":"b.go"}`)
+		a := snapshotAgent(t, store, owner)
+		if a.Calls != 2 {
+			t.Errorf("Calls = %d, want the 2 paired calls", a.Calls)
+		}
+		if a.ConsecutiveErrors != 1 {
+			t.Errorf("ConsecutiveErrors = %d, want 1 — the unpaired declaration is a pending call, not an observed failure", a.ConsecutiveErrors)
+		}
+	})
+
+	t.Run("a streak longer than the trail still counts in full", func(t *testing.T) {
+		store := newSnapshotStore(t)
+		owner := "sub-streak-long"
+		for i := 0; i < 10; i++ {
+			appendCall(t, store, owner, "read", `{"filePath":"a.go"}`, true, "")
+		}
+		for i := 0; i < 30; i++ {
+			appendCall(t, store, owner, "bash", `{"command":"x"}`, false, "boom")
+		}
+		a := snapshotAgent(t, store, owner)
+		if a.Calls != 40 || a.Errors != 30 {
+			t.Fatalf("calls/errors = %d/%d, want 40/30", a.Calls, a.Errors)
+		}
+		if a.ConsecutiveErrors != 30 {
+			t.Errorf("ConsecutiveErrors = %d, want the full 30-call streak even though the trail holds 25", a.ConsecutiveErrors)
+		}
+		if len(a.Trail) != maxTrailCalls {
+			t.Errorf("trail = %d, want the cap", len(a.Trail))
+		}
+	})
+}
+
+// TestSnapshotter_Feature pins the feature description (yaah-k0x1): the
+// label wins when one was supplied, otherwise the prompt is trimmed,
+// whitespace-collapsed, and clipped to MaxFeatureRunes runes — and the
+// builder passes it through, clipping defensively.
+func TestSnapshotter_Feature(t *testing.T) {
+	t.Run("label wins over the prompt", func(t *testing.T) {
+		if got := DeriveFeature("ship the fix", "do\nthe\tother   thing"); got != "ship the fix" {
+			t.Errorf("DeriveFeature = %q, want the label", got)
+		}
+	})
+	t.Run("prompt is trimmed and whitespace-collapsed", func(t *testing.T) {
+		if got := DeriveFeature("", "  fix   the\n\nflaky\ttest  "); got != "fix the flaky test" {
+			t.Errorf("DeriveFeature = %q, want the collapsed prompt", got)
+		}
+	})
+	t.Run("clipped to MaxFeatureRunes runes at a multi-byte boundary", func(t *testing.T) {
+		got := DeriveFeature("", strings.Repeat("é", 500)) // 2 bytes per rune
+		if n := len([]rune(got)); n != supervisionapi.MaxFeatureRunes {
+			t.Fatalf("clipped length = %d runes, want %d", n, supervisionapi.MaxFeatureRunes)
+		}
+		// The clip slices and adds nothing — the reference implementation
+		// appends no marker, so the tail is the cap-th rune, not an ellipsis.
+		if got != strings.Repeat("é", supervisionapi.MaxFeatureRunes) {
+			t.Errorf("clip must slice to the cap and add nothing, got a %d-rune string", len([]rune(got)))
+		}
+		exact := DeriveFeature("", strings.Repeat("é", supervisionapi.MaxFeatureRunes))
+		if len([]rune(exact)) != supervisionapi.MaxFeatureRunes {
+			t.Errorf("an exactly-max string must pass through unchanged, got %d runes", len([]rune(exact)))
+		}
+	})
+	t.Run("the builder passes the derived feature through", func(t *testing.T) {
+		store := newSnapshotStore(t)
+		owner := "sub-feature"
+		appendCall(t, store, owner, "read", `{"filePath":"a.go"}`, true, "")
+		runs := NewRegistry()
+		runs.Register("scope:"+owner, Run{
+			SteerCh:   make(chan string, SteerBuffer),
+			Role:      "builder",
+			StartedAt: time.Now().Add(-time.Minute),
+			Feature:   DeriveFeature("", "repair the\n   flaky  test"),
+		})
+		a := (&Snapshotter{Runs: runs, Store: store}).Snapshot().Agents[0]
+		if a.Feature != "repair the flaky test" {
+			t.Errorf("Feature = %q, want the derived description", a.Feature)
+		}
+	})
+	t.Run("the builder clips defensively", func(t *testing.T) {
+		runs := NewRegistry()
+		runs.Register("scope:sub-feature-clipped", Run{
+			SteerCh: make(chan string, SteerBuffer),
+			Feature: strings.Repeat("é", supervisionapi.MaxFeatureRunes*2),
+		})
+		a := (&Snapshotter{Runs: runs}).Snapshot().Agents[0]
+		if n := len([]rune(a.Feature)); n != supervisionapi.MaxFeatureRunes {
+			t.Errorf("Feature = %d runes, want the defensive clip to %d", n, supervisionapi.MaxFeatureRunes)
+		}
+	})
+	t.Run("empty stays empty", func(t *testing.T) {
+		runs := NewRegistry()
+		registerRun(t, runs, "sub-feature-empty", "builder", "")
+		a := (&Snapshotter{Runs: runs}).Snapshot().Agents[0]
+		if a.Feature != "" {
+			t.Errorf("Feature = %q, want empty when the registrant supplied none", a.Feature)
+		}
+	})
+}
+
+// TestSnapshotter_RegistrationFlagsPassThrough pins the reversibility
+// flags (yaah-k0x1): what the registration carries is what the snapshot
+// reports, Reversible arrives only through the registry's mark — it has
+// no registration input — a root-style registration with neither flag
+// reports false/false, and a finished run keeps the flags it had.
+func TestSnapshotter_RegistrationFlagsPassThrough(t *testing.T) {
+	t.Run("flags pass through", func(t *testing.T) {
+		runs := NewRegistry()
+		runs.Register("scope:flags", Run{
+			SteerCh:      make(chan string, SteerBuffer),
+			Redirectable: true,
+		})
+		gen, ok := runs.Generation("scope:flags")
+		if !ok {
+			t.Fatal("Generation must report the live registration")
+		}
+		runs.MarkReversible("scope:flags", gen)
+		a := (&Snapshotter{Runs: runs}).Snapshot().Agents[0]
+		if !a.Reversible || !a.Redirectable {
+			t.Errorf("flags = %v/%v, want the marked reversible and the registered redirectable", a.Reversible, a.Redirectable)
+		}
+	})
+	t.Run("root-style registration reports false/false", func(t *testing.T) {
+		runs := NewRegistry()
+		registerRun(t, runs, "sub-rootish", "root", "")
+		a := (&Snapshotter{Runs: runs}).Snapshot().Agents[0]
+		if a.Reversible || a.Redirectable {
+			t.Errorf("flags = %v/%v, want false/false for a registration that set neither", a.Reversible, a.Redirectable)
+		}
+	})
+	t.Run("a finished run keeps its flags", func(t *testing.T) {
+		runs := NewRegistry()
+		runs.Register("scope:done-flags", Run{
+			SteerCh: make(chan string, SteerBuffer),
+		})
+		gen, ok := runs.Generation("scope:done-flags")
+		if !ok {
+			t.Fatal("Generation must report the live registration")
+		}
+		runs.MarkReversible("scope:done-flags", gen)
+		runs.Unregister("scope:done-flags")
+		a := (&Snapshotter{Runs: runs}).Snapshot().Agents[0]
+		if a.StillRunning {
+			t.Fatal("the run must read as finished")
+		}
+		if !a.Reversible || a.Redirectable {
+			t.Errorf("flags = %v/%v, want the finished run's marked reversible", a.Reversible, a.Redirectable)
+		}
+	})
+}
+
+// TestSnapshotter_InFlight pins the in-flight feed (yaah-k0x1): a started
+// call appears with its age at the snapshot's clock, disappears on return,
+// and a scope that is no longer running shows none — a call cut off by
+// cancellation has no end event, and it vanishes with its registration.
+func TestSnapshotter_InFlight(t *testing.T) {
+	store := newSnapshotStore(t)
+	owner := "sub-inflight"
+	appendCall(t, store, owner, "read", `{"filePath":"a.go"}`, true, "")
+	runs := NewRegistry()
+	scopeID := registerRun(t, runs, owner, "builder", "")
+	gen, ok := runs.Generation(scopeID)
+	if !ok {
+		t.Fatal("Generation must report the live registration")
+	}
+	tbl := runs.InFlightTable(scopeID, gen)
+	if tbl == nil {
+		t.Fatal("the registered run must expose its in-flight table")
+	}
+
+	start := time.Unix(1000, 0)
+	tbl.Start(1, "bash", `{"command":"go test ./..."}`, start)
+	tbl.Start(2, "edit", strings.Repeat("x", maxSnapshotArgsBytes+80), start.Add(time.Second))
+
+	s := &Snapshotter{Runs: runs, Store: store, Now: func() time.Time { return start.Add(2 * time.Second) }}
+	a := s.Snapshot().Agents[0]
+	if len(a.InFlight) != 2 {
+		t.Fatalf("InFlight = %d calls, want the two open calls", len(a.InFlight))
+	}
+	if a.InFlight[0].Name != "bash" || a.InFlight[0].Age != 2*time.Second {
+		t.Errorf("InFlight[0] = {%s, %v}, want bash aged 2s (oldest first)", a.InFlight[0].Name, a.InFlight[0].Age)
+	}
+	if a.InFlight[1].Name != "edit" || a.InFlight[1].Age != 1*time.Second {
+		t.Errorf("InFlight[1] = {%s, %v}, want edit aged 1s", a.InFlight[1].Name, a.InFlight[1].Age)
+	}
+	if len(a.InFlight[1].Args) > maxSnapshotArgsBytes+3 || !strings.HasSuffix(a.InFlight[1].Args, "…") {
+		t.Errorf("InFlight[1].Args = %d bytes, want the args cap with an ellipsis tail", len(a.InFlight[1].Args))
+	}
+
+	// On return the call disappears.
+	tbl.End(1)
+	tbl.End(2)
+	if a := s.Snapshot().Agents[0]; a.InFlight != nil {
+		t.Errorf("InFlight after both calls returned = %+v, want nil", a.InFlight)
+	}
+
+	// A finished scope shows none even with a call still open: the
+	// cancellation cut the call off, and the table went with the
+	// registration.
+	tbl.Start(3, "write", `{"filePath":"b.go"}`, start)
+	runs.Unregister(scopeID)
+	a = s.Snapshot().Agents[0]
+	if a.StillRunning {
+		t.Fatal("the unregistered run must read as finished")
+	}
+	if a.InFlight != nil {
+		t.Errorf("a finished scope must show no in-flight calls, got %+v", a.InFlight)
+	}
+}

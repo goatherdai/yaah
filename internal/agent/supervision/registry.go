@@ -84,6 +84,18 @@ type Run struct {
 	Label     string
 	Workdir   string
 	StartedAt time.Time
+
+	// Feature is the run's snapshot feature description (yaah-k0x1): the
+	// dispatch label when one was supplied, otherwise the dispatch prompt
+	// collapsed and clipped — derived by the registrant with DeriveFeature
+	// BEFORE Register, so the registry never holds a full prompt.
+	Feature string
+
+	// Redirectable says a live-redirect handoff may target this run. The
+	// sub-agent runner sets it at Register; the root scope's registration
+	// leaves it false, which is what keeps a redirect from ever replacing
+	// the session's own loop.
+	Redirectable bool
 }
 
 // Registration is one run as the snapshot sees it: the scope it registered
@@ -94,10 +106,66 @@ type Registration struct {
 	ScopeID      string
 	Role         string
 	Label        string
+	Feature      string
 	Workdir      string
 	StartedAt    time.Time
 	FinishedAt   time.Time
 	StillRunning bool
+	// Reversible says a pre-run workspace capture exists, so a revert can
+	// roll the scope's workspace back to it. Deliberately NOT a
+	// registration input: the capture runs after Register, so the
+	// registrant marks it through MarkReversible once the capture has
+	// succeeded — a generation-checked write that cannot reach a
+	// successor. Registration only projects what MarkReversible wrote.
+	Reversible   bool
+	Redirectable bool
+}
+
+// MarkReversible marks the scope's live run reversible when its
+// generation still equals gen — the runner's post-capture call, recording
+// that a pre-run workspace snapshot exists and a revert can restore it.
+// The generation check is the stale-caller guard: a capture that finishes
+// after a successor registered must not mark the replacement. Reports
+// whether the mark landed.
+func (r *Registry) MarkReversible(scopeID string, gen uint64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run, ok := r.runs[scopeID]
+	if !ok || run.gen != gen {
+		return false
+	}
+	run.reversible = true
+	return true
+}
+
+// InFlightTable returns the live run's in-flight call table when its
+// generation still equals gen, and nil otherwise. The table is the feed
+// seam (yaah-k0x1): the runner forwards its loop's tool start/end events
+// into it, and the snapshot builder reads Entries through InFlightCalls.
+// A dropped table — unregister, or a successor Register — stays writable
+// but unread, so a late forwarder cannot corrupt a successor's view.
+func (r *Registry) InFlightTable(scopeID string, gen uint64) *InFlightTable {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run, ok := r.runs[scopeID]
+	if !ok || run.gen != gen {
+		return nil
+	}
+	return run.inflight
+}
+
+// InFlightCalls returns the scope's live run's in-flight calls, oldest
+// first, aged at now. Nil when no run is live for the scope — a finished
+// run has no in-flight calls, which is what makes a call cut off by
+// cancellation disappear from the snapshot.
+func (r *Registry) InFlightCalls(scopeID string, now time.Time) []supervisionapi.InFlightCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run, ok := r.runs[scopeID]
+	if !ok {
+		return nil
+	}
+	return run.inflight.Entries(now)
 }
 
 // RedirectHandle is a successful Redirect claim: the scope and the
@@ -128,6 +196,10 @@ const maxFinishedRuns = 32
 // run is the registry's bookkeeping for one registered execution.
 type run struct {
 	entry Run
+	// reversible is the per-run flag behind Registration.Reversible,
+	// written only by MarkReversible: no registration input sets it, so
+	// the only write path is the generation-checked post-capture mark.
+	reversible bool
 	// gen is this incarnation's generation: a registry-wide monotonic
 	// number stamped by Register. Because a later Register for the same
 	// scope replaces the whole run value with a higher generation,
@@ -152,6 +224,15 @@ type run struct {
 	// pendingRedirect carries the claimed handoff's guidance until the
 	// parent loop consumes it (nil when unclaimed, or once consumed).
 	pendingRedirect *RedirectRequest
+	// inflight is this generation's table of started-not-returned tool
+	// calls (yaah-k0x1), created at Register, cleared when the run
+	// returns (MarkReturned — nothing is executing across the adoption
+	// window), and dropped with the whole run value at unregister or
+	// successor swap. A table a late forwarder still holds after that is
+	// inert: nobody reads it, and a stale caller cannot reach a
+	// successor's table — the generation check on InFlightTable sees to
+	// that.
+	inflight *InFlightTable
 }
 
 // Registry maps scope IDs to the loops currently running under those
@@ -204,7 +285,7 @@ func (r *Registry) Register(scopeID string, entry Run) {
 	defer r.mu.Unlock()
 	r.forgetFinishedLocked(scopeID)
 	r.nextGen++
-	r.runs[scopeID] = &run{entry: entry, gen: r.nextGen}
+	r.runs[scopeID] = &run{entry: entry, gen: r.nextGen, inflight: newInFlightTable(r.now)}
 }
 
 // Unregister removes a run. Safe to call twice; the run's deferred
@@ -228,7 +309,7 @@ func (r *Registry) Unregister(scopeID string) {
 // and UnregisterGeneration share one removal path.
 func (r *Registry) unregisterLocked(scopeID string, entry *run) {
 	delete(r.runs, scopeID)
-	reg := registrationOf(scopeID, entry.entry)
+	reg := registrationOf(scopeID, entry.entry, entry.reversible)
 	reg.StillRunning = false
 	reg.FinishedAt = r.clock()
 	r.finished = append(r.finished, reg)
@@ -349,14 +430,18 @@ func (r *Registry) ConsumeRedirectOrClose(scopeID string, gen uint64) (RedirectR
 }
 
 // registrationOf projects a run's bridge surface down to its snapshot
-// metadata: the channels and the cancellation stay with the execution.
-func registrationOf(scopeID string, entry Run) Registration {
+// metadata: the channels and the cancellation stay with the execution,
+// and Reversible arrives from the run's MarkReversible-written flag.
+func registrationOf(scopeID string, entry Run, reversible bool) Registration {
 	return Registration{
-		ScopeID:   scopeID,
-		Role:      entry.Role,
-		Label:     entry.Label,
-		Workdir:   entry.Workdir,
-		StartedAt: entry.StartedAt,
+		ScopeID:      scopeID,
+		Role:         entry.Role,
+		Label:        entry.Label,
+		Feature:      entry.Feature,
+		Workdir:      entry.Workdir,
+		StartedAt:    entry.StartedAt,
+		Reversible:   reversible,
+		Redirectable: entry.Redirectable,
 	}
 }
 
@@ -386,12 +471,22 @@ func (r *Registry) clock() time.Time {
 // close) works exactly through the adoption window — but steering must
 // stop claiming delivery: a buffered injection the returned loop will
 // never drain is a false "delivered" (PR #398 review finding).
+//
+// The scope's in-flight table is cleared here, not at unregister: a
+// returned run still reads as running through its adoption window, but
+// nothing is executing anymore, and an end event lost to the loop's
+// closing broker must not leave a call aging as if hung. The lock order
+// is the registry's mutex, then the table's — the same order
+// InFlightCalls already establishes.
 func (r *Registry) MarkReturned(scopeID string, gen uint64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if run, ok := r.runs[scopeID]; ok && run.gen == gen {
-		run.returned = true
+	run, ok := r.runs[scopeID]
+	if !ok || run.gen != gen {
+		return
 	}
+	run.returned = true
+	run.inflight.Clear()
 }
 
 // CancelGeneration ends exactly one generation — the live redirect's
@@ -492,7 +587,7 @@ func (r *Registry) Entries() []Registration {
 	defer r.mu.Unlock()
 	out := make([]Registration, 0, len(r.runs))
 	for id, entry := range r.runs {
-		reg := registrationOf(id, entry.entry)
+		reg := registrationOf(id, entry.entry, entry.reversible)
 		reg.StillRunning = true
 		out = append(out, reg)
 	}
@@ -522,7 +617,7 @@ func (r *Registry) SnapshotEntries() []Registration {
 	defer r.mu.Unlock()
 	live := make([]Registration, 0, len(r.runs))
 	for id, entry := range r.runs {
-		reg := registrationOf(id, entry.entry)
+		reg := registrationOf(id, entry.entry, entry.reversible)
 		reg.StillRunning = true
 		live = append(live, reg)
 	}
