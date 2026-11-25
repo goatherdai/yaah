@@ -75,6 +75,17 @@ func (*ProposalTool) Schema() json.RawMessage {
 			"prompt": {
 				"type": "string",
 				"description": "continue/fork only: optional instruction for the continuation; defaults to a supervisor wrap-up prompt"
+			},
+			"report_offset": {
+				"type": "integer",
+				"minimum": 0,
+				"description": "show only: byte offset into the sealed report at which the returned page starts (absent means 0, the head). Pages are byte windows snapped to UTF-8 boundaries and carry no marker, so consecutive pages concatenate to the report exactly; pass the previous response's result_next_offset to continue."
+			},
+			"report_limit": {
+				"type": "integer",
+				"minimum": 1,
+				"maximum": 1048576,
+				"description": "show only: page size in bytes (default 4000, maximum 1 MiB)"
 			}
 		},
 		"required": ["action"]
@@ -100,17 +111,22 @@ func (t *ProposalTool) IsDangerous(argsJSON string) bool {
 
 func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error) {
 	var raw struct {
-		Action     string `json:"action"`
-		ProposalID string `json:"proposal_id"`
-		Strategy   string `json:"strategy"`
-		ExtraTurns int    `json:"extra_turns"`
-		Prompt     string `json:"prompt"`
+		Action       string `json:"action"`
+		ProposalID   string `json:"proposal_id"`
+		Strategy     string `json:"strategy"`
+		ExtraTurns   int    `json:"extra_turns"`
+		Prompt       string `json:"prompt"`
+		ReportOffset int    `json:"report_offset"`
+		ReportLimit  int    `json:"report_limit"`
 	}
 	if err := toolargs.StrictToolArgs("proposal", t.Schema(), args, &raw); err != nil {
 		return "", err
 	}
 	if raw.Strategy != "" && raw.Action != "apply" {
 		return "", fmt.Errorf("proposal: strategy is only valid with apply")
+	}
+	if (raw.ReportOffset != 0 || raw.ReportLimit != 0) && raw.Action != "show" {
+		return "", fmt.Errorf("proposal: report_offset and report_limit are only valid with show")
 	}
 	if t.Proposals == nil {
 		return "", fmt.Errorf("proposal: no session registry configured — this tool is registered with the registry runner.NewDelegateTool creates")
@@ -134,10 +150,25 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		env := proposalEnvelope{
 			Status:     status,
 			ProposalID: p.id,
-			Result:     p.result,
 			Error:      p.runErr,
 			StopReason: p.stopReason,
 			Next:       nextVerbsFor(p),
+		}
+		// The sealed report is paged, never dumped (yaah-okcl): a page is the
+		// exact requested byte window with no marker spliced in, so pages
+		// concatenate back to the report. A show without paging parameters
+		// reads the head page, which is where the dispatch envelope's head and
+		// its result_next_offset continue from. An out-of-range offset answers
+		// an empty page with the true total rather than an error.
+		page := reportPage(p.result, raw.ReportOffset, raw.ReportLimit)
+		env.Result = page.Text
+		if p.result != "" {
+			env.ResultTotalBytes = page.Total
+			env.ResultOffset = page.Offset
+			env.ResultLimit = page.Limit
+			if page.Truncated() {
+				env.ResultNextOffset = page.Next()
+			}
 		}
 		if p.failedSeal != nil {
 			env.World = p.world

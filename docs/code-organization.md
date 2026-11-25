@@ -59,6 +59,7 @@ yaah/
 │   ├── providers/              # OpenAI-compatible + Anthropic clients
 │   ├── pubsub/                 # typed event broker
 │   ├── repl/                   # REPL history and slash commands
+│   ├── reportpage/             # byte-window paging for retained dispatch reports
 │   ├── retention/              # kernel-first session eviction + GC sweep
 │   ├── rolefile/               # role frontmatter parsing/validation
 │   ├── runs/                   # protocol-neutral run/task record (task-style surfaces)

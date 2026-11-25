@@ -173,13 +173,34 @@ type proposalEnvelope struct {
 	// Label is the dispatch's short description, repeated from the background
 	// start signal so a completion read can be correlated without keeping the
 	// job_id→description mapping in context (yaah-was9.1).
-	Label      string   `json:"label,omitempty"`
-	ProposalID string   `json:"proposal_id,omitempty"`
-	Result     string   `json:"result,omitempty"`
-	Diff       string   `json:"diff,omitempty"`
-	Files      []string `json:"files,omitempty"`
-	Action     string   `json:"action,omitempty"`
-	Error      string   `json:"error,omitempty"`
+	Label      string `json:"label,omitempty"`
+	ProposalID string `json:"proposal_id,omitempty"`
+	// Result is the report: the whole text when it fits the envelope's head
+	// window, otherwise that head plus a marker naming the total byte count
+	// and the retrieval route. The FULL report is never lost — it is retained
+	// verbatim in the proposal's sealed metadata / manifest, or in the
+	// background job's record, and paged back through `proposal show` or
+	// `subagent_jobs status` (yaah-okcl).
+	Result string `json:"result,omitempty"`
+	// ResultTotalBytes is the full length of the retained report in bytes. It
+	// is present when the report was paged (and on every `proposal show`
+	// response that has a report), so a caller can plan its reads instead of
+	// discovering the size by paging past the end.
+	ResultTotalBytes int `json:"result_total_bytes,omitempty"`
+	// ResultOffset is the byte offset `result` starts at within the retained
+	// report. Absent means 0, which is the head page.
+	ResultOffset int `json:"result_offset,omitempty"`
+	// ResultLimit is the page window that was applied to this read.
+	ResultLimit int `json:"result_limit,omitempty"`
+	// ResultNextOffset is the offset of the next page, present when there is
+	// one. Passing it back as `report_offset` (or `result_offset` on
+	// subagent_jobs) continues the read; a page carries no marker, so pages
+	// concatenate to the report exactly.
+	ResultNextOffset int      `json:"result_next_offset,omitempty"`
+	Diff             string   `json:"diff,omitempty"`
+	Files            []string `json:"files,omitempty"`
+	Action           string   `json:"action,omitempty"`
+	Error            string   `json:"error,omitempty"`
 	// Retained is the path of the exported delta for a release, proving the
 	// work survived the teardown that follows it.
 	Retained string `json:"retained,omitempty"`
@@ -1205,15 +1226,23 @@ func startRetainedRun(
 		env.Error = trimResult(strings.Join(failureNotes, "; "))
 		return retainedRunResult{Proposal: &env}, nil
 	}
+	// The durable copy gets the only bound this path applies (see
+	// maxDurableReportBytes): everything downstream — the seal metadata, the
+	// in-session proposal, the envelope head and its total — sees the capped
+	// text, so paging always matches what was sealed.
+	result = capDurableReport(result)
 	seal := mgr.Seal
 	if rt.sealOutput != nil {
 		seal = rt.sealOutput
 	}
 	sealOpts, metaErr := proposalSealOptions(retainedProposalMeta{
-		ID:                id,
-		SessionID:         rt.SessionID,
-		ParentScopeID:     rt.RootScopeID,
-		Result:            trimResult(result),
+		ID:            id,
+		SessionID:     rt.SessionID,
+		ParentScopeID: rt.RootScopeID,
+		// The report is sealed VERBATIM, never the envelope's head: this is the
+		// durable copy `proposal show` pages, so a bound here would be the loss
+		// the envelope's head-and-route exists to avoid (yaah-okcl).
+		Result:            result,
 		RunErr:            bodyFailure,
 		StopReason:        env.StopReason,
 		Params:            subParams,
@@ -1278,7 +1307,16 @@ func startRetainedRun(
 			}
 			env.Status = "error"
 		}
-		env.Result = trimResult(result)
+		// The envelope carries the head; the sealed metadata (when the runtime
+		// kept a recoverable artifact) carries the whole report, which is what
+		// the route below pages. An UNRECOVERABLE seal failure registered no
+		// proposal, so the marker must not name a proposal show route that
+		// cannot serve it (PR #419 review finding 2).
+		pagingID := env.ProposalID
+		if !recoverable {
+			pagingID = ""
+		}
+		env.setReport(result, retrieveProposalReport(pagingID))
 		if len(notes) > 0 {
 			env.Error = trimResult(strings.Join(notes, "; "))
 		}
@@ -1290,7 +1328,7 @@ func startRetainedRun(
 		scopeID:        scopeID,
 		workdir:        wt,
 		output:         output,
-		result:         trimResult(result),
+		result:         result,
 		runErr:         bodyFailure,
 		parentID:       rt.RootScopeID,
 		mgr:            mgr,
@@ -1311,7 +1349,7 @@ func startRetainedRun(
 	env.Next = nextVerbsFor(proposal)
 
 	env.Status = "proposal"
-	env.Result = trimResult(result)
+	env.setReport(result, retrieveProposalReport(id))
 	env.Diff = clipDiff(output.Diff())
 	env.Files = changesPaths(output.Changes())
 	return retainedRunResult{Proposal: &env}, nil
@@ -1624,11 +1662,14 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	if derr != nil {
 		return "", fmt.Errorf("continue: %w", derr)
 	}
+	// The durable copy gets the only bound this path applies (see
+	// maxDurableReportBytes), same as the first-run seal.
+	result = capDurableReport(result)
 	sealOpts, metaErr := proposalSealOptions(retainedProposalMeta{
 		ID:                  newID,
 		SessionID:           rt.SessionID,
 		ParentScopeID:       rt.RootScopeID,
-		Result:              trimResult(result),
+		Result:              result, // verbatim: the durable copy `proposal show` pages
 		RunErr:              bodyFailure,
 		StopReason:          stopReason,
 		Params:              p.params,
@@ -1703,7 +1744,14 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 			}
 			env.Status = "error"
 		}
-		env.Result = trimResult(result)
+		// An UNRECOVERABLE seal failure registered no proposal: the marker must
+		// not name a proposal show route that cannot serve it (PR #419 review
+		// finding 2).
+		pagingID := env.ProposalID
+		if !recoverable {
+			pagingID = ""
+		}
+		env.setReport(result, retrieveProposalReport(pagingID))
 		if len(notes) > 0 {
 			env.Error = trimResult(strings.Join(notes, "; "))
 		}
@@ -1715,7 +1763,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		scopeID:        scopeID,
 		workdir:        wt,
 		output:         output,
-		result:         trimResult(result),
+		result:         result,
 		runErr:         bodyFailure,
 		parentID:       rt.RootScopeID,
 		mgr:            mgr,
@@ -1770,7 +1818,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	}
 
 	env.Status = "proposal"
-	env.Result = trimResult(result)
+	env.setReport(result, retrieveProposalReport(newID))
 	env.Diff = clipDiff(output.Diff())
 	env.Files = changesPaths(output.Changes())
 	return marshalProposalEnvelope(env), nil
@@ -2698,8 +2746,15 @@ func changesPaths(changes []goatherd.ProposedChange) []string {
 	return paths
 }
 
-// trimResult normalizes a sub-agent report for envelopes: trims whitespace and
-// caps length.
+// trimResult normalizes a failure note or caveat for an envelope: trims
+// whitespace and caps length.
+//
+// It is NOT the report path. A report goes through setReport (see report.go),
+// which names the total byte count and the route that pages the rest; a report
+// cut by this function is the loss yaah-okcl removed, because the note this
+// returns carries no way back to what it dropped. Error and notes are
+// generated here — one line, no retrieval handle — so the plain cap is honest
+// for them.
 func trimResult(s string) string {
 	const maxResult = 4000
 	s = strings.TrimRight(s, " \t\r\n")
