@@ -48,8 +48,8 @@ func retrieveJobReport(jobID string) func(next int) string {
 }
 
 // setReport bounds a report for this envelope, recording what was withheld and
-// how to page it. A report that fits is carried unchanged and adds no paging
-// fields at all, so a short report's envelope is byte-identical to before.
+// how to page it. A report that fits is carried verbatim — trailing whitespace
+// included, since setReport does not trim — and adds no paging fields at all.
 func (e *proposalEnvelope) setReport(report string, retrieve func(next int) string) {
 	page := reportpage.Head(report, reportHeadBytes)
 	if !page.Truncated() {
