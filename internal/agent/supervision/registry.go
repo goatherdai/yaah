@@ -611,6 +611,26 @@ func (r *Registry) Entries() []Registration {
 	return out
 }
 
+// LiveRegistration returns the scope's LIVE registration — the same projection
+// Entries makes, for one scope — and false when no run is registered. It is the
+// single-scope read a supervisor needs to re-validate a fact it took from a
+// snapshot, which can be an interval old: the shipment of a redirect claim is
+// the case that matters (yaah-3l34), where Redirectable and Reversible decide
+// whether a claim may be made at all. The reported StillRunning is always true
+// — finished runs live in the bounded tail, not here — and the channels stay
+// behind, so the returned value steers and cancels nothing.
+func (r *Registry) LiveRegistration(scopeID string) (Registration, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.runs[scopeID]
+	if !ok {
+		return Registration{}, false
+	}
+	reg := registrationOf(scopeID, entry.entry, entry.reversible, entry.gen)
+	reg.StillRunning = true
+	return reg, true
+}
+
 // RecentlyFinished returns the finished registrations still in the bounded
 // window, oldest first. The slice is a copy: a caller cannot reach back into
 // the registry through it.
