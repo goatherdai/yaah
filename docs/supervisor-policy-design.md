@@ -240,6 +240,14 @@ true by construction:
   as a change signal; the read stays a prefix probe.
 - `never`: no tick. This is `policy: none`. Rules are unaffected.
 
+`always` means every tick that has a live agent: a tick with no live worker is
+skipped, because there is nothing for a decider to decide. The trigger is a
+**caller hint**, realized as `Batch.ShouldDecide()` (and `Changed()` under
+`on-change`): the caller skips its own decider call. `Next` never drops a
+decision because of the trigger — anything the caller supplies anyway is
+validated and applied normally — and `Done` is what a caller waits on once the
+skip is permanent.
+
 ### 4.5 Decider and decision schema
 
 ```go
@@ -268,6 +276,17 @@ type Decider interface {
 - **Headless mode** (`cmd/yaah`) makes one JSON-mode completion with
   `meta_prompt_v1` and `policy_model`. Its parse-fail-closed shape follows
   `parseGateVerdict` in `internal/workflow/exec/gate.go`.
+- `Decision.Scope` accepts either the rendered label (`w2`) or a raw scope ID
+  (`scope:sub-a`) — deliberately, because the `supervise` tool's caller may name
+  either. A label wins when a string is somehow both, and an unresolvable name
+  is a `stale` drop.
+- The rendered `wN` labels are what make a decision survivable at all, so the
+  caller renders **once per tick**: `SnapshotText`, then the decider, then
+  `Next`. That convention is what makes "the snapshot the decider read" and "the
+  snapshot the arbiter validated against" the same text. `Next` does not age a
+  decision: one made from an older render still applies to a scope that stayed
+  live and kept its label, while a decision naming a scope that left is a
+  recorded drop rather than an intervention on a different incarnation.
 
 ### 4.6 Apply: one arbiter for rules and decisions
 
@@ -291,8 +310,15 @@ Per scope, precedence is stop > revert > redirect > steer.
    `Batch` records every decision with its outcome and resets the scope's age
    on `applied` or `claimed`.
 
-The rules engine keeps what it fires, but routes through the same arbiter:
-its steers respect the cooldown, and its stops void pending decisions.
+The rules engine keeps what it fires, but routes through the same arbiter: its
+steers respect the cooldown **and** the cap, while its stops are **exempt from
+both** — a stop is the safety valve, so `max_interventions` neither blocks it nor
+is spent by it. Precedence is applied between the two halves as well as inside
+the policy's: one rule action per scope per tick, chosen by rank and not by
+arrival order, so a stop that was actually delivered outranks every decision on
+that scope while a rule steer outranks only a policy steer. A stop voids a
+pending claim only when it was **delivered** and the claim's generation is still
+the live one.
 
 ### 4.7 The `supervise` tool (agent mode)
 

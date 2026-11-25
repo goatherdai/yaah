@@ -157,6 +157,14 @@ type Service struct {
 	// store and prove the verdict does not wait on it.
 	denyFact denyFactWrite
 
+	// arbiter, when set, routes this service's rule firings through the
+	// policy loop's shared arbiter (yaah-3l34, design §4.6) instead of
+	// delivering them straight to the run registry: a rules steer joins
+	// the next tick's gauntlet (so it respects the cooldown and can be
+	// outranked), and a rules stop is queued so it can void a pending
+	// policy claim. Nil is today's behavior, byte for byte.
+	arbiter RuleArbiter
+
 	// mu guards the lifecycle transitions: wg.Add in Start must never
 	// race wg.Wait in Close — the WaitGroup reuse rule — so both hold
 	// the mutex through their transition, and closed makes Start a
@@ -684,6 +692,40 @@ func NewService(mgr *goatherd.ScopeManager, bus *kerneltrace.EffectBus, runs *Re
 	return svc
 }
 
+// SetArbiter routes the rules engine's firings through the shared arbiter
+// (yaah-3l34, design §4.6). With an arbiter set, drain queues a rule's steer or
+// stop for the batch's next tick instead of calling deliverInject or
+// deliverHalt directly, so the two halves of supervision — the fixed rules and
+// the model's decisions — pass through one arbiter with one cooldown and one
+// precedence order.
+//
+// Two consequences the caller must intend, both of them the point of sharing
+// the arbiter rather than an accident of the wiring:
+//
+//   - delivery is no longer immediate. A rule's guidance reaches its run on the
+//     batch's next tick, not on the firing, so the batch must actually be
+//     ticking (a batch that is never driven turns rules off).
+//   - the trace-side record moves. deliverInject's supervisor:inject fact (the
+//     A2 "the fact is the record" invariant) does not happen on the queued
+//     path: the Batch's InterventionRecord is the record instead, which is what
+//     yaah-vaxv carries into the dispatch envelope. A caller that needs the
+//     trace fact must not set an arbiter.
+//
+// Safe to call at any time — the field is read under the same mutex the drain
+// uses for its lifecycle checks — and a nil arbiter restores direct delivery.
+func (s *Service) SetArbiter(a RuleArbiter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.arbiter = a
+}
+
+// ruleArbiter reads the routing arbiter, if one is set.
+func (s *Service) ruleArbiter() RuleArbiter {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.arbiter
+}
+
 // recordFiring counts one rule firing for the status surface (adoption
 // plan B4).
 func (s *Service) recordFiring(rule string, iv *supervisor.Intervention) {
@@ -1011,8 +1053,33 @@ func (s *Service) drain() {
 					"scope", scopeID)
 				continue
 			}
+			if arb := s.ruleArbiter(); arb != nil {
+				// The kernel intervention carries no rule name, only its
+				// type, scope and payload — so the queued reason names the
+				// engine and Firings keeps the rule (adoption plan B4).
+				arb.QueueRuleSteer(scopeID, ruleSteerReason, guidance)
+				continue
+			}
 			s.deliverInject(scopeID, guidance)
 		case supervisor.InterventionHalt:
+			if s.rootScopeID != "" && scopeID == s.rootScopeID && !s.haltRoot {
+				// The same gate deliverHalt applies, applied at QUEUE time as
+				// well: a queued stop is delivered by whatever StopFunc the batch
+				// holds, and a nil or thin one would bypass the gate entirely —
+				// the root would become stoppable with supervisor.halt_root off.
+				// Dropped by policy rather than lost in transit, so it is logged
+				// like the inject branch's root drop and not recorded.
+				slog.Debug("supervisor: rule halt against the root scope dropped",
+					"scope", scopeID)
+				continue
+			}
+			if arb := s.ruleArbiter(); arb != nil {
+				// Queued, not delivered: the batch's next tick delivers it,
+				// which is what lets a stop void a pending policy claim in
+				// one place instead of two.
+				arb.QueueRuleStop(scopeID, guidance)
+				continue
+			}
 			s.deliverHalt(scopeID, guidance)
 		default:
 			// The enabled rules emit injects and (from B3) the drain
@@ -1036,11 +1103,30 @@ func (s *Service) drain() {
 // session is a big hammer, dispatched only under supervisor.halt_root
 // (default off). A root halt with the gate off is refused and logged —
 // the session keeps running.
+//
+// The direct path has nowhere to report a refusal beyond these log
+// lines: deliverHaltReport holds the verdict, and the batch's StopFunc
+// adapter (StopFunc) is its reader.
 func (s *Service) deliverHalt(scopeID, reason string) {
+	_, _ = s.deliverHaltReport(context.Background(), scopeID, reason)
+}
+
+// deliverHaltReport is deliverHalt with its verdict returned. delivered
+// reports that the halt actually landed; false is a REFUSAL this service
+// made on purpose — the supervisor.halt_root gate on the root scope, a
+// merged (terminal) scope, or a run that registered no cancellation —
+// and err is a delivery or kernel-halt failure. ctx cuts the bounded
+// quiesce wait short (the halt still lands, the A3 bounded-proceed
+// semantics); it never cancels the halt itself.
+//
+// The verdict exists for the batch's rules stop: a refused stop must be
+// recorded as refused, not as a stop the supervisor performed (design
+// §4.6, yaah-3l34).
+func (s *Service) deliverHaltReport(ctx context.Context, scopeID, reason string) (bool, error) {
 	if s.rootScopeID != "" && scopeID == s.rootScopeID && !s.haltRoot {
 		slog.Warn("supervisor: rule-driven halt of the root scope refused — set supervisor.halt_root to allow it",
 			"scope", scopeID)
-		return
+		return false, nil
 	}
 	if scope, ok := s.mgr.Get(scopeID); ok && scope.State() == goatherd.ScopeMerged {
 		// Merged is terminal: the kernel refuses a halt beside the merge
@@ -1048,7 +1134,7 @@ func (s *Service) deliverHalt(scopeID, reason string) {
 		// scope the kernel would refuse to halt is a side effect with no
 		// halt to show for it.
 		slog.Info("supervisor: halt skipped — scope already merged (terminal)", "scope", scopeID)
-		return
+		return false, nil
 	}
 
 	var quiesced, waited bool
@@ -1062,6 +1148,10 @@ func (s *Service) deliverHalt(scopeID, reason string) {
 				// Bounded proceed, the A3 semantics: the kernel halt
 				// still lands — halt-while-running is its meaning —
 				// and the log names the unquiesced run.
+			case <-ctx.Done():
+				// The same bounded proceed, cut short by the caller: a
+				// cancelled batch tick must not hold a tick open for the
+				// full quiesce bound.
 			}
 		}
 	} else if errors.Is(err, ErrNotHaltable) {
@@ -1071,17 +1161,17 @@ func (s *Service) deliverHalt(scopeID, reason string) {
 		// cancel-first ordering exists to prevent. The manual halt
 		// tolerates this (a human asked); a rule must not.
 		slog.Warn("supervisor: halt refused — the run registered no cancellation", "scope", scopeID)
-		return
+		return false, nil
 	} else if !errors.Is(err, ErrNoRun) {
 		// A delivery failure the registry did not classify is a
 		// bridge bug; report it rather than half-halt.
 		slog.Warn("supervisor: halt delivery failed", "scope", scopeID, "err", err)
-		return
+		return false, err
 	}
 	if scope, ok := s.mgr.Get(scopeID); ok {
 		if err := scope.Halt(); err != nil {
 			slog.Warn("supervisor: kernel halt failed", "scope", scopeID, "err", err)
-			return
+			return false, err
 		}
 	}
 	switch {
@@ -1090,6 +1180,22 @@ func (s *Service) deliverHalt(scopeID, reason string) {
 			"scope", scopeID, "reason", reason)
 	default:
 		slog.Info("supervisor: halted scope", "scope", scopeID, "reason", reason)
+	}
+	return true, nil
+}
+
+// StopFunc returns this Service's rules-stop delivery function (design §4.6,
+// yaah-3l34): the adapter a Batch's StopFunc field takes, so a queued rules stop
+// reaches the same cancel-then-quiesce-then-halt path the rules engine's own
+// halts take — with the verdict, which is what lets the arbiter record a refusal
+// honestly instead of claiming a stop that never happened.
+//
+// The reason travels into the halt log lines. A batch wired without a Service
+// leaves BatchConfig.Stop nil instead, which the arbiter records as
+// no_stop_func.
+func (s *Service) StopFunc() StopFunc {
+	return func(ctx context.Context, scopeID, reason string) (bool, error) {
+		return s.deliverHaltReport(ctx, scopeID, reason)
 	}
 }
 

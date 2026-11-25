@@ -28,6 +28,15 @@ const (
 	// ActionRevert is a redirect whose adoption first rolls the scope's
 	// workspace back to its pre-run snapshot.
 	ActionRevert Action = "revert"
+	// ActionStop is the ARBITER's rules-only action: an advisory rule may
+	// stop a scope (design §4.6 precedence stop > revert > redirect >
+	// steer), while the policy deliberately has no stop verb — a decider
+	// may not end a worker's run. It never appears in a Decision and is
+	// never part of the action mask, which governs the policy's actions;
+	// a Decision that carries it is dropped as unknown_action. Exported
+	// because the tick's records and the dispatch envelope (yaah-vaxv)
+	// name it.
+	ActionStop Action = "stop"
 )
 
 // The decision's word limits, in words as WordCount counts them.
@@ -44,7 +53,8 @@ const (
 type Decision struct {
 	// Scope is the scope label exactly as the snapshot renders it.
 	Scope string
-	// Action is none, steer, redirect, or revert.
+	// Action is none, steer, redirect, or revert — never stop, which is the
+	// rules engine's verb alone (ActionStop).
 	Action Action
 	// Reason is the decision's justification, at most MaxReasonWords words.
 	Reason string
