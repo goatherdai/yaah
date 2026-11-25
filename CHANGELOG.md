@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.212.0](https://github.com/goatherdai/yaah/compare/v0.211.0...v0.212.0) (2026-11-25)
+
+
+### Features
+
+* **supervision:** budgeted snapshot renderer and locked v1 meta-agent prompt (yaah-wego) ([#407](https://github.com/goatherdai/yaah/issues/407)) ([a857998](https://github.com/goatherdai/yaah/commit/a85799822fee28b0fca2a0d6ff637c1edfb422da))
+
 ## [0.211.0](https://github.com/goatherdai/yaah/compare/v0.210.0...v0.211.0) (2026-11-25)
 
 
