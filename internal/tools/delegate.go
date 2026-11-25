@@ -297,7 +297,7 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	// the model: neither the per-call opt-out nor a nested dispatch may spend
 	// it. Both refusals fire here, before a lane is resolved or a world is
 	// provisioned.
-	if rerr := t.requireReversibleRefusal(params.Supervise, supervised); rerr != nil {
+	if rerr := t.requireReversibleRefusal(params.Supervise, t.Supervised, supervised); rerr != nil {
 		return "", rerr
 	}
 
@@ -560,11 +560,27 @@ func (t *DelegateTool) supervisedDispatch(override *bool) (bool, error) {
 // supervision promises. Until nested dispatches inherit a lane of their own
 // (docs/supervisor-policy-design.md §9), refusing them is the honest answer
 // under the key.
-func (t *DelegateTool) requireReversibleRefusal(override *bool, supervised bool) error {
+//
+// WHICH RULE READS WHICH VALUE (yaah-ugtl review m5). Both postures are
+// parameters rather than reads of the receiver's own fields, so each rule
+// names its source at the call site and the invariant stops depending on the
+// order the caller happens to run things in:
+//
+//   - sessionPosture is the SESSION's answer (t.Supervised, the
+//     supervisor.enabled: true posture). The opt-out rule reads it because it
+//     is the only value that still carries the operator's demand: resolution
+//     has already turned this dispatch's answer to false, so a rule that read
+//     the resolved value could never fire.
+//   - supervised is THIS dispatch's RESOLVED answer. The nested rule reads it,
+//     and deliberately not the session posture: a nested dispatch that opted
+//     out of a supervised session is unsupervised — it already ran without a
+//     world, so refusing it here would be a second refusal for a decision the
+//     opt-out rule has not made (and must not make twice).
+func (t *DelegateTool) requireReversibleRefusal(override *bool, sessionPosture, supervised bool) error {
 	if !t.RequireReversible {
 		return nil
 	}
-	if t.Supervised && override != nil && !*override {
+	if sessionPosture && override != nil && !*override {
 		return fmt.Errorf("delegate: %w: supervisor.require_reversible is on for this session, so no dispatch may opt out of supervision — remove \"supervise\": false (the dispatch then runs in an isolated, revertable world) or turn supervisor.require_reversible off", supervisionapi.ErrSupervisedNotReversible)
 	}
 	if supervised && t.Nested {
@@ -586,11 +602,24 @@ func (t *DelegateTool) requireReversibleRefusal(override *bool, supervised bool)
 // report world is forked at HEAD and torn down, so the dispatch would read the
 // committed tree instead of the shared workspace's live state — exactly the
 // freshness the shared lane exists to keep (docs/sub-agents.md), plus a fork
-// and a teardown to buy nothing. Today's routing already sends read-only
-// report roles to the shared lane and passes mutating report roles to the
-// report lane, so this guard is what keeps the upgrade from firing on the one
-// lane it cannot help; it still protects a lane source that disagrees with the
-// role's tool set (a hand-built LaneForRole, a plugin-provided role).
+// and a teardown to buy nothing.
+//
+// REACHABILITY, precisely (yaah-ugtl review M1). Under the registry's own
+// routing (wireLaneRouting → subagent.DispatchLaneFor) this guard cannot fire,
+// and that is the intended state rather than proof it is dead: DispatchLaneFor
+// hands back the shared lane ONLY for a report role with no
+// workspace-mutating tool, so `lane == LaneShared && roleCanMutate` is empty
+// for every role the live registry produces — a mutating dispatch already
+// arrives on the proposal or report lane, both isolated, and
+// `agents.subagent.mode: shared` leaves no retained runtime to upgrade INTO.
+// So this is a DEFENSIVE guard, not the mechanism that isolates today's
+// dispatches, and the docs say so. It is not dead code to delete: it holds the
+// invariant for every OTHER lane source — a hand-built or plugin LaneForRole
+// that routes a workspace-mutating role to shared (which is exactly what the
+// hand-made fixtures in delegate_supervise_test.go construct), and the
+// nested/workflow seams design §4.11 and §9 add. Deleting it would not remove
+// the invariant; it would move it into each of those lane sources, where
+// nothing enforces it.
 //
 // isolatedAvailable reports whether the session has an isolated lane at all
 // (a retained runtime: worktree or per-dispatch container). Without one the

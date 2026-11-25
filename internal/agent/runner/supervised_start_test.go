@@ -226,6 +226,10 @@ func TestSupervisedStartRefusalFailsClosedWithoutACapture(t *testing.T) {
 		supervised: true,
 		role:       subagent.SubAgentRole("developer"),
 		subScope:   sub,
+		// runsAvailable: the seam that arms the capture was THERE, so a
+		// captureAttempted of false can only mean an edit routed around
+		// it (yaah-ugtl review M2's conjunct).
+		runsAvailable: true,
 		// captureAttempted and captured both false: nothing snapshotted.
 	}); !errors.Is(gaterr, ErrSupervisedCaptureSkipped) {
 		t.Fatalf("gate verdict = %v, want ErrSupervisedCaptureSkipped for an unsnapshotted start", gaterr)
@@ -237,10 +241,87 @@ func TestSupervisedStartRefusalFailsClosedWithoutACapture(t *testing.T) {
 		supervised:       true,
 		role:             subagent.SubAgentRole("developer"),
 		subScope:         sub,
+		runsAvailable:    true,
 		captureAttempted: true,
 		captured:         true,
 	}); gaterr != nil {
 		t.Errorf("gate verdict = %v, want nil for an attempted, successful capture", gaterr)
+	}
+}
+
+// TestSupervisedStartRefusalRunsRegistryAbsentIsNotASkippedCapture pins the
+// rule-2 conjunct a review found missing (yaah-ugtl review M2): the pre-run
+// capture is armed only inside the supervision bridge, which the runner enters
+// when the dispatch has a scope AND a runs registry. A session with
+// supervisor.enabled: true but no registry (tracing never came up, a
+// non-session construction) therefore has a sandboxed scope and a capture that
+// was never ATTEMPTED — and that must not read as a skipped capture, which the
+// dispatch boundary classifies as a final configuration error against the
+// operator.
+func TestSupervisedStartRefusalRunsRegistryAbsentIsNotASkippedCapture(t *testing.T) {
+	initTestRoles(t)
+	runs := supervision.NewRegistry()
+	sb := newFailingCaptureSandbox(t, runs)
+	mgr, _, root := newStartGateFixture(t, "sess-ugtl-no-registry", sb)
+	sub, err := mgr.Fork(root.ID(), "sub-no-registry", nil)
+	if err != nil {
+		t.Fatalf("fork: %v", err)
+	}
+
+	// Rule 2 needs the registry: without it an unsnapshotted start is the
+	// honest state, not a wiring bug.
+	if gaterr := supervisedStartRefusal(supervisedStart{
+		supervised: true,
+		role:       subagent.SubAgentRole("developer"),
+		subScope:   sub,
+		// runsAvailable false: the seam that arms the capture did not exist.
+	}); gaterr != nil {
+		t.Fatalf("gate verdict = %v, want nil — a dispatch with no runs registry cannot have skipped a capture", gaterr)
+	}
+
+	// With require_reversible on the same posture is refused — by rule 3, for
+	// the reason that is true (no snapshot, so nothing to roll back), not by
+	// rule 2 claiming the wiring is broken.
+	gaterr := supervisedStartRefusal(supervisedStart{
+		supervised:        true,
+		requireReversible: true,
+		role:              subagent.SubAgentRole("developer"),
+		subScope:          sub,
+	})
+	if !errors.Is(gaterr, ErrSupervisedNotReversible) {
+		t.Fatalf("gate verdict = %v, want ErrSupervisedNotReversible", gaterr)
+	}
+	if errors.Is(gaterr, ErrSupervisedCaptureSkipped) {
+		t.Error("the refusal must not read as a skipped capture: no registry means the capture was never armed")
+	}
+}
+
+// TestTaskRunner_SupervisedWithoutRunsRegistryRuns pins the same invariant at
+// the CALL SITE (yaah-ugtl review M2): the gate is populated from opts.runs, so
+// a session built without a runs registry must reach the model instead of being
+// refused as a skipped capture. This is the regression a hand-built gate struct
+// alone would not catch.
+func TestTaskRunner_SupervisedWithoutRunsRegistryRuns(t *testing.T) {
+	initTestRoles(t)
+
+	sb := sandboxfake.New()
+	if err := sb.Create(context.Background(), goatherdsandbox.SandboxSpec{}); err != nil {
+		t.Fatalf("create fake sandbox: %v", err)
+	}
+	mgr, store, root := newStartGateFixture(t, "sess-ugtl-no-runs", sb)
+	provider := &countingProvider{}
+	// runs nil is the whole point: no supervision bridge, so no capture seam.
+	runner := makeTaskRunner(startGateOpts(mgr, store, root.ID(), nil, provider, false), 0)
+
+	result, err := runner(tools.WithSupervisedDispatch(context.Background(), true), "fix the widget", tools.SubAgentParams{Role: "developer"})
+	if err != nil {
+		t.Fatalf("a supervised dispatch with no runs registry must still run: %v", err)
+	}
+	if result != "done" {
+		t.Errorf("result = %q, want the sub-agent's report", result)
+	}
+	if got := provider.calls.Load(); got == 0 {
+		t.Error("the dispatch never reached the model")
 	}
 }
 

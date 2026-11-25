@@ -811,12 +811,22 @@ work can be reverted by construction, and a dispatch whose pre-run workspace
 snapshot cannot be captured fails at start instead of running unrevertable. A
 role that cannot mutate the workspace keeps the shared lane — there is nothing
 for a revert to undo, and a world forked at HEAD would only hide the session's
-live tree from a dispatch that just reads it. The default (key absent) does
-NOT arm any of this — the rules engine is on by default, and reading that as
-"supervise every dispatch" would change where every shared-lane dispatch runs
-for sessions that never asked. `supervisor.require_reversible: true` narrows
-the armed path further: a dispatched scope with no isolated workspace of its
-own then fails at start rather than run with `Reversible` false.
+live tree from a dispatch that just reads it.
+
+**The upgrade is a guard, not the everyday mechanism.** Today's role routing
+already isolates a workspace-mutating dispatch: it goes to the proposal lane or
+the report lane, both of which own a world, and it reaches the shared lane only
+when the role cannot write. So in practice the upgrade fires for a lane source
+that is not the role registry — a hand-built or plugin `LaneForRole`, and the
+nested/workflow seams of design §4.11 and §9 — and the promise supervision
+delivers in a default session is the second one: a snapshot that cannot be
+captured fails the dispatch instead of running it unrevertable. The default (key
+absent) does NOT arm any of this — the rules engine is on by default, and
+reading that as "supervise every dispatch" would change where every shared-lane
+dispatch runs for sessions that never asked. `supervisor.require_reversible:
+true` narrows the armed path further: a dispatched scope with no isolated
+workspace of its own then fails at start rather than run with `Reversible`
+false.
 
 The armed path covers `delegate` dispatches only (foreground and background).
 A workflow-hosted sub-agent dispatch goes through its own door
@@ -831,7 +841,7 @@ phase-2 `fanout`/workflow seam (design §4.11); until it lands, do not read
 |---|---|---|
 | `supervisor.enabled` | on (tracing-gated) | Master switch for the advisory rules engine, on by default whenever tracing is on. An EXPLICIT `true` ALSO arms the supervised dispatch path above, which moves a workspace-mutating dispatch off the shared lane; the rules engine cannot arm it, because an absent key reads as on-by-default. The `supervisor.policy` key (not in this release; tracked as yaah-0nbb) is what will own dispatch routing explicitly |
 | `supervisor.halt_root` | `false` | Allow a rule or the `supervisor` tool to halt the session's root scope |
-| `supervisor.require_reversible` | `false` | Refuse a SUPERVISED dispatch whose scope owns no isolated workspace (a pure-causal fork, a container session's shared root, a session with no retained runtime) instead of running it with `Reversible` false. Only ever narrows a supervised dispatch: with supervision off, or on an unsupervised dispatch, nothing reads it; and it reaches `delegate` dispatches only — a workflow-hosted dispatch is not on the supervised path yet (design §4.11). Set it for measurement; leave it off for interactive use |
+| `supervisor.require_reversible` | `false` | Refuse a SUPERVISED dispatch whose scope owns no isolated workspace (a pure-causal fork, a container session's shared root, a session with no retained runtime) instead of running it with `Reversible` false. Only ever narrows a supervised dispatch: with supervision off, or on an unsupervised dispatch, nothing reads it; and it reaches `delegate` dispatches only — a workflow-hosted dispatch is not on the supervised path yet (design §4.11). It therefore has NO effect without an explicit `supervisor.enabled: true`, and session startup warns when it is set alone. Set it for measurement; leave it off for interactive use |
 | `supervisor.rules.destructive_tool.enabled` | `true` | Advisory warning on destructive tool declarations; inject-only. A `write` is classified by what the tool observed: overwriting an existing file warns, first-time creation passes, and a missing observation warns conservatively. Shell and `delete` matches are unchanged. |
 | `supervisor.rules.destructive_guard.enabled` | `true` | Blocking pre-dispatch net for sub-agent `bash`/`powershell` and command-running `background_process` calls, with a synthesized denial result. Each denial stays legible afterwards: `supervisor status` lists the refused command with the reason beside the count, and the refused sub-agent's own trace gains a `yaah.supervisor.shell_guard.deny.v1` fact naming the rule, the tool, the command, and the reason |
 | `supervisor.rules.destructive_guard.allow_commands` | `[]` (deny every shell call) | Global default allowlist: shell commands a sub-agent may run, as anchored globs matched in full against the raw command (`*` crosses arguments, so `git status*` admits `git status -s` and refuses `echo git status`). A command carrying a shell control or redirection operator (`;`, `&&`, `||`, `|`, backtick, `$(`, `${`, `>`, `<`, newline) matches no pattern and is always denied, so a list cannot be escaped by chaining or redirecting. Empty stays deny-all. A role's own list — `agents.subagent.roles.<role>.allow_commands`, else the role file's `allow_commands` — replaces this list for that role; an explicit role-level `[]` is deny-all, not inherit |

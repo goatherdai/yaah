@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime"
 	"slices"
@@ -1310,6 +1311,13 @@ func wireDispatchPosture(st *loopInfraStage, cfg *config.Config, opts SessionOpt
 // fallible: a store that would not open or a root scope that could not be
 // created already disabled the pieces this tool would have carried.
 func buildDelegateTool(st *loopInfraStage, cfg *config.Config, lc *sessionConfig, ws *workspaceStage, tr *toolRegistryStage, posture dispatchPosture, subs subAgentDefaults) {
+	// Diagnose the one supervisor posture that reads as a demand and enforces
+	// nothing before the tool is built (yaah-ugtl review M3): require_reversible
+	// set without an explicit enabled: true. Warned here because the two keys'
+	// precedence lives in this file (supervisedDispatches); a warning, not an
+	// error — see warnOnInertRequireReversible.
+	warnOnInertRequireReversible(cfg)
+
 	st.taskTool = runner.NewDelegateTool(runner.DelegateToolOpts{
 		Provider:              lc.provider,
 		ProviderName:          lc.providerName,
@@ -1448,6 +1456,32 @@ func supervisedDispatches(cfg *config.Config) bool {
 // refactor that drops it must fail a test, not a measurement run.
 func requireReversibleDispatches(cfg *config.Config) bool {
 	return cfg.Agent.Default.Supervisor.RequireReversible
+}
+
+// requireReversibleWithoutSupervision reports the one combination that reads
+// as an operator demand but enforces nothing (yaah-ugtl review M3):
+// require_reversible is carried to the delegate tool and the runner
+// unconditionally, but every reader of it is behind supervisedDispatch — the
+// key only ever NARROWS a supervised dispatch, so with supervision disarmed it
+// refuses nothing.
+func requireReversibleWithoutSupervision(cfg *config.Config) bool {
+	return requireReversibleDispatches(cfg) && !supervisedDispatches(cfg)
+}
+
+// warnOnInertRequireReversible diagnoses that combination at session start.
+// A warning, not a refusal: a hard error would break existing configs over a
+// key that is harmless, and the fix is one line the operator can make at
+// leisure. It runs once per session build, which is once per session (a
+// multi-session process warns per session, as every other startup advisory
+// does).
+func warnOnInertRequireReversible(cfg *config.Config) {
+	if !requireReversibleWithoutSupervision(cfg) {
+		return
+	}
+	slog.Warn("supervisor.require_reversible has no effect without an explicit supervisor.enabled: true",
+		"key", "agents.default.supervisor.require_reversible",
+		"reason", "the key only narrows a SUPERVISED dispatch, and supervised dispatch is armed only by an explicit supervisor.enabled: true (the advisory rules engine's default-on does not arm it)",
+		"fix", "set agents.default.supervisor.enabled: true, or remove agents.default.supervisor.require_reversible")
 }
 
 // wireBackgroundJobs hands the job manager to the delegate tool, delivers

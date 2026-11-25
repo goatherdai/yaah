@@ -34,9 +34,32 @@ func decodeStatusLane(t *testing.T, result string) (status, lane, world string) 
 // worktree, a plain report, and the worktree torn down — because that is what
 // makes the work revertable by construction. The unsupervised twin keeps the
 // shared lane (pinned by TestExecute_LaneForRoleRouting, unchanged).
+//
+// The hand-built LaneForRole below is the fixture, not the default path
+// (yaah-ugtl review M1): subagent.DispatchLaneFor — what wireLaneRouting
+// installs — never routes a workspace-mutating role to the shared lane, so
+// under production wiring supervisedLane cannot fire. What this test pins is
+// the GUARD, for lane sources that can (a hand-built or plugin LaneForRole,
+// the nested/workflow seams). See supervisedLane's comment.
+//
+// It also pins the marker on the UPGRADED (retained) path (yaah-ugtl review
+// m6): every other marker test runs with Retained nil, i.e. the shared lane and
+// the direct runner, while the retained report path is where the runner's start
+// gate is actually consulted. The wrapped rt.Runner observes the dispatch
+// context exactly as the retained body receives it, so a regression that
+// dropped the marker on that path would fail here instead of nowhere.
 func TestExecute_SupervisedUpgradesSharedLaneToReport(t *testing.T) {
 	runner := &sessionRunner{responses: []runnerResponse{{result: "shared report"}}}
 	rt := newRetainedTestEnv(t, runner)
+	// The retained report lane runs through rt.Runner, not the tool's Runner:
+	// that is the loop the start gate guards, so the marker is asserted there.
+	inner := rt.Runner
+	var retainedRan, retainedMarked bool
+	rt.Runner = func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+		retainedRan = true
+		retainedMarked = SupervisedDispatch(ctx)
+		return inner(ctx, prompt, params)
+	}
 	tt := &DelegateTool{
 		RoleNames:            []string{"counter"},
 		Runner:               runner.run(),
@@ -53,6 +76,12 @@ func TestExecute_SupervisedUpgradesSharedLaneToReport(t *testing.T) {
 	status, lane, _ := decodeStatusLane(t, res)
 	if status != "report" || lane != string(LaneReport) {
 		t.Errorf("supervised shared-lane dispatch = status %q lane %q, want the report lane", status, lane)
+	}
+	if !retainedRan {
+		t.Fatal("the upgraded dispatch never reached the retained runner")
+	}
+	if !retainedMarked {
+		t.Error("the retained path must carry the supervised marker: it is the loop the runner's start gate reads")
 	}
 	if got := rt.Proposals.Summaries(); got != "No open proposals." {
 		t.Errorf("the upgrade must not register a proposal, got %q", got)
@@ -74,6 +103,12 @@ func TestExecute_SupervisedUpgradesSharedLaneToReport(t *testing.T) {
 // down again — a revert has nothing to undo when nothing can be written. A
 // read-only supervised dispatch keeps the shared lane; a mutating one still
 // upgrades (the test above).
+//
+// Same caveat as the test above: the hand-built LaneForRole is a fixture a
+// non-registry lane source could produce (and the registry's own routing
+// cannot — it is what makes the case reachable at all: shared lane plus a
+// read-only role is the production combination), so this pins the guard's
+// condition, not a default path.
 func TestExecute_SupervisedReadOnlyRoleKeepsSharedLane(t *testing.T) {
 	runner := &sessionRunner{responses: []runnerResponse{{result: "shared report"}}}
 	rt := newRetainedTestEnv(t, runner)

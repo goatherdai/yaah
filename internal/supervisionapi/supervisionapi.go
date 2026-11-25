@@ -50,11 +50,16 @@ var (
 	ErrSupervisedCaptureFailed = errors.New("supervised dispatch refused at start: the pre-run workspace capture failed")
 
 	// ErrSupervisedCaptureSkipped is the runner's start gate reading a
-	// dispatch that OWNS a workspace and never ATTEMPTED the capture at all
-	// (design §4.2, yaah-ugtl). That is not a capture that failed, it is a
-	// wiring invariant violation: the capture is taken unconditionally for
-	// any scope with a sandbox, so "never asked" means the seam that arms it
-	// did not run. It is therefore classified `configuration` (a final
+	// dispatch that OWNS a workspace, had the seam that arms the capture (a
+	// runs registry), and never ATTEMPTED the capture at all (design §4.2,
+	// yaah-ugtl). That is not a capture that failed, it is a wiring invariant
+	// violation: inside the supervision bridge the capture is taken
+	// unconditionally for any scope with a sandbox, so "never asked" — with
+	// the registry present — means the seam that arms it did not run. A
+	// dispatch with no registry never had the seam, so the gate does not read
+	// its silence as a bug (review M2): it proceeds with Reversible false, and
+	// require_reversible is what refuses it, via ErrSupervisedNotReversible.
+	// It is therefore classified `configuration` (a final
 	// class, internal/dispatch/failure_class.go) — the same broken wiring
 	// would skip the capture again, so a retry policy must not re-provision
 	// a world for it. Keeping it distinct from ErrSupervisedCaptureFailed is

@@ -1,6 +1,9 @@
 package yaah
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/goatherdai/yaah/internal/agent/subagent"
@@ -92,6 +95,59 @@ func TestRequireReversibleDispatches(t *testing.T) {
 	cfg.Agent.Default.Supervisor.RequireReversible = true
 	if got := requireReversibleDispatches(cfg); !got {
 		t.Error("requireReversibleDispatches with the key on = false, want true")
+	}
+}
+
+// TestRequireReversibleWithoutSupervision pins the precedence that makes the
+// key inert (yaah-ugtl review M3): require_reversible is carried unconditionally
+// but every reader of it sits behind supervisedDispatch, so only an EXPLICIT
+// supervisor.enabled: true gives it anything to narrow. An operator who sets it
+// alone got no refusal and no diagnostic.
+func TestRequireReversibleWithoutSupervision(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		enabled    *bool
+		requireRev bool
+		want       bool
+	}{
+		{"neither key set", nil, false, false},
+		{"require_reversible alone is inert", nil, true, true},
+		{"explicit enabled: false is inert too", boolPtr(false), true, true},
+		{"explicit enabled: true arms it", boolPtr(true), true, false},
+		{"enabled without require_reversible", boolPtr(true), false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Agent.Default.Supervisor.Enabled = tc.enabled
+			cfg.Agent.Default.Supervisor.RequireReversible = tc.requireRev
+			if got := requireReversibleWithoutSupervision(cfg); got != tc.want {
+				t.Errorf("requireReversibleWithoutSupervision = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestWarnOnInertRequireReversible pins the warning itself, not only the
+// predicate: the operator's only signal for the inert combination is this line.
+func TestWarnOnInertRequireReversible(t *testing.T) {
+	prev := slog.Default()
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	cfg := &config.Config{}
+	cfg.Agent.Default.Supervisor.RequireReversible = true
+	warnOnInertRequireReversible(cfg)
+	if got := buf.String(); !strings.Contains(got, "has no effect without an explicit supervisor.enabled: true") {
+		t.Errorf("require_reversible set alone must warn at startup, got %q", got)
+	}
+
+	// The armed posture is the documented one: nothing to say.
+	buf.Reset()
+	cfg.Agent.Default.Supervisor.Enabled = boolPtr(true)
+	warnOnInertRequireReversible(cfg)
+	if got := buf.String(); got != "" {
+		t.Errorf("an armed session must not warn, got %q", got)
 	}
 }
 

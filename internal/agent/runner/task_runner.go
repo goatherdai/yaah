@@ -367,10 +367,12 @@ var (
 	// fresh world and takes a fresh capture in it.
 	ErrSupervisedCaptureFailed = supervisionapi.ErrSupervisedCaptureFailed
 
-	// ErrSupervisedCaptureSkipped: a dispatch that owns a workspace never
-	// ATTEMPTED the capture. That is a wiring invariant violation, so the
-	// boundary classifies it configuration (final) — a retry would skip the
-	// capture again (yaah-ugtl review M4).
+	// ErrSupervisedCaptureSkipped: a dispatch that owns a workspace, with the
+	// runs registry that arms the capture present, never ATTEMPTED it. That
+	// is a wiring invariant violation, so the boundary classifies it
+	// configuration (final) — a retry would skip the capture again (yaah-ugtl
+	// review M4). A dispatch with no registry never had the seam; its refusal
+	// under require_reversible is ErrSupervisedNotReversible (review M2).
 	ErrSupervisedCaptureSkipped = supervisionapi.ErrSupervisedCaptureSkipped
 
 	// ErrSupervisedNotReversible: supervisor.require_reversible is on and
@@ -394,12 +396,23 @@ type supervisedStart struct {
 	requireReversible bool
 	role              subagent.SubAgentRole
 	subScope          *goatherd.Scope
+	// runsAvailable records that the dispatch HAD the seam that arms the
+	// capture: capturePreRun is called from inside the supervision bridge
+	// block, which is entered only when the dispatch has both a scope and a
+	// runs registry. It is the fact rule 2 reads alongside captureAttempted
+	// (yaah-ugtl review M2): without the registry the capture was never
+	// armed, so "not attempted" says nothing about the wiring.
+	runsAvailable bool
 	// captureAttempted records that the pre-run capture actually ran.
-	// INVARIANT: a supervised dispatch whose scope has a sandbox always
-	// attempts it — capturePreRun is called unconditionally right after the
-	// run registers, before anything else can start the loop. A false here
-	// with a sandbox means an edit routed around that call, and the gate
-	// fails closed rather than start a run nothing snapshotted.
+	// INVARIANT: a supervised dispatch that entered the bridge block — a
+	// scope with a sandbox AND a runs registry — always attempts it,
+	// because capturePreRun is called unconditionally right after the run
+	// registers, before anything else can start the loop. A false here with
+	// a sandbox and the registry present means an edit routed around that
+	// call, and the gate fails closed rather than start a run nothing
+	// snapshotted. A false with the registry ABSENT is not that: the seam
+	// never existed for this session, which rule 3 handles (Reversible is
+	// false with no capture, so require_reversible is what refuses it).
 	captureAttempted bool
 	// captured records that the capture succeeded; captureErr names why it
 	// did not. captureErr WINS if both are set: capturePreRun clears
@@ -428,18 +441,32 @@ func (in supervisedStart) hasSandbox() bool {
 //     too: the flag is about scopes that can never roll back, not about
 //     snapshots that failed to land.
 //
-//  2. A dispatch that HAS a workspace and never attempted the capture is
+//  2. A dispatch that HAS a workspace, HAD the seam that arms the capture
+//     (a runs registry — the supervision bridge), and never attempted it is
 //     refused for the same reason, read from the other side: the gate cannot
 //     tell a capture that was skipped from one that succeeded, so it treats
 //     "never asked" as "no snapshot" rather than assuming the better case.
 //     A scope with no sandbox at all (a pure-causal fork) is not this rule's
 //     case — it has nothing to capture, and rule 3 decides it.
 //
+//     The runsAvailable conjunct is what makes the rule honest (yaah-ugtl
+//     review M2). The capture is taken unconditionally ONLY inside the bridge
+//     block, which the runner enters when the dispatch has a scope AND a runs
+//     registry; a session with supervisor.enabled: true but no registry
+//     (tracing never came up, a non-session construction) has a sandboxed
+//     scope and a capture that was never ARMED. Reading that as a skipped
+//     capture made every such dispatch fail as a final configuration error —
+//     a wiring bug reported against the operator. With the registry absent
+//     the dispatch proceeds and reads Reversible false, which is the true
+//     statement: no snapshot was taken, so a revert has nothing to restore.
+//     Rule 3 is then the rule that refuses it under require_reversible,
+//     because revertCanRollBack is false without a capture.
+//
 //     This rule has its own sentinel (ErrSupervisedCaptureSkipped), and the
-//     message no longer has to name which refusal fired. The capture is taken
-//     unconditionally for any scope with a sandbox, so "never asked" can only
-//     mean the wiring that arms it did not run — a deterministic bug, which
-//     the dispatch boundary classifies `configuration` and does NOT retry. Rule
+//     message no longer has to name which refusal fired. Given the guard
+//     above, "never asked" can only mean the wiring that arms the capture did
+//     not run although the registry was there — a deterministic bug, which the
+//     dispatch boundary classifies `configuration` and does NOT retry. Rule
 //     1's failure is the opposite: a real capture against a world a fresh
 //     attempt may capture cleanly, so it is a retryable preflight transient.
 //
@@ -458,7 +485,7 @@ func supervisedStartRefusal(in supervisedStart) error {
 	if in.captureErr != nil {
 		return fmt.Errorf("sub-agent %s: %w: %v — without the snapshot a revert has nothing to restore, so the dispatch stops here rather than run unrevertable", in.role, ErrSupervisedCaptureFailed, in.captureErr)
 	}
-	if in.hasSandbox() && !in.captureAttempted {
+	if in.hasSandbox() && in.runsAvailable && !in.captureAttempted {
 		return fmt.Errorf("sub-agent %s: %w: the gate cannot prove this run is revertable, so it stops here", in.role, ErrSupervisedCaptureSkipped)
 	}
 	if in.requireReversible && !revertCanRollBack(in.subScope, in.captured) {
@@ -821,6 +848,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			requireReversible: opts.requireReversible,
 			role:              role,
 			subScope:          subScope,
+			runsAvailable:     opts.runs != nil,
 			captureAttempted:  captureAttempted,
 			captured:          preRunOK,
 			captureErr:        captureErr,
