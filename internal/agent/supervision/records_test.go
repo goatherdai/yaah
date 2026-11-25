@@ -150,6 +150,45 @@ func TestRecordLogBounds(t *testing.T) {
 			t.Errorf("the newest scope kept %d records, want 1", len(got))
 		}
 	})
+
+	// A drained scope's slot must go back to the pool: drain removes the scope
+	// from `order` as well as `byScope`, so when the scope records again (a
+	// redirect successor on the same scope, a later rules firing) it re-enters
+	// at the BACK of the eviction order. The stale-entry bug this pins (PR #415
+	// review finding 3/6): a leftover order key made the reused scope look new
+	// while order was already at the cap, so its re-entry popped the oldest
+	// LIVE scope early — and the next scope over popped another one, evicting
+	// records nobody had drained.
+	t.Run("drained scope re-enters without evicting live ones", func(t *testing.T) {
+		runs := NewRegistry()
+		// Fill order exactly to the cap: scopes 0..max-1, one record each.
+		for i := 0; i < maxInterventionScopes; i++ {
+			runs.RecordInterventions(ivr(1, scopeName(i), supervisionapi.SourcePolicy, supervisionapi.ActionSteer, supervisionapi.OutcomeApplied, ""))
+		}
+		const reused = 5
+		// Drain one scope: its records AND its order slot go away.
+		if got := runs.DrainInterventions(scopeName(reused)); len(got) != 1 {
+			t.Fatalf("drain returned %d records, want the 1 recorded", len(got))
+		}
+		// The drained scope records again (successor generation): re-entry at
+		// len(order) == cap-1 must NOT evict anything.
+		runs.RecordInterventions(ivr(2, scopeName(reused), supervisionapi.SourcePolicy, supervisionapi.ActionSteer, supervisionapi.OutcomeApplied, ""))
+		if got := runs.Interventions(scopeName(1)); len(got) != 1 {
+			t.Errorf("scope 1 holds %d records after the reuse, want its 1 untouched: a drained-then-reused scope must not evict a live one on re-entry", len(got))
+		}
+		// Now push one scope over the cap: exactly one eviction, and it names
+		// the oldest LIVE scope (0), not the reused one and not a stale slot.
+		runs.RecordInterventions(ivr(1, scopeName(maxInterventionScopes), supervisionapi.SourcePolicy, supervisionapi.ActionSteer, supervisionapi.OutcomeApplied, ""))
+		if got := runs.Interventions(scopeName(0)); got != nil {
+			t.Errorf("the oldest live scope kept %d record(s), want exactly it evicted at the cap", len(got))
+		}
+		if got := runs.Interventions(scopeName(1)); len(got) != 1 {
+			t.Errorf("scope 1 holds %d records at the cap, want 1: the eviction must name the OLDEST live scope only", len(got))
+		}
+		if got := runs.Interventions(scopeName(reused)); len(got) != 1 || got[0].Tick != 2 {
+			t.Errorf("the reused scope holds %+v, want exactly its post-drain tick-2 record", got)
+		}
+	})
 }
 
 // scopeName names the i-th synthetic scope of the eviction test.

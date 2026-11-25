@@ -70,6 +70,17 @@ type interventionSink interface {
 	RecordInterventions(recs ...supervisionapi.InterventionRecord)
 }
 
+// haltGate is the OPTIONAL half of the run bridge a stop's record needs: a
+// bridge that can say whether a cancel will reach a run lets this tool record
+// the stop BEFORE cancelling it. That order is not a nicety — the cancel is what
+// makes the run settle, and a settling run drains the records for its own
+// envelope, so a stop recorded after the cancel is missing from precisely the
+// envelope it belongs in (PR #415 review finding 2). A bridge without it records
+// after the halt, as this tool always did.
+type haltGate interface {
+	Haltable(scopeID string) bool
+}
+
 // recordRootAction appends one action the dispatching agent took through this
 // tool, with Source = "root" — the third source in the record vocabulary, and
 // the only one that is not the policy loop or a rule.
@@ -77,6 +88,12 @@ type interventionSink interface {
 // Tick is 0: a human- or orchestrator-driven action is outside the tick loop.
 // gen is the incarnation the action targeted, so a record and the redirect claim
 // it came from name the same run.
+//
+// The reason and guidance are bounded here exactly as the Service and the arbiter
+// bound theirs (supervisionapi.TruncateWords): both are model-authored text that
+// travels into the trace fact and the dispatch envelope, and a producer that
+// skipped the bound would let one tool call put unbounded prose in either —
+// while disagreeing with the envelope's own clip of the same field.
 func recordRootAction(runs runBridge, scopeID string, action supervisionapi.Action, reason, guidance, outcome, dropReason string, gen uint64) {
 	sink, ok := runs.(interventionSink)
 	if !ok || portIsNil(sink) {
@@ -88,8 +105,8 @@ func recordRootAction(runs runBridge, scopeID string, action supervisionapi.Acti
 		Scope:      scopeID,
 		Source:     supervisionapi.SourceRoot,
 		Action:     action,
-		Reason:     reason,
-		Guidance:   guidance,
+		Reason:     supervisionapi.TruncateWords(reason, supervisionapi.MaxReasonWords),
+		Guidance:   supervisionapi.TruncateWords(guidance, supervisionapi.MaxGuidanceWords),
 		Outcome:    outcome,
 		DropReason: dropReason,
 		Generation: gen,
@@ -336,10 +353,20 @@ func executeHalt(mgr *goatherd.ScopeManager, runs runBridge, scopeID string) (st
 	// hazard the jobs manager's CloseAndWait documents. Every outcome
 	// reports what happened; a finished run's halt stays a trace-side
 	// record, never a phantom cancellation.
-	var cancelled, quiesced, waited bool
+	//
+	// The stop's RECORD is the one thing that goes before the cancel: the
+	// cancel is what makes the halted run settle, and a settling run drains
+	// the records for its own envelope, so a record made after it can only
+	// linger in the log (PR #415 review finding 2). Haltable asks the same
+	// question Cancel is about to ask, so a refusal still records a drop.
+	var cancelled, quiesced, waited, recorded bool
 	var gen uint64
 	if runs != nil {
 		gen, _ = runs.Generation(scopeID)
+		if gate, ok := runs.(haltGate); ok && gate.Haltable(scopeID) {
+			recordRootAction(runs, scopeID, supervisionapi.ActionStop, haltReason, "", supervisionapi.OutcomeApplied, "", gen)
+			recorded = true
+		}
 		quiesce, err := runs.Cancel(scopeID)
 		switch {
 		case err == nil:
@@ -366,16 +393,23 @@ func executeHalt(mgr *goatherd.ScopeManager, runs runBridge, scopeID string) (st
 	}
 	switch {
 	case cancelled && (!waited || quiesced):
-		recordRootAction(runs, scopeID, supervisionapi.ActionStop, haltReason, "", supervisionapi.OutcomeApplied, "", gen)
+		if !recorded {
+			recordRootAction(runs, scopeID, supervisionapi.ActionStop, haltReason, "", supervisionapi.OutcomeApplied, "", gen)
+		}
 		return fmt.Sprintf("Halted %s; the running loop was cancelled and has stopped.", scopeID), nil
 	case cancelled:
-		recordRootAction(runs, scopeID, supervisionapi.ActionStop, haltReason, "", supervisionapi.OutcomeApplied, "", gen)
+		if !recorded {
+			recordRootAction(runs, scopeID, supervisionapi.ActionStop, haltReason, "", supervisionapi.OutcomeApplied, "", gen)
+		}
 		return fmt.Sprintf("Halted %s; the run was cancelled but had not stopped within %s — an in-flight tool may have been interrupted by the sandbox teardown.", scopeID, haltQuiesceTimeout), nil
 	default:
 		// The kernel-side halt landed with no run behind it, which is the
 		// honest "nothing was cancelled" case: recorded as a drop so the
-		// scope's envelope does not claim a run was stopped.
-		recordRootAction(runs, scopeID, supervisionapi.ActionStop, haltReason, "", supervisionapi.OutcomeDropped, supervisionapi.DropReasonNoRun, gen)
+		// scope's envelope does not claim a run was stopped. (recorded is
+		// false here by construction: Haltable said no run to cancel.)
+		if !recorded {
+			recordRootAction(runs, scopeID, supervisionapi.ActionStop, haltReason, "", supervisionapi.OutcomeDropped, supervisionapi.DropReasonNoRun, gen)
+		}
 		return fmt.Sprintf("Halted %s in the trace; no active run to cancel (the scope is not currently executing).", scopeID), nil
 	}
 }

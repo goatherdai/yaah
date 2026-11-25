@@ -20,14 +20,10 @@ import (
 	"github.com/goatherdai/yaah/internal/jobs"
 )
 
-// interventionWarningBudget caps how many records one envelope names. Same shape
-// as denialWarningBudget and the supervise tool's maxErrRecordDetails: the first
-// records in tick order are named, and the rest are counted.
-const interventionWarningBudget = 5
-
-// interventionFieldClip bounds one record's reason or guidance. Both are
-// model- or rule-authored text that must not be able to dominate the envelope.
-const interventionFieldClip = 240
+// interventionWarningBudget and interventionFieldClip are gone: this renderer
+// shares caveatWarningBudget, caveatFieldClip and caveatLines with the guard
+// refusals (denials.go), so the two caveat lists cannot drift into different
+// bounds for the same job.
 
 // interventionWarnings renders one run's intervention records as envelope
 // warnings, one line per record in tick order and a trailing count when there
@@ -36,18 +32,9 @@ const interventionFieldClip = 240
 // guidance if there was any — so a reader learns what the supervisor did to the
 // run and not merely that it did something.
 func interventionWarnings(records []jobs.SubAgentIntervention) []string {
-	if len(records) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(records)+1)
-	for i, rec := range records {
-		if i == interventionWarningBudget {
-			out = append(out, fmt.Sprintf("supervisor recorded %d more intervention(s) on this run", len(records)-interventionWarningBudget))
-			break
-		}
-		out = append(out, interventionWarning(rec))
-	}
-	return out
+	return caveatLines(records, interventionWarning, func(omitted int) string {
+		return fmt.Sprintf("supervisor recorded %d more intervention(s) on this run", omitted)
+	})
 }
 
 // interventionWarning renders one record.
@@ -68,11 +55,11 @@ func interventionWarning(rec jobs.SubAgentIntervention) string {
 	}
 	// The reason is model-authored text on the policy path: one line only, so it
 	// cannot forge a second warning entry.
-	if reason := oneLine(rec.Reason, interventionFieldClip); reason != "" {
+	if reason := oneLine(rec.Reason, caveatFieldClip); reason != "" {
 		b.WriteString(" — ")
 		b.WriteString(reason)
 	}
-	if guidance := oneLine(rec.Guidance, interventionFieldClip); guidance != "" {
+	if guidance := oneLine(rec.Guidance, caveatFieldClip); guidance != "" {
 		fmt.Fprintf(&b, "; guidance %q", guidance)
 	}
 	if rec.Generation != 0 {

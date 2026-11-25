@@ -592,6 +592,21 @@ func (r *Registry) Cancel(scopeID string) (<-chan struct{}, error) {
 	return run.entry.Done, nil
 }
 
+// Haltable reports whether a halt would reach a run: a live registration whose
+// run carries a cancellation. It is the non-mutating half of Cancel, and the
+// ordering device a stop needs (yaah-vaxv): a stop's record must be appended
+// BEFORE the cancel, because the cancel is what makes the halted run settle and
+// a settling run drains its own scope's records — so a producer asks this
+// question first, records while the answer still holds, and only then cancels.
+// Recording after a successful Cancel is too late by construction, and it is the
+// narrow race that loses a halt's record from its own run's envelope.
+func (r *Registry) Haltable(scopeID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run, ok := r.runs[scopeID]
+	return ok && run.entry.Cancel != nil
+}
+
 // Has reports whether a run is registered for the scope.
 func (r *Registry) Has(scopeID string) bool {
 	r.mu.Lock()

@@ -68,10 +68,19 @@ type interventionLog struct {
 //
 // Records arrive already in production order, which for a tick is tick order:
 // the arbiter builds a tick's records in one pass and hands them over together.
+//
+// A record VALUE reaches the log at most once. The stop path hands the same
+// record twice on purpose: the delivery side appends it at the CANCEL, which is
+// the only point ahead of the halted run's settle (see BatchConfig.Stop), and
+// the tick result then carries the same value to the caller. Counted twice, one
+// stop would read as two, and the envelope is a report of what happened. Two
+// genuinely distinct records are never equal here — every record carries its own
+// At timestamp — so this is idempotence, not deduplication of real events.
 func (l *interventionLog) append(recs []supervisionapi.InterventionRecord) {
 	if len(recs) == 0 {
 		return
 	}
+	added := make([]supervisionapi.InterventionRecord, 0, len(recs))
 	l.mu.Lock()
 	if l.byScope == nil {
 		l.byScope = make(map[string][]supervisionapi.InterventionRecord, 8)
@@ -82,6 +91,9 @@ func (l *interventionLog) append(recs []supervisionapi.InterventionRecord) {
 			l.evictOldestLocked()
 			l.order = append(l.order, rec.Scope)
 		}
+		if holdsRecord(existing, rec) {
+			continue
+		}
 		existing = append(existing, rec)
 		if over := len(existing) - maxInterventionRecordsPerScope; over > 0 {
 			// Copy the survivors down in place: the window keeps the NEWEST
@@ -89,6 +101,7 @@ func (l *interventionLog) append(recs []supervisionapi.InterventionRecord) {
 			existing = append(existing[:0], existing[over:]...)
 		}
 		l.byScope[rec.Scope] = existing
+		added = append(added, rec)
 	}
 	sink := l.sink
 	l.mu.Unlock()
@@ -96,8 +109,20 @@ func (l *interventionLog) append(recs []supervisionapi.InterventionRecord) {
 	// Outside the lock: the sink writes facts, and a stalled store must never
 	// hold the log against a concurrent producer.
 	if sink != nil {
-		sink(recs)
+		sink(added)
 	}
+}
+
+// holdsRecord reports whether the scope's window already holds this exact
+// record value. A record is a value of comparable fields, so equality is the
+// whole record: same instant, same tick, same action, same outcome.
+func holdsRecord(window []supervisionapi.InterventionRecord, rec supervisionapi.InterventionRecord) bool {
+	for _, have := range window {
+		if have == rec {
+			return true
+		}
+	}
+	return false
 }
 
 // evictOldestLocked drops the records of the scope that was written first.
@@ -122,12 +147,34 @@ func (l *interventionLog) forScope(scopeID string) []supervisionapi.Intervention
 // drain returns a scope's records in tick order AND clears them, so the run that
 // just settled cannot report the same intervention twice (a redirect successor
 // is a run of its own, and it opens its own account).
+//
+// The scope's eviction-order entry goes with it. Leaving it behind is a live
+// bug, not untidiness: a scope that records again after a drain looks NEW to
+// append but is still OLD to eviction, so it never gets a fresh position — and
+// eviction can then pop its stale entry and delete a live scope's records while
+// the records of a scope past the cap survive. The invariant that makes
+// eviction honest is that order names exactly the scopes byScope holds.
 func (l *interventionLog) drain(scopeID string) []supervisionapi.InterventionRecord {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	recs := ordered(l.byScope[scopeID])
+	if _, ok := l.byScope[scopeID]; !ok {
+		return recs
+	}
 	delete(l.byScope, scopeID)
+	l.dropOrderLocked(scopeID)
 	return recs
+}
+
+// dropOrderLocked removes one scope from the eviction order, keeping the order
+// of the rest. Callers hold l.mu.
+func (l *interventionLog) dropOrderLocked(scopeID string) {
+	for i, id := range l.order {
+		if id == scopeID {
+			l.order = append(l.order[:i], l.order[i+1:]...)
+			return
+		}
+	}
 }
 
 // setSink installs the trace writer (nil removes it).
@@ -212,23 +259,58 @@ const SchemaSupervisionIntervention = "yaah.supervision.intervention.v1"
 // SupervisionInterventionKind is the kind label the intervention fact carries.
 const SupervisionInterventionKind = "supervision:intervention"
 
-// recordFactTimeout bounds one append's fact writes. A record batch is written
-// under ONE bounded context, so a broken store costs a producer one bound
-// instead of one bound per record.
-const recordFactTimeout = 2 * time.Second
+const (
+	// recordFactTimeout bounds ONE record's fact write. Per record, not per
+	// batch: one stalled write must not swallow the records behind it, and a
+	// batch of a dozen records written under a single two-second bound was
+	// spending the overflow of one slow write on the next one (PR #415 review
+	// finding 7).
+	recordFactTimeout = 500 * time.Millisecond
+	// recordFactBatchTimeout bounds one sink call as a whole, so the per-record
+	// bound cannot multiply into an unbounded stall on a producer's goroutine:
+	// a batch whose store never answers costs at most this much, whatever its
+	// length.
+	recordFactBatchTimeout = 2 * time.Second
+)
+
+// recordFactFailure makes a broken trace store visible ONCE per process instead
+// of never. Every record is already carried by the log and the dispatch
+// envelope, so a lost fact is a diagnostic regression and not a lost
+// intervention — which is exactly why it must not be silent, and exactly why it
+// must not warn on every tick of a long session (the same first-failure shape
+// the arbiter's noStopOnce uses).
+var recordFactFailure sync.Once
+
+// noteRecordFactFailure warns about the first fact that did not reach the trace
+// and debug-logs the rest. scope is the recorded scope (empty when the record
+// was made for a scope the log knows nothing about).
+func noteRecordFactFailure(reason string, rec supervisionapi.InterventionRecord, err error) {
+	recordFactFailure.Do(func() {
+		slog.Warn("supervision: an intervention record did not reach the trace; the session log and the dispatch envelope still carry it",
+			"reason", reason, "scope", rec.Scope, "tick", rec.Tick, "err", err)
+	})
+	slog.Debug("supervision: intervention record not in the trace",
+		"reason", reason, "scope", rec.Scope, "tick", rec.Tick, "err", err)
+}
 
 // ScopeRecordSink returns the writer Registry.SetRecordSink takes: each record
 // becomes one SchemaSupervisionIntervention fact on the NAMED scope's own trace
 // path, where the scope's other facts live (the same path the shell guard's deny
 // fact takes).
 //
-// Synchronous on purpose. This package's A2 invariant is that the fact is the
-// record, and an intervention that only exists in memory until some run settles
-// is that inversion in slower motion — a scope whose run dies without settling
-// (a timeout that never returns, an operator stopping the session) would leave
-// no trace of what the supervisor did to it. The write is bounded by
-// recordFactTimeout for the whole batch, so a stalled store costs one bounded
-// delay rather than a hung tick.
+// Synchronous on purpose, and the trade-off is deliberate. This package's A2
+// invariant is that the fact is the record, and an intervention that only exists
+// in memory until some run settles is that inversion in slower motion — a scope
+// whose run dies without settling (a timeout that never returns, an operator
+// stopping the session) would leave no trace of what the supervisor did to it.
+// The sink is called inline from the producer, so a stalled store can delay a
+// tick: the bound is per record (recordFactTimeout) inside a whole-batch bound
+// (recordFactBatchTimeout), which caps that cost at a couple of seconds for a
+// tick whose cadence is seconds anyway, and durability is worth more than
+// latency here. A background queue would buy the difference and cost a lifecycle
+// — a bounded queue, an owner, and a join at session teardown — that this seat
+// does not have; the supervision Service's deny-fact writers carry that
+// machinery only because they are created at wiring time and joined by Close.
 //
 // nil mgr yields nil: without a scope manager no scope is addressable, so there
 // is no owner path to record on and the log stays memory-only.
@@ -240,18 +322,19 @@ func ScopeRecordSink(mgr *goatherd.ScopeManager) func([]supervisionapi.Intervent
 		if len(recs) == 0 {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), recordFactTimeout)
-		defer cancel()
+		batchCtx, cancelBatch := context.WithTimeout(context.Background(), recordFactBatchTimeout)
+		defer cancelBatch()
 		for _, rec := range recs {
 			scope, ok := mgr.Get(rec.Scope)
 			if !ok {
-				slog.Debug("supervision: intervention record not in the trace — scope not addressable",
-					"scope", rec.Scope, "tick", rec.Tick)
+				noteRecordFactFailure("scope not addressable", rec, nil)
 				continue
 			}
-			if _, err := scope.AppendFact(ctx, SchemaSupervisionIntervention, SupervisionInterventionKind, interventionPayload(rec)); err != nil {
-				slog.Debug("supervision: intervention record not in the trace",
-					"scope", rec.Scope, "tick", rec.Tick, "err", err)
+			ctx, cancel := context.WithTimeout(batchCtx, recordFactTimeout)
+			_, err := scope.AppendFact(ctx, SchemaSupervisionIntervention, SupervisionInterventionKind, interventionPayload(rec))
+			cancel()
+			if err != nil {
+				noteRecordFactFailure("append failed", rec, err)
 			}
 		}
 	}

@@ -163,6 +163,12 @@ func TestTaskRunner_WithoutAnInterventionSinkStillRuns(t *testing.T) {
 	if _, err := runner(context.Background(), "do the work", tools.SubAgentParams{Role: "developer"}); err != nil {
 		t.Fatalf("run without an intervention sink: %v", err)
 	}
+	// Without this the test is vacuous: a bridge that never came up records
+	// nothing, and "the log is empty" would then prove nothing about the drain
+	// (PR #415 review finding 5).
+	if provider.recordScope == "" {
+		t.Fatal("the fake supervisor found no registered scope: the bridge never came up, so the empty log below is not evidence of a drain")
+	}
 	// Nothing captured the records, but the run still settled and the log was
 	// still drained: a missing sink must not leave records to pile up.
 	if left := runs.Interventions(provider.recordScope); left != nil {

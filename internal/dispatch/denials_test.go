@@ -124,16 +124,16 @@ func TestDenialWarnings_Rendering(t *testing.T) {
 		t.Errorf("global refusal = %q, want it named without a command or rule", global)
 	}
 
-	many := make([]jobs.SubAgentDenial, 0, denialWarningBudget+2)
-	for i := 0; i < denialWarningBudget+2; i++ {
+	many := make([]jobs.SubAgentDenial, 0, caveatWarningBudget+2)
+	for i := 0; i < caveatWarningBudget+2; i++ {
 		many = append(many, jobs.SubAgentDenial{Tool: "bash", Command: "cmd" + string(rune('a'+i)), Reason: "denied"})
 	}
 	got := denialWarnings(many)
-	if len(got) != denialWarningBudget+1 {
-		t.Fatalf("rendered %d warnings for %d denials, want %d plus the count line", len(got), len(many), denialWarningBudget)
+	if len(got) != caveatWarningBudget+1 {
+		t.Fatalf("rendered %d warnings for %d denials, want %d plus the count line", len(got), len(many), caveatWarningBudget)
 	}
-	if !strings.Contains(got[denialWarningBudget], "refused 2 more call(s)") {
-		t.Errorf("last warning = %q, want the remainder count", got[denialWarningBudget])
+	if !strings.Contains(got[caveatWarningBudget], "refused 2 more call(s)") {
+		t.Errorf("last warning = %q, want the remainder count", got[caveatWarningBudget])
 	}
 }
 

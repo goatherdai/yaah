@@ -75,3 +75,24 @@ type Decider interface {
 func WordCount(s string) int {
 	return len(strings.Fields(s))
 }
+
+// TruncateWords keeps the first max whitespace-separated words and drops the
+// rest, so a truncation never cuts a word in half. It counts exactly as
+// WordCount does, which is the same rule the headless decider (yaah-0nbb)
+// enforces on its own replies.
+//
+// It is exported because the SAME bound has to hold at every producer of a
+// record's model-authored text — the arbiter (policy and rules), the Service's
+// direct deliveries, and the supervisor tool's root actions — or one guidance
+// reads differently depending on which source recorded it. max <= 0 yields the
+// empty string: a zero word budget can hold no words.
+func TruncateWords(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	fields := strings.Fields(s)
+	if len(fields) <= max {
+		return s
+	}
+	return strings.Join(fields[:max], " ")
+}

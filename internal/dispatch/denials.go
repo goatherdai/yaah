@@ -14,14 +14,40 @@ import (
 	"github.com/goatherdai/yaah/internal/jobs"
 )
 
-// denialWarningBudget caps how many refusals one envelope names. A model that
-// keeps retrying a refused command is bounded here rather than allowed to fill
-// the envelope's warning list with one line per turn.
-const denialWarningBudget = 5
+// The two envelope caveat lists — guard refusals and supervision interventions —
+// are one shape: a bounded list of one-line, clipped entries and a trailing count.
+// They share these constants and caveatLines so the two cannot drift into
+// different budgets for the same reason, and a reader of one learns the other
+// (PR #415 review finding 9).
+const (
+	// caveatWarningBudget caps how many entries one envelope names. A model
+	// that keeps retrying a refused command, or a supervise loop that ticks for
+	// a whole dispatch, is bounded here rather than allowed to fill the
+	// envelope's warning list.
+	caveatWarningBudget = 5
+	// caveatFieldClip bounds one model- or rule-authored field in a caveat
+	// line. A single entry must not be able to dominate the envelope with a
+	// huge payload the model supplied.
+	caveatFieldClip = 240
+)
 
-// denialFieldClip bounds one command or reason field. A single denial must not
-// be able to dominate the envelope with a huge payload the model supplied.
-const denialFieldClip = 240
+// caveatLines renders entries as at most caveatWarningBudget one-line entries in
+// order, followed by one line stating how many were left out. Both caveat
+// renderers go through it: same bound, same truncation, same count line shape.
+func caveatLines[T any](entries []T, render func(T) string, overflow func(omitted int) string) []string {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(entries)+1)
+	for i, entry := range entries {
+		if i == caveatWarningBudget {
+			out = append(out, overflow(len(entries)-caveatWarningBudget))
+			break
+		}
+		out = append(out, render(entry))
+	}
+	return out
+}
 
 // denialWarnings renders one run's guard refusals as envelope warnings, one per
 // distinct refusal and a trailing count when there are more than the budget.
@@ -29,18 +55,9 @@ const denialFieldClip = 240
 // a role allowlist, and the reason the model itself was given — so a reader
 // knows both what was refused and why.
 func denialWarnings(denials []jobs.SubAgentDenial) []string {
-	if len(denials) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(denials)+1)
-	for i, d := range denials {
-		if i == denialWarningBudget {
-			out = append(out, fmt.Sprintf("supervisor guard refused %d more call(s) this run", len(denials)-denialWarningBudget))
-			break
-		}
-		out = append(out, denialWarning(d))
-	}
-	return out
+	return caveatLines(denials, denialWarning, func(omitted int) string {
+		return fmt.Sprintf("supervisor guard refused %d more call(s) this run", omitted)
+	})
 }
 
 // denialWarning renders one refusal.
@@ -52,9 +69,9 @@ func denialWarning(d jobs.SubAgentDenial) string {
 	if d.Command != "" {
 		// A command is model-supplied text: keep it on one line and quoted so
 		// embedded newlines cannot forge extra warning entries.
-		target = fmt.Sprintf("%s (%q)", target, oneLine(d.Command, denialFieldClip))
+		target = fmt.Sprintf("%s (%q)", target, oneLine(d.Command, caveatFieldClip))
 	}
-	reason := oneLine(d.Reason, denialFieldClip)
+	reason := oneLine(d.Reason, caveatFieldClip)
 	if d.Rule != "" {
 		return fmt.Sprintf("supervisor guard denied %s by %s: %s", target, d.Rule, reason)
 	}

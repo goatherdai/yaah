@@ -89,9 +89,16 @@ func newBatchHarnessWithWait(t *testing.T, cfg BatchConfig, wait func(ctx contex
 	h := &batchHarness{t: t, runs: NewRegistry(), src: &fakeSource{}, stopDelivered: true}
 	h.src.set()
 	cfg.Now = testClock
-	cfg.Stop = func(_ context.Context, scopeID, reason string) (bool, error) {
+	cfg.Stop = func(_ context.Context, scopeID, reason string, record func()) (bool, error) {
 		h.stops = append(h.stops, scopeID)
 		h.stopReasons = append(h.stopReasons, reason)
+		// Mirror the real adapter's contract: an applied stop's record is
+		// appended AT the cancel, before the caller can be told it landed, so
+		// the halted run's own settle can still see it. A harness that skipped
+		// this would hide the ordering the producer now guarantees.
+		if h.stopDelivered && h.stopErr == nil && record != nil {
+			record()
+		}
 		return h.stopDelivered, h.stopErr
 	}
 	if wait != nil {
@@ -1480,7 +1487,7 @@ func TestService_StopFuncReportsRefusals(t *testing.T) {
 			Cancel:  func() { cancelled.Store(true) },
 		})
 
-		delivered, err := svc.StopFunc()(context.Background(), "scope:sess-root", "the rule wants the root stopped")
+		delivered, err := svc.StopFunc()(context.Background(), "scope:sess-root", "the rule wants the root stopped", nil)
 		if err != nil {
 			t.Fatalf("StopFunc on the root = %v, want a refusal, not a failure", err)
 		}
@@ -1497,7 +1504,7 @@ func TestService_StopFuncReportsRefusals(t *testing.T) {
 		// newTestService registers scope:sub-worker with a steering channel and
 		// no cancellation: the kernel halt would tear the sandbox down under a
 		// live run, so the halt path refuses.
-		delivered, err := svc.StopFunc()(context.Background(), "scope:sub-worker", "the rule wants it stopped")
+		delivered, err := svc.StopFunc()(context.Background(), "scope:sub-worker", "the rule wants it stopped", nil)
 		if err != nil {
 			t.Fatalf("StopFunc on an unstoppable run = %v, want a refusal, not a failure", err)
 		}
@@ -1518,7 +1525,7 @@ func TestService_StopFuncReportsRefusals(t *testing.T) {
 			Done:    quiesce,
 		})
 
-		delivered, err := svc.StopFunc()(context.Background(), "scope:sub-worker", "the rule wants it stopped")
+		delivered, err := svc.StopFunc()(context.Background(), "scope:sub-worker", "the rule wants it stopped", nil)
 		if err != nil {
 			t.Fatalf("StopFunc = %v, want nil", err)
 		}
@@ -1529,6 +1536,104 @@ func TestService_StopFuncReportsRefusals(t *testing.T) {
 			t.Errorf("scope state = %q (found %v), want discarded", scope.State(), ok)
 		}
 	})
+}
+
+// TestService_StopFuncRecordsBeforeCancel pins the ordering that puts an
+// applied stop into the HALTED dispatch's own envelope (PR #415 review
+// finding 2): the record callback must run — and the record must be in the
+// intervention log — BEFORE the registry's Cancel. The cancel is what makes
+// the run settle, and a settling run drains its own scope's records
+// (Registry.DrainInterventions) for the envelope; a record appended after the
+// cancel races that drain, so the one dispatch that most needs to report its
+// stop is exactly the one that may never report it. And a refusal must not
+// record at all: "applied" for a stop that was refused would be a lie.
+func TestService_StopFuncRecordsBeforeCancel(t *testing.T) {
+	t.Run("record is in the log when the cancel runs", func(t *testing.T) {
+		svc, _, _, _ := newTestService(t, AdvisoryRules{})
+		quiesce := make(chan struct{})
+
+		// What the log holds at the instant the run is cancelled — the point
+		// the settling drain is released. Captured inside Cancel because a
+		// check after StopFunc returns would also pass with the broken order.
+		var logAtCancel []supervisionapi.InterventionRecord
+		svc.runs.Register("scope:sub-worker", Run{
+			SteerCh: make(chan string, SteerBuffer),
+			Cancel: func() {
+				logAtCancel = svc.runs.Interventions("scope:sub-worker")
+				close(quiesce)
+			},
+			Done: quiesce,
+		})
+
+		recordCalls := 0
+		record := func() {
+			recordCalls++
+			svc.runs.RecordInterventions(supervisionapi.InterventionRecord{
+				At:      testClock(),
+				Tick:    3,
+				Scope:   "scope:sub-worker",
+				Source:  supervisionapi.SourceRules,
+				Action:  supervisionapi.ActionStop,
+				Reason:  "the rule wants it stopped",
+				Outcome: supervisionapi.OutcomeApplied,
+			})
+		}
+
+		delivered, err := svc.StopFunc()(context.Background(), "scope:sub-worker", "the rule wants it stopped", record)
+		if err != nil {
+			t.Fatalf("StopFunc = %v, want nil", err)
+		}
+		if !delivered {
+			t.Fatal("a delivered stop reported delivered=false")
+		}
+		if recordCalls != 1 {
+			t.Errorf("record was called %d time(s), want exactly 1 (idempotence covers a double hand, not a double call)", recordCalls)
+		}
+		if !hasAppliedStop(logAtCancel) {
+			t.Fatalf("the log held %+v when the cancel ran, want the applied stop already appended", logAtCancel)
+		}
+		// And the settle-side drain sees it: what a halted run's envelope carries.
+		if drained := svc.runs.DrainInterventions("scope:sub-worker"); !hasAppliedStop(drained) {
+			t.Errorf("drain at settle = %+v, want the applied stop the envelope must cite", drained)
+		}
+	})
+
+	t.Run("a refusal never records", func(t *testing.T) {
+		svc, _, _, _ := newTestService(t, AdvisoryRules{})
+		// scope:sub-worker is registered by newTestService with a steering
+		// channel and NO cancellation: the stop path refuses it (ErrNotHaltable
+		// territory). The record callback must not run for a refusal.
+		recordCalls := 0
+		delivered, err := svc.StopFunc()(context.Background(), "scope:sub-worker", "the rule wants it stopped", func() {
+			recordCalls++
+		})
+		if err != nil {
+			t.Fatalf("StopFunc on an unstoppable run = %v, want a refusal, not a failure", err)
+		}
+		if delivered {
+			t.Error("a refused stop reported delivered=true")
+		}
+		if recordCalls != 0 {
+			t.Errorf("record was called %d time(s) for a REFUSED stop, want 0: an applied record for a stop that never happened is a lie", recordCalls)
+		}
+		// The path may legitimately leave its own DROP record (a refused stop is
+		// a rules outcome like any other); what it must never leave is an
+		// APPLIED stop.
+		if got := svc.runs.Interventions("scope:sub-worker"); hasAppliedStop(got) {
+			t.Errorf("the log holds %+v after a refused stop, want no applied record", got)
+		}
+	})
+}
+
+// hasAppliedStop reports whether recs carry an applied stop — the record the
+// halted run's envelope must cite.
+func hasAppliedStop(recs []supervisionapi.InterventionRecord) bool {
+	for _, r := range recs {
+		if r.Action == supervisionapi.ActionStop && r.Outcome == supervisionapi.OutcomeApplied {
+			return true
+		}
+	}
+	return false
 }
 
 // TestBatch_RootScopeIsNotRedirectable pins the ENFORCED root boundary: the

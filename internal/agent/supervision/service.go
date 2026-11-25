@@ -1118,7 +1118,9 @@ func (s *Service) drain() {
 // to quiesce, and only then record the kernel-side halt, which tears
 // down an owned sandbox. Cancelling alone is not quiescence: an
 // in-flight tool can still be inside the very sandbox scope.Halt
-// destroys next.
+// destroys next. The stop's RECORD is the exception to that order and
+// goes before the cancel (see deliverHaltReport): it is about the
+// intervention, and the intervention is the cancel.
 //
 // The root scope is the opt-in gate: a rule halting the interactive
 // session is a big hammer, dispatched only under supervisor.halt_root
@@ -1130,7 +1132,21 @@ func (s *Service) drain() {
 // adapter (StopFunc) is its reader.
 func (s *Service) deliverHalt(scopeID, reason string) {
 	gen := s.generation(scopeID)
-	delivered, err := s.deliverHaltReport(context.Background(), scopeID, reason)
+	recorded := false
+	record := func() {
+		if recorded {
+			return
+		}
+		recorded = true
+		s.recordRuleAction(scopeID, supervisionapi.ActionStop, reason, "", supervisionapi.OutcomeApplied, "", gen)
+	}
+	delivered, err := s.deliverHaltReport(context.Background(), scopeID, reason, record)
+	if recorded {
+		// The applied record landed at the cancel, which is the only point ahead
+		// of the halted run's settle — nothing left to record, and nothing that
+		// could contradict it.
+		return
+	}
 	outcome, dropReason := supervisionapi.OutcomeApplied, ""
 	switch {
 	case err != nil:
@@ -1145,14 +1161,23 @@ func (s *Service) deliverHalt(scopeID, reason string) {
 // reports that the halt actually landed; false is a REFUSAL this service
 // made on purpose — the supervisor.halt_root gate on the root scope, a
 // merged (terminal) scope, or a run that registered no cancellation —
-// and err is a delivery or kernel-halt failure. ctx cuts the bounded
-// quiesce wait short (the halt still lands, the A3 bounded-proceed
-// semantics); it never cancels the halt itself.
+// and err is a delivery failure. ctx cuts the bounded quiesce wait short
+// (the halt still lands, the A3 bounded-proceed semantics); it never
+// cancels the halt itself.
+//
+// record, when non-nil, is called exactly once if — and only if — this call is
+// about to CANCEL a run, and it is called BEFORE the cancel: the cancel is what
+// makes the halted run settle, and a settling run drains its own scope's records
+// (Registry.DrainInterventions), so a stop recorded after the cancel is a stop
+// the halted dispatch's envelope never carries — the halted run is also the one
+// run whose supervisor record matters most (PR #415 review finding 2). The
+// pre-cancel gate is Registry.Haltable, which asks the same question Cancel is
+// about to ask, so a refusal never records an applied stop.
 //
 // The verdict exists for the batch's rules stop: a refused stop must be
 // recorded as refused, not as a stop the supervisor performed (design
 // §4.6, yaah-3l34).
-func (s *Service) deliverHaltReport(ctx context.Context, scopeID, reason string) (bool, error) {
+func (s *Service) deliverHaltReport(ctx context.Context, scopeID, reason string, record func()) (bool, error) {
 	if s.rootScopeID != "" && scopeID == s.rootScopeID && !s.haltRoot {
 		slog.Warn("supervisor: rule-driven halt of the root scope refused — set supervisor.halt_root to allow it",
 			"scope", scopeID)
@@ -1165,6 +1190,15 @@ func (s *Service) deliverHaltReport(ctx context.Context, scopeID, reason string)
 		// halt to show for it.
 		slog.Info("supervisor: halt skipped — scope already merged (terminal)", "scope", scopeID)
 		return false, nil
+	}
+
+	// The applied record goes in BEFORE the cancel. Haltable answers the question
+	// Cancel is about to answer (a live run with a cancellation), so a refusal —
+	// the ErrNotHaltable branch below, a merged scope, the root gate — never
+	// records a stop that did not happen; and everything from here on is inside
+	// the window the run's own settle cannot precede.
+	if s.runs.Haltable(scopeID) && record != nil {
+		record()
 	}
 
 	var quiesced, waited bool
@@ -1200,8 +1234,13 @@ func (s *Service) deliverHaltReport(ctx context.Context, scopeID, reason string)
 	}
 	if scope, ok := s.mgr.Get(scopeID); ok {
 		if err := scope.Halt(); err != nil {
-			slog.Warn("supervisor: kernel halt failed", "scope", scopeID, "err", err)
-			return false, err
+			// The RUN is stopped — the cancel is what stops a run — so the stop
+			// landed and the verdict stays delivered. What failed is the kernel
+			// side teardown, and a record already appended at the cancel must not
+			// be contradicted by it: calling this a failed stop would report a run
+			// as still running when it has returned.
+			slog.Warn("supervisor: kernel halt failed after the run was cancelled; the scope was not torn down",
+				"scope", scopeID, "err", err)
 		}
 	}
 	switch {
@@ -1224,8 +1263,8 @@ func (s *Service) deliverHaltReport(ctx context.Context, scopeID, reason string)
 // leaves BatchConfig.Stop nil instead, which the arbiter records as
 // no_stop_func.
 func (s *Service) StopFunc() StopFunc {
-	return func(ctx context.Context, scopeID, reason string) (bool, error) {
-		return s.deliverHaltReport(ctx, scopeID, reason)
+	return func(ctx context.Context, scopeID, reason string, record func()) (bool, error) {
+		return s.deliverHaltReport(ctx, scopeID, reason, record)
 	}
 }
 

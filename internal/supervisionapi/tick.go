@@ -140,7 +140,13 @@ const (
 // agent knows what happened to a run before it settles that run's proposal.
 // An empty Guidance is "there was none to deliver".
 type InterventionRecord struct {
-	// At is the wall clock when the tick recorded the outcome.
+	// At is the wall clock when the record was made — inside a tick for a
+	// decision the arbiter executed, and OUTSIDE one for everything else the
+	// record still has to carry: a rules action the Service delivered directly
+	// (no batch arbitrated it), a firing the full rule queue discarded, an
+	// applied stop recorded at the cancel that delivers it, and the dispatching
+	// agent's own root action through the supervisor tool. It is when the
+	// intervention was recorded, and never a claim about the tick loop.
 	At time.Time
 	// Tick is the batch tick that produced the decision. ZERO means the action
 	// came from outside the tick loop: a rules action the Service delivered

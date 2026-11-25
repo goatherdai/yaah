@@ -76,21 +76,21 @@ func TestInterventionWarningsRendersEachRecord(t *testing.T) {
 // fill an envelope with its transcript.
 func TestInterventionWarningsAreBounded(t *testing.T) {
 	var recs []jobs.SubAgentIntervention
-	for i := 1; i <= interventionWarningBudget+3; i++ {
+	for i := 1; i <= caveatWarningBudget+3; i++ {
 		recs = append(recs, interventionRecord(i, supervisionapi.SourcePolicy, supervisionapi.ActionSteer,
 			supervisionapi.OutcomeDropped, supervisionapi.DropReasonCooldown, "cooling", ""))
 	}
 
 	got := interventionWarnings(recs)
-	if len(got) != interventionWarningBudget+1 {
-		t.Fatalf("rendered %d lines, want %d named plus the count", len(got), interventionWarningBudget+1)
+	if len(got) != caveatWarningBudget+1 {
+		t.Fatalf("rendered %d lines, want %d named plus the count", len(got), caveatWarningBudget+1)
 	}
-	for i := 0; i < interventionWarningBudget; i++ {
+	for i := 0; i < caveatWarningBudget; i++ {
 		if !strings.Contains(got[i], "at tick ") {
 			t.Errorf("line %d = %q, want a named record", i, got[i])
 		}
 	}
-	if last := got[interventionWarningBudget]; !strings.Contains(last, "supervisor recorded 3 more intervention(s) on this run") {
+	if last := got[caveatWarningBudget]; !strings.Contains(last, "supervisor recorded 3 more intervention(s) on this run") {
 		t.Errorf("last line = %q, want the count of the records past the budget", last)
 	}
 }

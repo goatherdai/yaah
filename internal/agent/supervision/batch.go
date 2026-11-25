@@ -36,7 +36,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -127,7 +126,18 @@ const (
 // a delivery failure. A nil StopFunc means there is no delivery side at all
 // (DropReasonNoStopFunc); the composition root that owns both the Service and
 // the batch supplies the real one.
-type StopFunc func(ctx context.Context, scopeID, reason string) (delivered bool, err error)
+//
+// record is the stop's own record and MUST be called — exactly once, and only
+// if the halt is actually issued — BEFORE the cancel that delivers it. The
+// cancel is what makes the halted run settle, and a settling run drains its own
+// scope's records for the dispatch envelope (Registry.DrainInterventions), so a
+// stop recorded after the cancel is a stop the halted dispatch never reports —
+// inverting the one case the record exists for (PR #415 review finding 2). A
+// refusal or a failure must NOT call it. An adapter that reports delivery
+// without calling it (a test double, a thin wrapper) leaves the arbiter to
+// append the record itself after the fact: present, but too late for the
+// halted run's own envelope.
+type StopFunc func(ctx context.Context, scopeID, reason string, record func()) (delivered bool, err error)
 
 // RuleArbiter is what the Service needs from the batch to route its rule
 // firings through the shared arbiter instead of delivering them directly: two
@@ -1228,7 +1238,23 @@ func (b *Batch) applyRuleStop(ctx context.Context, q queuedRule, tick int) []sup
 		return []supervisionapi.InterventionRecord{b.dropRecord(tick, source, q.scopeID,
 			supervisionapi.ActionStop, q.reason, "", supervisionapi.DropReasonNoStopFunc, 0)}
 	}
-	delivered, err := b.cfg.Stop(ctx, q.scopeID, q.reason)
+	// The applied stop's record is appended AT THE CANCEL, not here: the cancel is
+	// what makes the halted run settle, and a settling run drains its own scope's
+	// records, so the record has to be in the log before the delivery side issues
+	// it (see StopFunc). The tick result still carries the same record value; the
+	// log's per-record idempotence absorbs the second hand.
+	var applied supervisionapi.InterventionRecord
+	recorded := false
+	record := func() {
+		if recorded {
+			return
+		}
+		recorded = true
+		applied = b.newRecord(tick, source, q.scopeID,
+			supervisionapi.ActionStop, q.reason, "", supervisionapi.OutcomeApplied, "", 0)
+		b.recordInterventions([]supervisionapi.InterventionRecord{applied})
+	}
+	delivered, err := b.cfg.Stop(ctx, q.scopeID, q.reason, record)
 	if err != nil {
 		slog.Warn("supervision: rule stop delivery failed", "scope", q.scopeID, "err", err)
 		return []supervisionapi.InterventionRecord{b.dropRecord(tick, source, q.scopeID,
@@ -1241,9 +1267,15 @@ func (b *Batch) applyRuleStop(ctx context.Context, q queuedRule, tick int) []sup
 		return []supervisionapi.InterventionRecord{b.dropRecord(tick, source, q.scopeID,
 			supervisionapi.ActionStop, q.reason, "", supervisionapi.DropReasonStopRefused, 0)}
 	}
+	if !recorded {
+		// A delivery side that reported success without claiming the record (a
+		// test double, a thin adapter): append it here so the tick still accounts
+		// for the stop. The run it stopped has already settled by now, so this is
+		// the too-late case the real adapter avoids, not an equivalent one.
+		record()
+	}
 	b.noteApplied(q.scopeID, supervisionapi.ActionStop)
-	out := []supervisionapi.InterventionRecord{b.newRecord(tick, source, q.scopeID,
-		supervisionapi.ActionStop, q.reason, "", supervisionapi.OutcomeApplied, "", 0)}
+	out := []supervisionapi.InterventionRecord{applied}
 	if void, ok := b.voidClaim(q.scopeID, tick); ok {
 		out = append(out, void)
 	}
@@ -1468,9 +1500,12 @@ func appliedOf(results []supervisionapi.InterventionRecord) []supervisionapi.Int
 
 // recordInterventions hands records to the session's intervention log (yaah-vaxv,
 // design §4.10): the half the dispatch envelope reads when the supervised run
-// settles. The records are appended AFTER the tick has finished its own
-// bookkeeping, so a record never observes a half-applied tick, and a batch built
-// without a registry (every claim drops no_run) records nothing.
+// settles. A tick's records are appended once its own bookkeeping for them is
+// done, so a record never observes a half-applied action; the ONE exception is
+// an applied stop, which the delivery side appends at the cancel (see StopFunc)
+// because a stop recorded later than the run it stopped cannot reach that run's
+// envelope. A batch built without a registry (every claim drops no_run) records
+// nothing.
 func (b *Batch) recordInterventions(results []supervisionapi.InterventionRecord) {
 	if b.runs == nil || len(results) == 0 {
 		return
@@ -1478,17 +1513,10 @@ func (b *Batch) recordInterventions(results []supervisionapi.InterventionRecord)
 	b.runs.RecordInterventions(results...)
 }
 
-// truncateWords keeps the first max whitespace-separated words and drops the
-// rest, so a truncation never cuts a word in half. It counts exactly as
-// supervisionapi.WordCount does, which is the same rule the headless decider
-// (yaah-0nbb) enforces on its own replies.
+// truncateWords delegates to the shared rule: the arbiter, the Service's direct
+// deliveries and the supervisor tool's root actions must bound model-authored
+// text identically, or the same guidance reads differently depending on which
+// producer recorded it.
 func truncateWords(s string, max int) string {
-	if max <= 0 {
-		return ""
-	}
-	fields := strings.Fields(s)
-	if len(fields) <= max {
-		return s
-	}
-	return strings.Join(fields[:max], " ")
+	return supervisionapi.TruncateWords(s, max)
 }
