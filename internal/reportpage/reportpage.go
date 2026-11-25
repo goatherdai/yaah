@@ -87,6 +87,16 @@ func At(s string, offset, limit int) Page {
 	if end < start {
 		end = start
 	}
+	if end == start && start < len(s) {
+		// A window narrower than the rune at start would otherwise return an
+		// empty page whose Next() equals its Offset, so a caller paging by
+		// result_next_offset would loop forever. Advance one whole rune: its
+		// start is still a rune boundary, so pages still concatenate exactly.
+		end = start + 1
+		for end < len(s) && s[end]&0xC0 == 0x80 {
+			end++
+		}
+	}
 	return Page{Text: s[start:end], Offset: start, Limit: limit, Total: len(s)}
 }
 
