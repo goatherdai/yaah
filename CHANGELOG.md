@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.220.2](https://github.com/goatherdai/yaah/compare/v0.220.1...v0.220.2) (2026-11-26)
+
+
+### Tests
+
+* **tui:** add the session-scale render gate (yaah-30t6 T0) ([#432](https://github.com/goatherdai/yaah/issues/432)) ([ce01cf1](https://github.com/goatherdai/yaah/commit/ce01cf12156102d8fa7db22bebf08e5a4e7a0a61))
+
 ## [0.220.1](https://github.com/goatherdai/yaah/compare/v0.220.0...v0.220.1) (2026-11-26)
 
 
