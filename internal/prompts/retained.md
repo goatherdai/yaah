@@ -16,8 +16,9 @@ it with the `proposal` tool:
   dispatch seeded at a caller-named ref (`base_ref`) that is not your HEAD is
   such a case by construction: its basis is deliberately a different commit, so
   `select` refuses it and `apply` is the settlement path. A `base_ref` naming
-  your HEAD is an ordinary basis, and `select` works there exactly as it does
-  for a default dispatch.
+  your HEAD selects — but only while your working tree still matches that
+  commit, because the basis is the commit's tree and a ref carries no
+  uncommitted state; a pending edit fails `select` closed there too.
 - `apply` — path-disjoint integration onto a moved tree. It uses a three-way
   merge on the worktree lane and whole-path post-images on the container lane,
   and refuses if the parent changed any of the same paths. Pass

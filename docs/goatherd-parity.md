@@ -635,8 +635,11 @@ state the fork applies, so a dispatch starts at a commit the parent names rather
 than at whatever the parent's workspace held. It is an alternative to
 `seed_from`, never a modifier, and worktree-lane only (proposal or report
 world). `select` fast-forwards, so a `base_ref` that names a commit other than
-the parent's HEAD is refused by design (a ref naming HEAD keeps an ordinary
-basis and stays selectable); `apply` is the settlement path for such a proposal.
+the parent's HEAD is refused by design, and `apply` is the settlement path for
+such a proposal. A ref naming HEAD stays selectable, but only while the parent's
+working tree still matches that commit: the basis is the commit's tree, not the
+captured working tree, so an uncommitted edit in the parent makes `select` fail
+closed there too.
 
 Worktree proposals are now durable in the substrate. At seal the conversation
 rides in the output's execution snapshot, the result/failure note/stop
