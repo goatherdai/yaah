@@ -165,8 +165,11 @@ conversation and the next prompt appends after it.
 Session data lives in `~/.yaah/state.db` (or `$YAAH_HOME/state.db`).
 Slow-render diagnostics from the TUI append to `~/.yaah/tui-render.log`
 (or `$YAAH_HOME/tui-render.log`); they never reach the terminal, which
-runs on the alternate screen. The file is truncated when it exceeds
-512KiB.
+runs on the alternate screen. A line is recorded only for refreshes
+slower than 50ms, so an empty file means no refresh was slow. The log is
+best-effort: it is rotated aside when it exceeds 512KiB, and under a
+render storm lines may be dropped (the drop count is on the TUI's
+refresh spans).
 Goatherd execution traces are always on and record the session context,
 every turn boundary, assistant content plus reasoning content/signature,
 tool calls, and tool output bodies in a content-addressed store. Free-text

@@ -79,18 +79,59 @@ func TestSlowLoggerWritesToYaahHome(t *testing.T) {
 func TestSlowRenderWiring(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("YAAH_HOME", home)
-	old := slowRenderThreshold
+	ui := New("test")
 	// Negative: Go's monotonic clock on Windows has coarse granularity,
 	// so a microsecond-fast refresh can measure totalDur == 0 and a 0
-	// threshold would never fire. Below zero fires unconditionally.
-	slowRenderThreshold = -time.Millisecond
-	t.Cleanup(func() { slowRenderThreshold = old })
+	// threshold would never fire. Below zero fires unconditionally. The
+	// threshold is an App field, not package state, so the test can set
+	// it directly.
+	ui.slowThreshold = -time.Millisecond
 
-	ui := New("test")
 	ui.appendMessage("wiring check")
 	ui.refreshMessages()
 
 	waitForLog(t, filepath.Join(home, slowLogName), "SLOW refreshMessages")
+}
+
+// TestSlowLoggerDropsWhenFull verifies the drop policy that keeps the
+// event loop non-blocking: a full queue drops the line, counts it, and
+// returns immediately.
+func TestSlowLoggerDropsWhenFull(t *testing.T) {
+	var l slowLogger
+	l.ch = make(chan slowWrite, 1) // no writer running: the queue stays full
+	l.enqueue(slowWrite{dir: "d", msg: "queued"})
+	l.enqueue(slowWrite{dir: "d", msg: "dropped"})
+
+	if got := l.dropped.Load(); got != 1 {
+		t.Fatalf("dropped = %d, want 1", got)
+	}
+	if len(l.ch) != 1 {
+		t.Fatalf("queue length = %d, want 1 (the queued line)", len(l.ch))
+	}
+}
+
+// TestSlowLoggerFlushDrains verifies the shutdown path: Flush lands every
+// queued line before returning.
+func TestSlowLoggerFlushDrains(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("YAAH_HOME", home)
+
+	var l slowLogger
+	for i := 0; i < 10; i++ {
+		l.printf("SLOW drain %d", i)
+	}
+	l.flush()
+
+	data, err := os.ReadFile(filepath.Join(home, slowLogName))
+	if err != nil {
+		t.Fatalf("read diagnostics file: %v", err)
+	}
+	if got := strings.Count(string(data), "SLOW drain"); got != 10 {
+		t.Fatalf("flush landed %d of 10 lines", got)
+	}
+	if l.dropped.Load() != 0 {
+		t.Errorf("dropped = %d, want 0", l.dropped.Load())
+	}
 }
 
 // TestSlowLoggerCreatesMissingHome verifies the first-run path: a yaah home
@@ -134,15 +175,15 @@ func TestSlowLoggerFallsBackToLog(t *testing.T) {
 	}
 }
 
-// TestSlowLoggerTruncatesWhenLarge verifies the size cap: a diagnostics
-// file past the cap is truncated on the next write rather than growing
-// without bound across a stall-heavy session.
-func TestSlowLoggerTruncatesWhenLarge(t *testing.T) {
+// TestSlowLoggerRotatesWhenLarge verifies the size cap: a diagnostics
+// file past the cap is rotated aside rather than wiped, so the ramp into
+// a stall stays recoverable while the fresh file starts clean.
+func TestSlowLoggerRotatesWhenLarge(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("YAAH_HOME", home)
 	path := filepath.Join(home, slowLogName)
 
-	old := bytes.Repeat([]byte("x"), slowLogMaxBytes+1)
+	old := bytes.Repeat([]byte("OLD-RAMP\n"), slowLogMaxBytes/9+1)
 	if err := os.WriteFile(path, old, 0o644); err != nil {
 		t.Fatalf("seed oversized file: %v", err)
 	}
@@ -152,6 +193,13 @@ func TestSlowLoggerTruncatesWhenLarge(t *testing.T) {
 
 	data := waitForLog(t, path, "SLOW fresh 1")
 	if int64(len(data)) > slowLogMaxBytes {
-		t.Fatalf("file still oversized after write: %d bytes", len(data))
+		t.Fatalf("fresh file oversized after write: %d bytes", len(data))
+	}
+	rotated, err := os.ReadFile(path + ".1")
+	if err != nil {
+		t.Fatalf("rotated file missing: %v", err)
+	}
+	if !bytes.Contains(rotated, []byte("OLD-RAMP")) {
+		t.Errorf("rotated file lost the old ramp")
 	}
 }

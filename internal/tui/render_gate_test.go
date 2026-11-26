@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -14,11 +15,27 @@ import (
 // This file is the yaah-30t6 T0 gate. It builds a synthetic session at the
 // scale that froze the TUI (issue acceptance criterion 4: ~175 turns, ~1M
 // cumulative prompt tokens ≈ ~4MB of painted transcript) and asserts two
-// properties: a full render pass stays inside a wall-clock budget, and
-// keystrokes are echoed while heavy renders are queued on the tview event
-// loop. The budgets are deliberately generous — the gate exists to catch
-// the pathological O(transcript)-per-event scaling, not to measure
+// properties: a full render pass stays proportional to a small-session
+// baseline measured on the same machine, and keystrokes are echoed while
+// heavy renders are queued on the tview event loop. The gate exists to
+// catch the pathological O(transcript)-per-event scaling, not to measure
 // hardware. Tighten them when the T2 windowed painter lands.
+
+// TestMain isolates the whole package from the developer's real yaah
+// home: any test whose refresh crosses the SLOW threshold would otherwise
+// create ~/.yaah and append to the real tui-render.log — the artifact
+// users are meant to attach to bug reports. Tests that assert log-file
+// contents set YAAH_HOME themselves via t.Setenv, which overrides this.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "yaah-tui-test")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("YAAH_HOME", dir)
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
 
 // synthProse returns deterministic markdown-ish text of at least target
 // bytes: long single-line paragraphs to exercise wrap cost, with hard breaks
@@ -54,8 +71,9 @@ func setupSim(tb testing.TB, ui *App) tcell.SimulationScreen {
 
 // growSession appends one assistant turn in the same shape a live session
 // produces (prompt, occasional reasoning, markdown response, two tool calls)
-// and refreshes once per turn, mimicking the per-event refresh cadence of a
-// streamed run. ~28KB of content per turn.
+// without rendering per turn: the transcript is seeded in O(n) so the
+// default CI job pays no O(n²) setup cost, and the measured refresh paints
+// everything in one full-render pass. ~28KB of content per turn.
 func growSession(tb testing.TB, ui *App, turns int) {
 	tb.Helper()
 	for i := 0; i < turns; i++ {
@@ -69,7 +87,6 @@ func growSession(tb testing.TB, ui *App, turns int) {
 			ui.AddToolStart(id, "bash", `{"command":"go test ./..."}`)
 			ui.AddToolEnd(id, "bash · go test", synthProse(fmt.Sprintf("tool %s", id), 8*1024))
 		}
-		ui.refreshMessages()
 	}
 }
 
@@ -94,15 +111,6 @@ func renderGateBudget(tb testing.TB, base time.Duration) time.Duration {
 	return time.Duration(float64(base) * renderGateFactor(tb))
 }
 
-// isolateRenderLog points YAAH_HOME at a temp directory: the gate drives
-// renders far above the 50ms SLOW threshold, and without isolation every
-// run would append diagnostic lines to the developer's real
-// tui-render.log — the artifact users are meant to attach to bug reports.
-func isolateRenderLog(tb testing.TB) {
-	tb.Helper()
-	tb.Setenv("YAAH_HOME", tb.TempDir())
-}
-
 // gateApp returns an app with an undrained queue: mutators' markDirty
 // enqueues exactly one event (the flags then stay set, so nothing more is
 // enqueued) instead of spawning direct-fallback goroutines that would
@@ -122,6 +130,20 @@ func measureRender(ui *App, sim tcell.SimulationScreen) time.Duration {
 	ui.refreshMessages()
 	ui.Root.Draw(sim)
 	return time.Since(start)
+}
+
+// measureBest returns the fastest of runs refresh+draw passes after one
+// untimed warmup pass. The minimum is the cleanest signal of the work's
+// true cost: scheduler hiccups and GC pauses only ever inflate a sample.
+func measureBest(ui *App, sim tcell.SimulationScreen, runs int) time.Duration {
+	measureRender(ui, sim)
+	best := time.Duration(math.MaxInt64)
+	for i := 0; i < runs; i++ {
+		if d := measureRender(ui, sim); d < best {
+			best = d
+		}
+	}
+	return best
 }
 
 // resizeSim re-lays the app out at a different width: the next full render
@@ -145,20 +167,21 @@ func TestRefreshMessages_SessionScaleRenderBudget(t *testing.T) {
 	if testing.Short() {
 		t.Skip("full-scale render gate: skipped in -short")
 	}
-	isolateRenderLog(t)
 
 	base := gateApp()
 	baseSim := setupSim(t, base)
 	growSession(t, base, 18)
-	baseWarm := measureRender(base, baseSim)
+	baseWarm := measureBest(base, baseSim, 3)
 	resizeSim(base, baseSim)
-	baseCold := measureRender(base, baseSim)
+	baseCold := measureBest(base, baseSim, 3)
 
 	ui := gateApp()
 	sim := setupSim(t, ui)
 	buildStart := time.Now()
 	growSession(t, ui, 175)
 	build := time.Since(buildStart)
+
+	warm := measureBest(ui, sim, 3)
 
 	// Same-goroutine read: every mutation and refresh so far ran on this
 	// goroutine, so there is no race with the TextView buffer.
@@ -167,8 +190,6 @@ func TestRefreshMessages_SessionScaleRenderBudget(t *testing.T) {
 		!strings.Contains(rendered, "turn 174: investigate") {
 		t.Fatalf("painted transcript lost early or late turns (%d bytes)", len(rendered))
 	}
-
-	warm := measureRender(ui, sim)
 
 	// The incremental path: one new tool chunk, no in-place mutation.
 	before := ui.fullRenderCount
@@ -179,7 +200,7 @@ func TestRefreshMessages_SessionScaleRenderBudget(t *testing.T) {
 	}
 
 	resizeSim(ui, sim)
-	cold := measureRender(ui, sim)
+	cold := measureBest(ui, sim, 3)
 
 	t.Logf("built 175 turns (%d items) in %s", len(ui.conversationLog), build.Round(time.Millisecond))
 	t.Logf("full render+draw: warm %s (base %s, ratio %.1f); cold %s (base %s, ratio %.1f); append %s",
@@ -189,13 +210,25 @@ func TestRefreshMessages_SessionScaleRenderBudget(t *testing.T) {
 		float64(cold)/float64(baseCold),
 		appendRender.Round(time.Millisecond))
 
-	const ratioBase = 20.0
-	ratio := ratioBase * renderGateFactor(t)
-	if warm > time.Duration(float64(baseWarm)*ratio) {
+	// The ratio budget is generous: today's linear full render measures
+	// ~9-10x (bytes scale ~10x), and the T2 windowed painter collapses it
+	// toward 1. A superlinear regression trips it; runner jitter, which
+	// moves both measurements together, does not. The floor keeps a
+	// millisecond-scale baseline's noise from tripping the ratio — the
+	// gate must measure scaling, not scheduler luck.
+	ratio := 20.0 * renderGateFactor(t)
+	gate := func(base time.Duration) time.Duration {
+		d := time.Duration(float64(base) * ratio)
+		if floor := renderGateBudget(t, 250*time.Millisecond); floor > d {
+			return floor
+		}
+		return d
+	}
+	if warm > gate(baseWarm) {
 		t.Errorf("warm full render+draw took %s, %.1fx the small-session baseline %s (budget %.0fx) — the yaah-30t6 freeze shape",
 			warm, float64(warm)/float64(baseWarm), baseWarm, ratio)
 	}
-	if cold > time.Duration(float64(baseCold)*ratio) {
+	if cold > gate(baseCold) {
 		t.Errorf("cold (resize) full render+draw took %s, %.1fx the small-session baseline %s (budget %.0fx)",
 			cold, float64(cold)/float64(baseCold), baseCold, ratio)
 	}
@@ -214,10 +247,16 @@ func TestInputEchoDuringRenderStorm(t *testing.T) {
 	if testing.Short() {
 		t.Skip("render-storm gate: skipped in -short")
 	}
-	isolateRenderLog(t)
 	ui := New("test")
 	sim := setupSim(t, ui)
 	growSession(t, ui, 60)
+
+	// One measured full render calibrates the echo budget: each injected
+	// keystroke may wait behind `renders` queued renders, so the budget is
+	// that backlog plus slack — not a constant a slow runner could breach
+	// while behaving correctly.
+	ui.needsFullRender.Store(true)
+	oneRender := measureRender(ui, sim)
 
 	echoed := make(chan struct{}, 16)
 	prev := ui.App.GetInputCapture()
@@ -229,12 +268,15 @@ func TestInputEchoDuringRenderStorm(t *testing.T) {
 		return prev(ev)
 	})
 
+	// Cancellation for the storm and injector goroutines, so a Fatalf
+	// cannot leave them running into sim.Fini (cleanups are LIFO: this
+	// runs before the screen is finalized).
+	quit := make(chan struct{})
+	t.Cleanup(func() { close(quit) })
+
 	ui.App.SetScreen(sim)
 	runErr := make(chan error, 1)
 	go func() { runErr <- ui.App.Run() }()
-	// Cleanup order matters: this runs before setupSim's sim.Fini
-	// (cleanups are LIFO), so the loop is stopped and awaited before the
-	// screen underneath it is finalized.
 	t.Cleanup(func() {
 		ui.App.Stop()
 		if err := <-runErr; err != nil {
@@ -250,6 +292,11 @@ func TestInputEchoDuringRenderStorm(t *testing.T) {
 	go func() {
 		defer close(stormDone)
 		for i := 0; i < renders; i++ {
+			select {
+			case <-quit:
+				return
+			default:
+			}
 			ui.App.QueueUpdateDraw(func() {
 				ui.needsFullRender.Store(true)
 				ui.refreshMessages()
@@ -261,12 +308,17 @@ func TestInputEchoDuringRenderStorm(t *testing.T) {
 	injected := make(chan time.Time, keys)
 	go func() {
 		for i := 0; i < keys; i++ {
-			time.Sleep(20 * time.Millisecond)
+			select {
+			case <-quit:
+				return
+			case <-time.After(20 * time.Millisecond):
+			}
 			injected <- time.Now()
 			sim.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
 		}
 	}()
 
+	budget := time.Duration(renders)*oneRender + renderGateBudget(t, 500*time.Millisecond)
 	var worst time.Duration
 	for i := 0; i < keys; i++ {
 		at := <-injected
@@ -275,8 +327,9 @@ func TestInputEchoDuringRenderStorm(t *testing.T) {
 			if d := time.Since(at); d > worst {
 				worst = d
 			}
-		case <-time.After(renderGateBudget(t, 3*time.Second)):
-			t.Fatalf("keystroke %d not echoed within budget during a render storm (worst echo %s)", i+1, worst)
+		case <-time.After(budget):
+			t.Fatalf("keystroke %d not echoed within budget %s during a render storm (one render %s, worst echo %s)",
+				i+1, budget, oneRender, worst)
 		}
 	}
 	select {
@@ -284,8 +337,8 @@ func TestInputEchoDuringRenderStorm(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("render storm did not drain")
 	}
-	t.Logf("echoed %d keystrokes while %d full renders drained; worst echo latency %s",
-		keys, renders, worst.Round(time.Millisecond))
+	t.Logf("echoed %d keystrokes while %d full renders drained (one render %s); worst echo latency %s, budget %s",
+		keys, renders, oneRender.Round(time.Millisecond), worst.Round(time.Millisecond), budget.Round(time.Millisecond))
 }
 
 // BenchmarkRefreshMessages_SessionScale measures the per-event cost at
@@ -295,7 +348,6 @@ func BenchmarkRefreshMessages_SessionScale(b *testing.B) {
 	if testing.Short() {
 		b.Skip("full-scale benchmark: skipped in -short")
 	}
-	isolateRenderLog(b)
 	ui := gateApp()
 	sim := setupSim(b, ui)
 	growSession(b, ui, 175)
