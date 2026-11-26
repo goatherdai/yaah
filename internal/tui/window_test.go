@@ -243,6 +243,125 @@ func TestReconcilePromptPin_AtSeam(t *testing.T) {
 	}
 }
 
+// TestRender_LiveTailRecomputesWindow pins the window budget holding at
+// the live tail across a long session: full renders while following the
+// tail recompute the trailing window, so the painted range cannot grow
+// past the budgets and reintroduce the freeze (Robin F1).
+func TestRender_LiveTailRecomputesWindow(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	for i := 0; i < 130; i++ {
+		ui.appendMessage(fmt.Sprintf("item %03d", i))
+	}
+	ui.refreshMessages()
+	if ui.windowStart != 10 {
+		t.Fatalf("windowStart=%d, want 10", ui.windowStart)
+	}
+
+	// The session grows; a full render at the live tail must re-window.
+	for i := 130; i < 160; i++ {
+		ui.appendMessage(fmt.Sprintf("item %03d", i))
+	}
+	ui.needsFullRender.Store(true)
+	ui.refreshMessages()
+	if ui.windowStart != 40 {
+		t.Fatalf("live-tail full render kept the stale window: windowStart=%d, want 40", ui.windowStart)
+	}
+
+	// A scrolled-up user keeps their manual window across a full render:
+	// the content they are reading must not be yanked away.
+	ui.userScrolled = true
+	ui.backfillWindow()
+	manual := ui.windowStart
+	ui.needsFullRender.Store(true)
+	ui.refreshMessages()
+	if ui.windowStart != manual {
+		t.Fatalf("full render moved the manual window: %d -> %d", manual, ui.windowStart)
+	}
+}
+
+// TestReconcilePromptPin_SeamWithEmptyAnchors pins the pin surviving the
+// seam when the painted window contains no prompt items at all: the
+// last pre-window prompt takes over (Robin F2).
+func TestReconcilePromptPin_SeamWithEmptyAnchors(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	ui.AddPrompt("the only question")
+	for i := 0; i < 130; i++ {
+		ui.appendMessage(fmt.Sprintf("answer %03d", i))
+	}
+	ui.refreshMessages()
+
+	if len(ui.promptAnchors) != 0 {
+		t.Fatalf("window must contain no prompt anchors, got %d", len(ui.promptAnchors))
+	}
+	if ui.windowPrePrompt != "the only question" {
+		t.Fatalf("windowPrePrompt=%q", ui.windowPrePrompt)
+	}
+	ui.Messages.ScrollToBeginning()
+	ui.reconcilePromptPin()
+	if ui.pinnedPrompt != "the only question" {
+		t.Fatalf("pin at the seam with empty anchors = %q", ui.pinnedPrompt)
+	}
+}
+
+// TestMaybeBackfillAtSeam pins the shared keyboard/mouse seam trigger:
+// the viewport at the top of the painted window backfills, anything
+// above it does not (Robin F3).
+func TestMaybeBackfillAtSeam(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	for i := 0; i < 200; i++ {
+		ui.appendMessage(fmt.Sprintf("item %03d", i))
+	}
+	ui.refreshMessages()
+
+	ui.Messages.ScrollTo(3, 0)
+	ui.maybeBackfillAtSeam()
+	if ui.windowStart != 80 {
+		t.Fatalf("backfill fired away from the seam: windowStart=%d", ui.windowStart)
+	}
+	ui.Messages.ScrollTo(0, 0)
+	ui.maybeBackfillAtSeam()
+	if ui.windowStart != 80-renderBackfillStep {
+		t.Fatalf("backfill did not fire at the seam: windowStart=%d", ui.windowStart)
+	}
+}
+
+// TestSearchMessages_CoversCollapsedItems pins the search spanning the
+// whole log: a hit above the painted window expands it and scrolls to
+// the match; a miss reports so without touching the window (Robin F4).
+func TestSearchMessages_CoversCollapsedItems(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	for i := 0; i < 200; i++ {
+		ui.appendMessage(fmt.Sprintf("item %03d", i))
+	}
+	ui.refreshMessages()
+	if ui.windowStart != 80 {
+		t.Fatalf("windowStart=%d, want 80", ui.windowStart)
+	}
+
+	// A collapsed item is found and revealed.
+	ui.searchMessages("item 005")
+	if ui.windowStart > 5 {
+		t.Fatalf("search did not expand the window to the hit: windowStart=%d", ui.windowStart)
+	}
+	if row, _ := ui.Messages.GetScrollOffset(); row <= 0 {
+		t.Fatalf("search did not scroll to the hit: offset=%d", row)
+	}
+	if !strings.Contains(ui.Messages.GetText(true), "item 005") {
+		t.Fatalf("hit not painted after reveal")
+	}
+
+	// A miss reports and does not move the window.
+	before := ui.windowStart
+	ui.searchMessages("no such text anywhere")
+	if ui.windowStart != before {
+		t.Fatalf("miss moved the window: %d -> %d", before, ui.windowStart)
+	}
+}
+
 func containsItem(ui *App, want string) bool {
 	for i := range ui.conversationLog {
 		if strings.Contains(ui.conversationLog[i].text, want) {

@@ -25,6 +25,10 @@ func (b *Block) IsExpanded() bool     { return b.expanded }
 func (b *Block) ID() string           { return b.id }
 func (b *Block) SetSeed(seed float64) { b.seed = seed }
 
+// SearchText returns the block's searchable content: the raw reasoning
+// text, independent of the rendered/collapsed form and paint width.
+func (b *Block) SearchText() string { return b.content }
+
 func (b *Block) Render() string { return b.RenderCtx(colors.RenderCtx{Theme: b.theme}) }
 
 func (b *Block) RenderCtx(ctx colors.RenderCtx) string {

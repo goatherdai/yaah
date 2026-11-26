@@ -221,6 +221,20 @@ func (t *App) computeWindowStart(n, w int) int {
 	return start
 }
 
+// maybeBackfillAtSeam backfills the painted window when the viewport sits
+// at its top row — the seam. This is the shared trigger for the mouse
+// wheel and the keyboard scroll paths (scroll-up, page-up, Home, :top),
+// so keyboard-only users can load the collapsed older items too. Being
+// at the seam means the user is looking up, so it also marks the view
+// scrolled — the manual window the backfill installs must not be
+// re-windowed by the next full render.
+func (t *App) maybeBackfillAtSeam() {
+	if row, _ := t.Messages.GetScrollOffset(); row == 0 {
+		t.userScrolled = true
+		t.backfillWindow()
+	}
+}
+
 // backfillWindow prepends renderBackfillStep older items to the painted
 // window — the lazy "scroll up to load more" affordance at the seam — and
 // re-renders, scrolling so the content the user was looking at stays put
@@ -294,9 +308,15 @@ func (t *App) refreshMessages() {
 		// The full rebuild paints a trailing window of the log, not the
 		// whole transcript: windowStart pins the first painted item
 		// (backfill moves it; -1 means recompute — resize, compaction,
-		// and clear all reset it so the window tracks the budgets).
+		// and clear all reset it so the window tracks the budgets). At
+		// the live tail the window recomputes on every full render:
+		// a pinned start would let the painted range grow past the
+		// budgets across a long session and reintroduce the freeze.
+		// While the user has scrolled up (backfill), the manual window
+		// is kept so the full renders a running turn forces do not
+		// yank the content out from under them.
 		start := t.windowStart
-		if start < 0 || start > n || w != t.windowWidth {
+		if !t.userScrolled || start < 0 || start > n || w != t.windowWidth {
 			start = t.computeWindowStart(n, w)
 			t.windowStart = start
 			t.windowWidth = w
@@ -450,13 +470,17 @@ func (t *App) extendPromptAnchors(from, to, w int) {
 // search.
 func (t *App) reconcilePromptPin() {
 	want := ""
+	// Above the painted window the last pre-window prompt takes over,
+	// even when the window itself contains no prompts (anchors empty):
+	// the pin must survive the seam in every shape.
+	if t.windowStart > 0 {
+		want = t.windowPrePrompt
+	}
 	if n := len(t.promptAnchors); n > 0 {
 		row, _ := t.Messages.GetScrollOffset()
 		i := sort.Search(n, func(i int) bool { return t.promptAnchors[i].startLine > row })
 		if i > 0 {
 			want = t.promptAnchors[i-1].input
-		} else if t.windowStart > 0 {
-			want = t.windowPrePrompt
 		}
 	}
 	if want == t.pinnedPrompt {

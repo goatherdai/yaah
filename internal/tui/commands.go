@@ -96,6 +96,11 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 		t.refreshMessages()
 		return true
 	case command.CmdTop:
+		// Jump to the top of the painted window; when older items are
+		// collapsed behind the seam, load the next backfill batch first
+		// so "top" always lands on readable content.
+		t.userScrolled = true
+		t.maybeBackfillAtSeam()
 		t.Messages.ScrollTo(0, 0)
 		return true
 	case command.CmdBottom:

@@ -27,9 +27,7 @@ func (t *App) buildUI() {
 			// user reached the "earlier messages" seam: lazily prepend
 			// older items (backfillWindow) in the same event cycle, so
 			// the wheel that asked for them also paints them.
-			if row, _ := t.Messages.GetScrollOffset(); row == 0 {
-				t.backfillWindow()
-			}
+			t.maybeBackfillAtSeam()
 		case tview.MouseScrollDown:
 			_, _, _, h := t.Messages.GetInnerRect()
 			row, _ := t.Messages.GetScrollOffset()
