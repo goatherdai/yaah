@@ -69,6 +69,14 @@ func ItemRows(item Item, ctx Content) int {
 	return rowsOf(b.String(), ctx.Width)
 }
 
+// Rows reports how many screen rows a tagged text occupies when wrapped
+// to ctx.Width — the same counting emissions are checked against, for
+// callers painting standalone text (the window seam) that must stay in
+// the row accounting.
+func Rows(tagged string, ctx Content) int {
+	return rowsOf(tagged, ctx.Width)
+}
+
 // rowsOf counts painted rows for a chunk: tview's word wrap over the
 // tagged text, minus the one pending row a trailing newline creates.
 func rowsOf(tagged string, width int) int {

@@ -1,0 +1,253 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
+
+// TestRender_WindowBoundsPaint pins the windowed painter at session scale:
+// a full render paints the trailing window (last renderWindowItems, row-
+// budgeted), collapses everything older behind the seam, and the painted
+// buffer no longer contains the early turns.
+func TestRender_WindowBoundsPaint(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	// ~4-5 items per turn: 60 turns overflows the 120-item window.
+	growSession(t, ui, 60)
+
+	ui.refreshMessages()
+	if ui.windowStart <= 0 {
+		t.Fatalf("window did not engage: windowStart=%d, log=%d items", ui.windowStart, len(ui.conversationLog))
+	}
+	rendered := ui.Messages.GetText(true)
+	if !strings.Contains(rendered, fmt.Sprintf("turn %d: investigate", 59)) {
+		t.Fatalf("window lost the newest turn")
+	}
+	if strings.Contains(rendered, "turn 0: investigate") {
+		t.Fatalf("window painted the oldest turn: the seam did not collapse it")
+	}
+	if !strings.Contains(rendered, "earlier messages") {
+		t.Fatalf("seam line missing from the painted buffer")
+	}
+}
+
+// TestRender_BackfillSlidesWindow pins the lazy backfill: prepending
+// renderBackfillStep older items paints them, keeps the seam until the
+// window covers the whole log, and scrolls so the content the user was
+// looking at stays put.
+func TestRender_BackfillSlidesWindow(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	// 200 small distinctive items: the item cap binds (rows stay well
+	// under budget), so the window is exactly the last 120 items.
+	for i := 0; i < 200; i++ {
+		ui.appendMessage(fmt.Sprintf("item %03d", i))
+	}
+	ui.refreshMessages()
+
+	if ui.windowStart != 80 {
+		t.Fatalf("windowStart=%d, want 80 (200 items, 120-item window)", ui.windowStart)
+	}
+	if ui.windowStart <= 0 {
+		t.Fatalf("window did not engage")
+	}
+	rendered := ui.Messages.GetText(true)
+	if !strings.Contains(rendered, "item 199") || !strings.Contains(rendered, "item 080") {
+		t.Fatalf("window lost the newest items")
+	}
+	if strings.Contains(rendered, "item 079") {
+		t.Fatalf("items above the window are painted")
+	}
+
+	// The user is at the seam (scroll offset 0); backfill one step.
+	ui.userScrolled = true
+	ui.backfillWindow()
+
+	if ui.windowStart != 80-renderBackfillStep {
+		t.Fatalf("backfill moved windowStart %d -> %d, want %d", 80, ui.windowStart, 80-renderBackfillStep)
+	}
+	rendered = ui.Messages.GetText(true)
+	if !strings.Contains(rendered, "earlier messages") {
+		t.Fatalf("seam must persist while older items remain")
+	}
+	if !strings.Contains(rendered, "item 068") {
+		t.Fatalf("backfill did not paint the newly loaded items")
+	}
+	// Viewport stability: the offset advanced past the seam so the row
+	// the user was looking at stays put.
+	if row, _ := ui.Messages.GetScrollOffset(); row <= 0 {
+		t.Fatalf("backfill left the viewport at the seam: offset=%d", row)
+	}
+
+	// Backfilling to the top removes the seam and paints item 000.
+	for ui.windowStart > 0 {
+		prev := ui.windowStart
+		ui.backfillWindow()
+		if ui.windowStart >= prev {
+			t.Fatalf("backfill stalled at %d", prev)
+		}
+	}
+	rendered = ui.Messages.GetText(true)
+	if strings.Contains(rendered, "earlier messages") {
+		t.Fatalf("seam must vanish once the window covers the whole log")
+	}
+	if !strings.Contains(rendered, "item 000") {
+		t.Fatalf("full backfill must paint the oldest item")
+	}
+}
+
+// TestRender_WindowShrinksByRows pins the row budget: a window of few but
+// huge items must not paint a freeze-sized buffer either — the item cap
+// alone is not enough.
+func TestRender_WindowShrinksByRows(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	// 30 items of ~100 rows each at 120 cols: 3000 rows over budget.
+	for i := 0; i < 30; i++ {
+		ui.addAssistantResponse(synthProse(fmt.Sprintf("huge %d", i), 12*1024))
+	}
+	ui.refreshMessages()
+
+	if ui.windowStart <= 0 {
+		t.Fatalf("row budget did not bind: windowStart=%d", ui.windowStart)
+	}
+	if got := int(ui.paintedLines.Load()); got > renderWindowRows+64 {
+		t.Fatalf("painted buffer %d rows exceeds the window budget %d", got, renderWindowRows)
+	}
+	rendered := ui.Messages.GetText(true)
+	if !strings.Contains(rendered, "huge 29") {
+		t.Fatalf("window lost the newest item")
+	}
+	if strings.Contains(rendered, "huge 0") {
+		t.Fatalf("row budget did not collapse the oldest item")
+	}
+}
+
+// TestRender_AppendWorksInsideWindow pins that the incremental append path
+// stays available with the window engaged: new tail items append onto the
+// windowed buffer instead of forcing a full rebuild.
+func TestRender_AppendWorksInsideWindow(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	growSession(t, ui, 60)
+	ui.refreshMessages()
+	fullRenders := ui.fullRenderCount
+
+	ui.appendMessage("a fresh tail prompt")
+	if ui.needsFullRender.Load() {
+		t.Fatalf("tail append must not force a full rebuild inside the window")
+	}
+	ui.refreshMessages()
+	if ui.fullRenderCount != fullRenders {
+		t.Fatalf("tail append took the full-render path (%d rebuilds, want %d)", ui.fullRenderCount, fullRenders)
+	}
+	if !strings.Contains(ui.Messages.GetText(true), "a fresh tail prompt") {
+		t.Fatalf("tail append dropped the new item")
+	}
+}
+
+// TestCompaction_CollapsesPreCompactionItems pins the view reconciliation
+// on compaction (yaah-30t6 AC 3): items below the compaction boundary
+// collapse to a one-line stub, later items survive, and the next render
+// rebuilds anchors without the compacted prompts and re-windows.
+func TestCompaction_CollapsesPreCompactionItems(t *testing.T) {
+	ui := newTestUI()
+	setupSim(t, ui)
+
+	ui.AddPrompt("first question")
+	ui.appendMessage("first answer")
+	ui.AddPrompt("second question")
+	ui.appendMessage("second answer")
+	ui.refreshMessages()
+	if len(ui.promptAnchors) != 2 {
+		t.Fatalf("expected 2 prompt anchors before compaction, got %d", len(ui.promptAnchors))
+	}
+
+	// What CompactionStartedEvent records: the boundary is the log length
+	// when compaction begins.
+	ui.compactBoundary = 4
+	ui.appendMessage("post-boundary note")
+	ui.collapseCompacted()
+
+	if got := len(ui.conversationLog); got != 2 {
+		t.Fatalf("conversationLog has %d items, want 2 (stub, post-boundary note)", got)
+	}
+	if !strings.Contains(ui.conversationLog[0].text, "4 messages compacted") {
+		t.Fatalf("first item must be the compaction stub: %q", ui.conversationLog[0].text)
+	}
+	for _, gone := range []string{"first question", "first answer", "second question", "second answer"} {
+		if containsItem(ui, gone) {
+			t.Fatalf("pre-compaction content must be collapsed: %q", gone)
+		}
+	}
+	if !containsItem(ui, "post-boundary note") {
+		t.Fatalf("post-boundary content lost")
+	}
+	if !ui.needsFullRender.Load() {
+		t.Fatalf("collapse must force a full render (the buffer head changed)")
+	}
+
+	// The forced render rebuilds anchors without the compacted prompts
+	// and re-windows (the log shrank below every budget).
+	ui.refreshMessages()
+	for _, a := range ui.promptAnchors {
+		if a.input == "first question" || a.input == "second question" {
+			t.Fatalf("anchor for a compacted prompt survived: %+v", ui.promptAnchors)
+		}
+	}
+	if ui.windowStart != 0 {
+		t.Fatalf("window must cover the compacted log, windowStart=%d", ui.windowStart)
+	}
+}
+
+// TestReconcilePromptPin_AtSeam pins the sticky pin above the window: the
+// most recent prompt entirely above the painted window takes over when
+// the viewport is at the seam, so the pin survives the "earlier messages"
+// collapse.
+func TestReconcilePromptPin_AtSeam(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	// 130 one-row prompts: the 120-item window starts at prompt 10, so
+	// the last pre-window prompt is "q 009".
+	for i := 0; i < 130; i++ {
+		ui.AddPrompt(fmt.Sprintf("q %03d", i))
+	}
+	ui.refreshMessages()
+
+	if ui.windowStart != 10 {
+		t.Fatalf("windowStart=%d, want 10", ui.windowStart)
+	}
+	if ui.windowPrePrompt != "q 009" {
+		t.Fatalf("windowPrePrompt=%q, want %q", ui.windowPrePrompt, "q 009")
+	}
+
+	ui.Messages.ScrollToBeginning()
+	ui.reconcilePromptPin()
+	if ui.pinnedPrompt != "q 009" {
+		t.Fatalf("pin at the seam = %q, want the last pre-window prompt %q", ui.pinnedPrompt, "q 009")
+	}
+
+	// Scrolling back into the window re-pins the newest prompt at or
+	// above the viewport top: one row above q 129's first row pins q 128,
+	// exactly on it pins q 129.
+	ui.Messages.ScrollTo(ui.promptAnchors[len(ui.promptAnchors)-1].startLine-1, 0)
+	ui.reconcilePromptPin()
+	if ui.pinnedPrompt != "q 128" {
+		t.Fatalf("pin above the last prompt = %q, want %q", ui.pinnedPrompt, "q 128")
+	}
+	ui.Messages.ScrollTo(ui.promptAnchors[len(ui.promptAnchors)-1].startLine, 0)
+	ui.reconcilePromptPin()
+	if ui.pinnedPrompt != "q 129" {
+		t.Fatalf("pin on the last prompt's row = %q, want %q", ui.pinnedPrompt, "q 129")
+	}
+}
+
+func containsItem(ui *App, want string) bool {
+	for i := range ui.conversationLog {
+		if strings.Contains(ui.conversationLog[i].text, want) {
+			return true
+		}
+	}
+	return false
+}

@@ -117,17 +117,18 @@ type App struct {
 	pendingContextTokens int
 	pendingContextWindow int
 
-	pendingTool   string
-	compacting    bool
-	contextTokens int
-	contextWindow int
-	lastProvider  string
-	lastModel     string
-	lastMode      string
-	todoItems     []todo.Item
-	verbose       bool
-	showBanner    bool
-	ephemeralMsg  string
+	pendingTool     string
+	compacting      bool
+	compactBoundary int
+	contextTokens   int
+	contextWindow   int
+	lastProvider    string
+	lastModel       string
+	lastMode        string
+	todoItems       []todo.Item
+	verbose         bool
+	showBanner      bool
+	ephemeralMsg    string
 	// ephemeralGen guards SetEphemeral: each call invalidates the
 	// previous timer so a stale clear cannot stomp a newer message.
 	ephemeralGen         atomic.Int64
@@ -206,6 +207,19 @@ type App struct {
 	renderedRows  int
 	pinnedPrompt  string
 
+	// Windowed painting (QueueUpdateDraw ONLY, except backfillWindow on
+	// the mouse-capture path — also the UI goroutine). windowStart is
+	// the first conversation item a full render paints; -1 means
+	// recompute the trailing window at the next full render (resize,
+	// compaction, clear, and returning to the live tail reset it).
+	// windowWidth is the width the current window was computed at, so a
+	// width change re-windows instead of reusing stale row budgets.
+	// windowPrePrompt is the most recent prompt entirely above the
+	// window, kept so the sticky pin still shows one at the seam.
+	windowStart     int
+	windowWidth     int
+	windowPrePrompt string
+
 	version string
 
 	OnModelSelect func(model string)
@@ -274,6 +288,7 @@ func New(version string) *App {
 		fallbackSem:     make(chan struct{}, uiMaxDirectFallbacks),
 		fallbackWaiters: make(chan struct{}, uiMaxDirectWaiters),
 		slowThreshold:   50 * time.Millisecond,
+		windowStart:     -1,
 	}
 	t.buildUI()
 	return t
