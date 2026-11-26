@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.219.1](https://github.com/goatherdai/yaah/compare/v0.219.0...v0.219.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* **tools:** make the dispatch-worktree git-write rule explicit (yaah-pvm8) ([#425](https://github.com/goatherdai/yaah/issues/425)) ([111e413](https://github.com/goatherdai/yaah/commit/111e4130b8fb6123b5229d0cbf0319492d07bf4a))
+
 ## [0.219.0](https://github.com/goatherdai/yaah/compare/v0.218.1...v0.219.0) (2026-11-25)
 
 
