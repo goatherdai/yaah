@@ -46,6 +46,16 @@ type retainedProposalMeta struct {
 	// still cites the declaration it is being settled against instead of a
 	// digest this process cannot know.
 	AuthorityPlanDigest string `json:"authority_plan_digest,omitempty"`
+	// Basis is the RESOLVED workspace state this dispatch's delta is measured
+	// against (yaah-witj increment A): durable because a rehydrated or resumed
+	// proposal must still be able to say what its work started from, and
+	// resolved because the request parameters say what was ASKED for. Absent
+	// means no basis was recorded, never "the basis is empty" — so a seal that
+	// wrote nothing here reports no basis rather than an empty one. Its reader
+	// is the rehydration path (proposal_rehydrate.go), which hands it to
+	// retainedProposal.sealBasisRecord: every envelope prefers the live state
+	// and falls back to this when the state is gone.
+	Basis *proposalBasisRecord `json:"basis,omitempty"`
 }
 
 // persistProposalTranscript writes the captured conversation into a durable
@@ -82,6 +92,12 @@ func proposalSealOptions(meta retainedProposalMeta, transcriptID string) (goathe
 	// The seed is recomputed at continuation time; persisting it would double
 	// the transcript and the workdir is per-run. A source link describes how
 	// this proposal was originally threaded, not how to continue it.
+	//
+	// This strip list is for TRANSIENT request state only. A parameter that
+	// describes what the work was built from belongs in the resolved basis
+	// record (retainedProposalMeta.Basis), not here: anything added to
+	// SubAgentParams and silently stripped would leave the durable record
+	// claiming a basis the dispatch never used (yaah-witj increment A).
 	params := meta.Params
 	params.SeedMessages = nil
 	params.Workdir = ""

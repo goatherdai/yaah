@@ -242,8 +242,18 @@ func TestHostChangedPaths(t *testing.T) {
 		}
 	}
 
-	if _, err := hostChangedPaths(context.Background(), t.TempDir()); err == nil {
-		t.Error("a non-repository directory must fail closed")
+	// Build the "not a repository" fixture explicitly. t.TempDir() honours
+	// $TMPDIR, and `git -C <dir>` walks UP to any enclosing repository — in a
+	// dispatch worktree TMPDIR is redirected inside the repo, so a bare temp dir
+	// resolves to the worktree root and hostChangedPaths legitimately succeeds.
+	// An empty `.git` FILE (not a directory) makes git fail inside the directory
+	// itself, so the fixture cannot depend on where it happens to live.
+	notRepo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(notRepo, ".git"), nil, 0o600); err != nil {
+		t.Fatalf("write .git file: %v", err)
+	}
+	if _, err := hostChangedPaths(context.Background(), notRepo); err == nil {
+		t.Error("a directory that git cannot resolve as a repository must fail closed")
 	}
 }
 

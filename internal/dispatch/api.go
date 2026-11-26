@@ -455,7 +455,7 @@ func Settle(ctx context.Context, registry *ProposalRegistry, id string, verb Set
 				conflictView = attachProposalConflictDetails(ctx, []proposalConflict{conflictView}, []proposalAnalysis{{proposal: p}})[0]
 				next = nextVerbsFor(p)
 			}
-			return newSettlement(proposalEnvelope{
+			conflictEnv := proposalEnvelope{
 				Status:     "conflict",
 				ProposalID: conflict.ProposalID,
 				Action:     string(verb),
@@ -463,7 +463,13 @@ func Settle(ctx context.Context, registry *ProposalRegistry, id string, verb Set
 				Error:      conflict.Error(),
 				Conflicts:  []proposalConflict{conflictView},
 				Next:       next,
-			}, Outcome{}), nil
+			}
+			// A refused apply is still a settlement response, so it names the
+			// same basis the settled envelope would (yaah-witj).
+			if p, perr := registry.get(conflict.ProposalID); perr == nil {
+				conflictEnv.setBasis(p.dispatchBasisRecord())
+			}
+			return newSettlement(conflictEnv, Outcome{}), nil
 		}
 		return Settlement{}, err
 	}

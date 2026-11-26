@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/jobs"
 )
 
@@ -112,6 +113,13 @@ func (m EnvelopeMeta) after(d time.Duration) EnvelopeMeta {
 
 // newEnvelope starts a completion envelope with the identity and result every
 // lane shares.
+//
+// It carries no dispatch basis, and cannot: EnvelopeMeta is dispatch identity
+// only (id, role, lane, world, model, duration), so the lanes that build their
+// whole envelope here — report, shared, running, and the error lanes — omit
+// basis_head/basis_tree/basis_backend. The proposal lanes are unaffected: they
+// keep the basis their own envelope already had when FillMeta copies the
+// identity onto it, and the retained lanes stamp it with setBasis.
 func (m EnvelopeMeta) newEnvelope(status, result string) ProposalEnvelope {
 	env := proposalEnvelope{
 		Status:     status,
@@ -165,6 +173,27 @@ func (e *proposalEnvelope) AddWarning(msg string) {
 	e.Warnings = append(e.Warnings, msg)
 	if e.Warning == "" {
 		e.Warning = msg
+	}
+}
+
+// addDispatchWarnings stamps a dispatch's caveats — a degraded world and any
+// dispatch-basis caveats — in one fixed order, through AddWarning.
+//
+// The ordering is the point. AddWarning keeps the FIRST message in the scalar
+// `warning`, and proposal.md documents that scalar as repeating warnings[0], so
+// assigning Warning directly behind the list's back makes the two disagree and
+// loses whichever caveat came first to every reader of the scalar alone. The
+// degraded world leads because that is the message the scalar has always
+// carried for a stepped-down dispatch.
+func addDispatchWarnings(env *proposalEnvelope, res subagent.WorldResolution, basisWarnings []string) {
+	if env == nil {
+		return
+	}
+	if res.Degraded {
+		env.AddWarning("dispatch world degraded: " + res.Reason)
+	}
+	for _, w := range basisWarnings {
+		env.AddWarning(w)
 	}
 }
 
@@ -471,6 +500,11 @@ func EnvelopeResultText(text string) string {
 // background dispatch from its terminal job snapshot and raw result. It is the
 // single place that maps a background job's terminal status onto the envelope
 // vocabulary, so the foreground and background lanes agree (yaah-was9.1).
+//
+// It cannot stamp a dispatch basis: jobs.BackgroundJobStatus does not carry one,
+// and the job record is the only input this path has. The limitation is named
+// in proposal.md rather than papered over — a caller that needs the basis reads
+// the proposal's own show/list, which does have it (yaah-witj increment A).
 func BackgroundCompletionEnvelope(st jobs.BackgroundJobStatus, result string, err error) ProposalEnvelope {
 	env := proposalEnvelope{
 		Status:     EnvelopeStatusCompleted,

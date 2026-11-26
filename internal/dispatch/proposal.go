@@ -184,6 +184,9 @@ func (t *ProposalTool) Execute(ctx context.Context, args string) (string, error)
 		}
 		env.Diff = clipDiff(p.reviewDiff())
 		env.Files = p.changedFiles()
+		// Which commit the work started from, so a caller can tell a proposal
+		// that was built on a moved parent from one that was not (yaah-witj).
+		env.setBasis(p.dispatchBasisRecord())
 		if p.failedSeal != nil {
 			// Failed-seal entries are excluded from pairwise conflict
 			// analysis, so inspect their changes directly for show.

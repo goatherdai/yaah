@@ -346,9 +346,8 @@ func runDispatchContainerProposal(
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
 	rt.BeginDispatchScope(id)
 	env := proposalEnvelope{ProposalID: id, Next: proposalVerbs(), World: string(res.Resolved), Target: target}
-	if res.Degraded {
-		env.Warning = "dispatch world degraded: " + res.Reason
-	}
+	env.setBasis(basisRecord(basisState))
+	addDispatchWarnings(&env, res, nil)
 	var scope *goatherd.Scope
 	// The container must be gone by the time the envelope is returned. Both
 	// teardown steps are bounded and cancel-free: the dispatch's context is
@@ -432,7 +431,7 @@ func runDispatchContainerProposal(
 		env.Error = trimResult(strings.Join(notes, "; "))
 		return retainedRunResult{}, nil
 	}
-	if _, ferr := parent.AppendFact(ctx, SchemaProposalSealed, "proposal", map[string]any{
+	sealPayload := map[string]any{
 		"proposal_id":           id,
 		"world":                 string(subagent.WorldContainer),
 		"target":                target,
@@ -441,7 +440,13 @@ func runDispatchContainerProposal(
 		"basis_digest":          basisDigest,
 		"artifact_dir":          dir,
 		"authority_plan_digest": authority.planDigest,
-	}); ferr != nil {
+	}
+	// The basis identity beside its digest (yaah-witj increment A): the digest
+	// proves the state, the identity says which commit it was.
+	for k, v := range basisRecord(basisState).factFields() {
+		sealPayload[k] = v
+	}
+	if _, ferr := parent.AppendFact(ctx, SchemaProposalSealed, "proposal", sealPayload); ferr != nil {
 		// The manifest is durable; a missing seal fact is a record gap, not a
 		// reason to throw the work away. Carry it to the caller visibly.
 		notes = append(notes, "trace: seal fact: "+ferr.Error())

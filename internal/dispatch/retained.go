@@ -230,6 +230,14 @@ type proposalEnvelope struct {
 	// ChangesError is set when a worktree proposal's post-images could not be
 	// inspected; it is not the same fact as no changes.
 	ChangesError string `json:"changes_error,omitempty"`
+	// BasisHead is the commit the dispatch's work is measured against — the
+	// state settlement compares the parent against, not the parent's HEAD at
+	// read time. BasisTree is that state's tree and BasisBackend the workspace
+	// backend it belongs to. Absent means none: a proposal that recorded no
+	// basis omits all three rather than emitting them empty (yaah-witj).
+	BasisHead    string `json:"basis_head,omitempty"`
+	BasisTree    string `json:"basis_tree,omitempty"`
+	BasisBackend string `json:"basis_backend,omitempty"`
 	// Strategy records the apply strategy used by a settlement.
 	Strategy string `json:"strategy,omitempty"`
 	// StopReason is why a dispatch/continuation run ended: completed,
@@ -388,6 +396,14 @@ type retainedProposal struct {
 	basisDigest string
 	artifactDir string
 	deltaDigest string
+	// sealBasisRecord is the basis the seal persisted as a legible record (see
+	// retainedProposalMeta.Basis). Every lane prefers the workspace STATE — an
+	// output's baseline, the container's basis.json — and this is what the
+	// envelope reports when that state is no longer readable, e.g. a worktree
+	// proposal rehydrated from a trace whose sealed output lost its baseline.
+	// It never substitutes for the state where the state is used to VERIFY
+	// anything: an unverified basis fails select closed.
+	sealBasisRecord *proposalBasisRecord
 	// authorityPlanDigest is the compiled permission plan the world that
 	// produced this proposal enforced — the seal fact's citation, carried so
 	// settlement can record the declaration it is the commit-time monitor for.
@@ -552,6 +568,12 @@ type proposalSummary struct {
 	Changes []proposalChange `json:"changes,omitempty"`
 	// ChangesError is set when the post-images could not be inspected.
 	ChangesError string `json:"changes_error,omitempty"`
+	// BasisHead, BasisTree and BasisBackend are the commit, tree and backend the
+	// dispatch's work is measured against, with the same absent-means-none rule
+	// the show envelope follows (yaah-witj).
+	BasisHead    string `json:"basis_head,omitempty"`
+	BasisTree    string `json:"basis_tree,omitempty"`
+	BasisBackend string `json:"basis_backend,omitempty"`
 }
 
 // proposalListEnvelope is the JSON a `list` action answers with: the same
@@ -623,6 +645,7 @@ func (r *ProposalRegistry) listEnvelope(ctx context.Context) string {
 			Duplicates: conflictsWith(duplicates, p.id),
 			Changes:    analysis.changes,
 		}
+		summary.setBasis(p.dispatchBasisRecord())
 		if analysis.driftErr != nil {
 			summary.ParentDriftError = analysis.driftErr.Error()
 		} else {
@@ -1003,6 +1026,12 @@ func startRetainedRun(
 	// copy-in.
 	var forkSeed threadSeed
 	var seedMessages []types.Message
+	// basisWarnings carries the dispatch-basis caveats this dispatch recorded,
+	// onto whichever envelope or report path it returns through, and
+	// basisDivergenceFact is the same finding in the shape the durable fact
+	// takes (both empty when the basis and the repo agree).
+	var basisWarnings []string
+	var basisDivergenceFact map[string]any
 	if subParams.SeedFrom != "" {
 		fs, serr := resolveThreadSeed(rt, subParams.SeedFrom, subParams.SeedMode, subParams.Role)
 		if serr != nil {
@@ -1018,7 +1047,20 @@ func startRetainedRun(
 		if cerr != nil {
 			return retainedRunResult{}, fmt.Errorf("delegate: capture basis: %w", cerr)
 		}
-		forkSeed = threadSeed{baseline: state, seed: state}
+		forkSeed = freshForkSeed(state)
+		// The worktree is checked out from the repo path's HEAD while the basis
+		// comes from the parent scope's sandbox; nothing but this check makes
+		// the two name the same commit (yaah-witj increment A).
+		//
+		// A threaded dispatch (seed_from) is deliberately exempt: its fork is a
+		// continuation, measured against the SOURCE's recorded basis rather than
+		// the branch it is checked out from, so warning on every seed_from after
+		// any commit would be noise about the intended semantics. The exemption
+		// is the threaded case, not a general argument that divergence is rare.
+		if w, fact := basisDivergence(ctx, rt.RepoPath, state); w != "" {
+			basisWarnings = append(basisWarnings, w)
+			basisDivergenceFact = fact
+		}
 	}
 
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
@@ -1032,9 +1074,8 @@ func startRetainedRun(
 
 	scopeID, provErr := provisionRetainedBranch(ctx, rt, id, wt, forkSeed)
 	env := proposalEnvelope{ProposalID: id, Next: proposalVerbs(), World: string(worldRes.Resolved)}
-	if worldRes.Degraded {
-		env.Warning = "dispatch world degraded: " + worldRes.Reason
-	}
+	env.setBasis(forkSeed.resolvedBasisRecord())
+	addDispatchWarnings(&env, worldRes, basisWarnings)
 	if scopeID == "" {
 		// A report that could not get a disposable worktree world still runs in
 		// the session container — the world that preserves the report's
@@ -1051,6 +1092,10 @@ func startRetainedRun(
 		return retainedRunResult{Proposal: &env, Stage: RetainedStageProvisioning}, nil
 	}
 	recordWorldFact(ctx, mgr, scopeID, worldRes)
+	// A divergence is the same kind of caveat a degraded world is, so it gets
+	// the same durable treatment: the envelope's warning is ephemeral, the fact
+	// outlives it (yaah-witj increment A).
+	recordBasisDivergenceFact(ctx, mgr, scopeID, basisDivergenceFact)
 
 	sp := subParams
 	sp.Workdir = wt
@@ -1130,6 +1175,7 @@ func startRetainedRun(
 		// (yaah-938). A supervision intervention on the run is one too
 		// (yaah-vaxv).
 		warnings := append(denialWarnings(denials), interventionWarnings(interventions)...)
+		warnings = append(warnings, basisWarnings...)
 		if worldRes.Degraded {
 			notes = append(notes, "dispatch world degraded: "+worldRes.Reason)
 		}
@@ -1255,6 +1301,11 @@ func startRetainedRun(
 		// evidence is the runtime merge-proposal pair), so the sealed output's
 		// metadata is where a restarted process finds the digest.
 		AuthorityPlanDigest: planDigest,
+		// The RESOLVED basis — the state this delta is measured against — not
+		// the request parameters. The seal metadata is where a restarted
+		// process reads it, so it must name what was used rather than what was
+		// asked for (yaah-witj increment A).
+		Basis: forkSeed.resolvedBasisRecord(),
 	}, transcriptID)
 	if forkSeed.source != nil {
 		sealOpts.DerivedFrom = forkSeed.source.ID()
@@ -1353,6 +1404,7 @@ func startRetainedRun(
 	env.setReport(result, retrieveProposalReport(id))
 	env.Diff = clipDiff(output.Diff())
 	env.Files = changesPaths(output.Changes())
+	env.setBasis(proposal.dispatchBasisRecord())
 	return retainedRunResult{Proposal: &env}, nil
 }
 
@@ -1394,13 +1446,14 @@ func resolveThreadSeed(rt RetainedRuntime, sourceID, seedMode, newRole string) (
 		source: src.output,
 		seed:   src.output.Workspace(),
 	}
+	// The recorded basis is copied verbatim and LEFT ZERO when the source
+	// recorded none. threadSeed.resolvedBaseline is the one place that decides
+	// what a missing basis means (fall back to the seed: incremental, never
+	// host-time), and pre-applying that fallback here would be a second
+	// statement of the same invariant, free to drift from the one the fork and
+	// every reported basis actually use (yaah-9m0c, yaah-witj increment A1).
 	if baseline := src.output.Baseline(); baseline.Backend != "" {
 		ts.baseline = baseline
-	} else {
-		// A sealed output always has a baseline; an old trace that does not
-		// cannot supply a cumulative basis. Fall back to the seed so the
-		// delta is at least incremental rather than host-time.
-		ts.baseline = ts.seed
 	}
 	switch seedMode {
 	case "", jobs.SeedModeWorkspace:
@@ -1543,6 +1596,10 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 			baseline:   p.failedSeal.Baseline,
 			messages:   p.transcript,
 		}
+		// The artifact's baseline is recorded as it stands, zero included. The
+		// fork resolves a missing one to the artifact's own workspace
+		// (failedSealForkHandle → resolvedBaseline), so a seeded continuation is
+		// never measured against the parent's live tree.
 	} else {
 		var serr error
 		seed, serr = resolveThreadSeed(rt, id, jobs.SeedModeConversation, p.params.Role)
@@ -1648,6 +1705,10 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 			Next:       proposalVerbs(),
 			World:      string(subagent.WorldWorktree),
 		}
+		// The fork already happened, so name the basis it was measured against
+		// even on this failure: an error envelope is still a statement about
+		// this continuation (yaah-witj increment A).
+		env.setBasis(seed.resolvedBasisRecord())
 		return marshalProposalEnvelope(env), nil
 	}
 	seal := mgr.Seal
@@ -1677,6 +1738,10 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		TimeoutMS:           p.timeout.Milliseconds(),
 		TranscriptOmitted:   omitted,
 		AuthorityPlanDigest: planDigest,
+		// The continuation's resolved basis: the state its cumulative delta is
+		// measured against, which is the source's recorded basis rather than the
+		// parent's current workspace (yaah-9m0c, yaah-witj increment A).
+		Basis: seed.resolvedBasisRecord(),
 	}, transcriptID)
 	// Native lineage: a continuation derives from its source; consuming a
 	// sealed source also supersedes it. A failed-seal recovery derives from
@@ -1715,6 +1780,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		World:      string(subagent.WorldWorktree),
 		StopReason: stopReason,
 	}
+	env.setBasis(seed.resolvedBasisRecord())
 	// The same refusals channel the original run's do (yaah-938): a continuation
 	// is a dispatch of its own, and its envelope is what the orchestrator reads.
 	// The interventions made on it follow the same route (yaah-vaxv).
@@ -1822,6 +1888,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	env.setReport(result, retrieveProposalReport(newID))
 	env.Diff = clipDiff(output.Diff())
 	env.Files = changesPaths(output.Changes())
+	env.setBasis(cont.dispatchBasisRecord())
 	return marshalProposalEnvelope(env), nil
 }
 
@@ -2072,12 +2139,17 @@ func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id
 		if derr := clearFailedSealArtifact(ctx, p.mgr, r, p); derr != nil {
 			return Settlement{}, derr
 		}
-		return newSettlement(proposalEnvelope{
+		discardEnv := proposalEnvelope{
 			Status:     "settled",
 			ProposalID: id,
 			Action:     "discard",
 			Result:     "failed-seal artifact discarded",
-		}, Outcome{}), nil
+		}
+		// The artifact was measured against its own recorded basis, so a
+		// discarded artifact reports it like any other settlement response
+		// (yaah-witj increment A).
+		discardEnv.setBasis(p.dispatchBasisRecord())
+		return newSettlement(discardEnv, Outcome{}), nil
 	}
 	if _, ok := settlementVerb(action); !ok {
 		return Settlement{}, fmt.Errorf("proposal: unknown action %q (select, apply, release, discard)", action)
@@ -2090,12 +2162,19 @@ func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id
 	}
 	verb, _ := settlementVerb(action)
 
+	// The basis this settlement was decided against, read BEFORE the sealed
+	// output is consumed. Every fact and envelope below reads this one snapshot:
+	// re-reading after Settle would let a consumed output answer differently from
+	// the response that reported it, and the settle fact is the only durable
+	// record left once the output is gone (yaah-witj increment A).
+	basisRec := p.dispatchBasisRecord()
 	env := proposalEnvelope{
 		Status:     "settled",
 		ProposalID: id,
 		Action:     action,
 		Files:      p.changedFiles(),
 	}
+	env.setBasis(basisRec)
 	if action == "apply" {
 		env.Strategy = proposalApplyPathDisjoint
 	}
@@ -2181,6 +2260,12 @@ func (r *ProposalRegistry) settleRetainedProposalDefault(ctx context.Context, id
 			"world":                 string(subagent.WorldWorktree),
 			"authority_plan_digest": p.authorityPlanDigest,
 			"files":                 env.Files,
+		}
+		// The basis must stay legible after the proposal is consumed with its
+		// sealed output, so the settle fact names it — from the snapshot taken
+		// before the consume (yaah-witj increment A).
+		for k, v := range basisRec.factFields() {
+			payload[k] = v
 		}
 		if verb == goatherd.SettleApply {
 			payload["strategy"] = proposalApplyPathDisjoint
@@ -2347,14 +2432,18 @@ func provisionRetainedBranch(
 	mgr := rt.ScopeManager
 	var scope *goatherd.Scope
 	var err error
-	opts := goatherd.ForkOptions{Baseline: seed.baseline, Seed: seed.seed}
+	// Each arm builds the options it actually passes, so a fork path that skips
+	// the pairing is visible here instead of swallowing a pair computed above it.
+	// The failed-seal arm has no options argument at all: ForkFromFailedSeal
+	// builds its own from the handle, so the handle carries the resolved pair
+	// (see threadSeed.failedSealForkHandle).
 	switch {
 	case seed.failedSeal != nil:
-		scope, err = mgr.ForkFromFailedSeal(ctx, rt.RootScopeID, ownerID, seed.failedSeal, sb)
+		scope, err = mgr.ForkFromFailedSeal(ctx, rt.RootScopeID, ownerID, seed.failedSealForkHandle(), sb)
 	case seed.source != nil:
-		scope, err = mgr.ForkFromOutput(ctx, rt.RootScopeID, ownerID, seed.source, sb, opts)
+		scope, err = mgr.ForkFromOutput(ctx, rt.RootScopeID, ownerID, seed.source, sb, seed.forkOptionsFor())
 	default:
-		scope, err = mgr.ForkIsolated(rt.RootScopeID, ownerID, nil, sb, opts)
+		scope, err = mgr.ForkIsolated(rt.RootScopeID, ownerID, nil, sb, seed.forkOptionsFor())
 	}
 	if err != nil {
 		_ = sb.Destroy(context.WithoutCancel(ctx))
