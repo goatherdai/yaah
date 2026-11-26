@@ -22,15 +22,18 @@ var slowRenderThreshold = 50 * time.Millisecond
 // stalls worth diagnosing, never reached anywhere persistent.
 //
 // Lines flow through a small buffered channel to a single writer
-// goroutine: the tview event-loop goroutine never touches the filesystem,
-// a slow or stalled home directory cannot pile up goroutines or open
-// descriptors, and memory is capped by the channel. When the queue is
-// full — a refresh storm worse than the diagnostics can record — lines
-// are dropped: best-effort by design. The destination directory is
+// goroutine: the tview event-loop goroutine never touches the
+// filesystem, a slow or stalled home directory cannot pile up goroutines
+// or open descriptors, and memory is capped by the channel. When the
+// queue is full — a refresh storm worse than the diagnostics can record —
+// lines are dropped: best-effort by design. The destination directory is
 // resolved at printf time so a write can never drift to a different home
 // after the environment changes. Any failure falls back to the log
 // package; the yaah home is created if absent so first runs do not lose
-// diagnostics into the stderr silencer.
+// diagnostics into the stderr silencer. The writer goroutine is
+// deliberately never shut down: a few syscalls per line is cheaper than a
+// shutdown protocol on the app, and the channel bounds what can be in
+// flight when the process exits.
 type slowLogger struct {
 	once sync.Once
 	ch   chan slowWrite
@@ -69,10 +72,7 @@ func (l *slowLogger) printf(format string, args ...any) {
 	}
 }
 
-// drain serializes diagnostics writes for the life of the process. It is
-// deliberately never shut down: the channel is small, the work is a few
-// syscalls per line, and the goroutine is cheaper to keep than a shutdown
-// protocol on the app would be.
+// drain serializes diagnostics writes for the life of the process.
 func (l *slowLogger) drain() {
 	for w := range l.ch {
 		l.write(w)
