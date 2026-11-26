@@ -21,6 +21,24 @@ func confinedTestWorkspace(root string, backend containment.Backend, place conta
 		confinement.NetworkPolicy{Mode: confinement.NetAllowAll})
 }
 
+// resolvedTempDir returns a temp directory the way the workspace will spell it.
+// NewPathValidator resolves the root (`filepath.EvalSymlinks`), and every path a
+// hint emits comes from the resolved workspace — so a fixture that asserts or
+// builds paths from the RAW t.TempDir() compares two different strings on macOS
+// (/var/folders is a symlink to /private/var/folders) and on Windows (the
+// runner's temp path is an 8.3 short name such as RUNNER~1). That difference is
+// what made these tests pass on Linux and fail on both other legs; resolving the
+// fixture is the fix, and resolving the root in production stays.
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	raw := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(raw)
+	if err != nil || resolved == "" {
+		return raw
+	}
+	return resolved
+}
+
 // The orchestrator's workspace carries no confiner, so its shell writes on the
 // host, unconfined — the Terminal-Bench contract (Plan 7 section 2). This is the
 // guardrail: the split must never confine the orchestrator.

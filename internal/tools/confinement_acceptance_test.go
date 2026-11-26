@@ -221,13 +221,29 @@ func TestConfinedBuild_Acceptance(t *testing.T) {
 		t.Fatalf("nothing may have been staged, got %q", staged.Stdout)
 	}
 
+	// 5b. The same rule, in the shape a sub-agent actually writes: a composite
+	// whose LAST command succeeds (`git add -A; echo rc=$?`, or any `|| true`)
+	// exits 0 with the kernel's refusal still in the transcript. The hint used
+	// to be gated on the whole command's exit code, so exactly these callers got
+	// the bare "Permission denied" and no rule (bead yaah-pvm8).
+	shell, flag := ws.Shell()
+	res, rerr = exec(shell, flag, "git add -A; echo rc=$?")
+	if rerr != nil || res.ExitCode != 0 {
+		t.Fatalf("the composite must end in success, exit=%d err=%v stderr=%s", res.ExitCode, rerr, res.Stderr)
+	}
+	if !strings.Contains(res.Stderr, "Permission denied") {
+		t.Fatalf("the index write must still be refused inside the composite, stderr=%q", res.Stderr)
+	}
+	if !strings.Contains(res.Stderr, "[yaah]") || !strings.Contains(res.Stderr, "orchestrator commits") {
+		t.Fatalf("a successful composite must still explain the refused write, got:\n%s", res.Stderr)
+	}
+
 	// 6. The boundary survived the whole run: an out-of-root write is still
 	// refused — by the kernel, not by a launch failure. (A jail that never
 	// established would also "not write" the file, so assert the command RAN and
 	// was denied, otherwise this leg passes vacuously. A launch failure is
 	// ExitCode -1.)
 	outside := filepath.Join(t.TempDir(), "escaped.txt")
-	shell, flag := ws.Shell()
 	res, rerr = exec(shell, flag, "echo no > "+outside)
 	if res.ExitCode == -1 {
 		t.Fatalf("the jail must establish, so the refusal is a denial and not a launch failure: %v", rerr)

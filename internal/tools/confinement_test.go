@@ -235,6 +235,28 @@ func TestGitConfigValue_QuotesAndEscapes(t *testing.T) {
 	}
 }
 
+// hintWorkspace is the confined workspace the exec-time hint answers for: the
+// hint asks it where the boundary is and whether a git write can land there at
+// all, so the double carries a root and the confinement signal and nothing else.
+// Taking a bare path rather than a jail also lets the Windows phrasings be pinned
+// from any host.
+type hintWorkspace struct {
+	Workspace
+	root string
+}
+
+func (w hintWorkspace) WorkDir() string { return w.root }
+func (w hintWorkspace) Confined() bool  { return true }
+
+// newHintWorkspace returns the workspace a hint assertion is made against. root
+// is the fixture's own spelling — not necessarily an existing directory, for the
+// Windows cases — and the hint must name it verbatim.
+func newHintWorkspace(root string) hintWorkspace {
+	pv := NewPathValidator(root, false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	return hintWorkspace{Workspace: newLocalWorkspace(pv), root: root}
+}
+
 // TestConfinementHint_ExplainsRefusedWrites: a kernel refusal reaches the model as
 // a bare "Permission denied" unless it is explained, and an unexplained refusal
 // is what makes a jail feel broken. The hint names the writable root, and names
@@ -246,28 +268,29 @@ func TestConfinementHint_ExplainsRefusedWrites(t *testing.T) {
 	// cross-platform code and must not be tested with one platform's path shapes.
 	root := t.TempDir()
 	outside := t.TempDir()
+	ws := newHintWorkspace(root)
 
 	gitCase := fmt.Sprintf("fatal: Unable to create '%s': Permission denied",
 		filepath.Join(outside, ".git", "worktrees", "wt", "index.lock"))
-	got := confinementHint(gitCase, root)
+	got := confinementHint(ws, gitCase, 0)
 	if !strings.Contains(got, root) || !strings.Contains(got, "orchestrator commits") {
 		t.Errorf("a git-metadata refusal must name the root and the commit rule, got:\n%s", got)
 	}
 
 	plain := fmt.Sprintf("sh: 1: cannot create %s: Permission denied", filepath.Join(outside, "motd"))
-	if got := confinementHint(plain, root); !strings.Contains(got, root) || strings.Contains(got, "orchestrator commits") {
+	if got := confinementHint(ws, plain, 0); !strings.Contains(got, root) || strings.Contains(got, "orchestrator commits") {
 		t.Errorf("a non-git refusal outside the root must name the root without the git rule, got:\n%s", got)
 	}
 
 	// An apostrophe before the quoted path must not swallow the path.
 	apos := fmt.Sprintf("error: can't open '%s': Permission denied", filepath.Join(outside, "x"))
-	if got := confinementHint(apos, root); got == "" {
+	if got := confinementHint(ws, apos, 0); got == "" {
 		t.Error("an unmatched apostrophe must not drop the refusal")
 	}
 
 	// A sibling is not "inside": <root>-other must not pass as the root.
 	sibling := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-other", "x")
-	if got := confinementHint("sh: 1: cannot create "+sibling+": Permission denied", root); got == "" {
+	if got := confinementHint(ws, "sh: 1: cannot create "+sibling+": Permission denied", 0); got == "" {
 		t.Error("a sibling of the root is outside it and must be explained")
 	}
 
@@ -286,7 +309,7 @@ func TestConfinementHint_ExplainsRefusedWrites(t *testing.T) {
 		// a refusal the message does not attribute to a path
 		"git: Permission denied",
 	} {
-		if got := confinementHint(s, root); got != "" {
+		if got := confinementHint(ws, s, 0); got != "" {
 			t.Errorf("confinementHint(%q) = %q, want no hint (inside the root, or unattributable)", s, got)
 		}
 	}
@@ -296,6 +319,7 @@ func TestConfinementHint_ExplainsRefusedWrites(t *testing.T) {
 	// than left to a Windows-only leg. Grow and verify a drive-letter root the
 	// way a Windows workspace would spell it.
 	wnRoot := `C:\work\wt`
+	wns := newHintWorkspace(wnRoot)
 	for _, s := range []string{
 		// Go PathError form: path inline, lowercased drive (an MSYS-spelled
 		// tool run under the same body).
@@ -303,7 +327,7 @@ func TestConfinementHint_ExplainsRefusedWrites(t *testing.T) {
 		// .NET/PowerShell form: "Access to the path ... is denied."
 		`Access to the path 'D:\temp\scratch' is denied.`,
 	} {
-		if got := confinementHint(s, wnRoot); got == "" {
+		if got := confinementHint(wns, s, 0); got == "" {
 			t.Errorf("confinementHint(%q) = %q, want a hint for a denial outside the root", s, got)
 		}
 	}
@@ -314,14 +338,15 @@ func TestConfinementHint_ExplainsRefusedWrites(t *testing.T) {
 		`open C:\work\wt\file.txt: Access is denied.`,
 		`Access to the path 'C:\Work\Wt\sub\log.txt' is denied.`,
 	} {
-		if got := confinementHint(s, wnRoot); got != "" {
+		if got := confinementHint(wns, s, 0); got != "" {
 			t.Errorf("confinementHint(%q) = %q, want no hint for a Windows phrasing inside the root", s, got)
 		}
 	}
 
-	// No root to name (an advisory workspace runs no jail) — no hint.
-	if got := confinementHint(gitCase, ""); got != "" {
-		t.Errorf("a workspace with no root must produce no hint, got %q", got)
+	// No workspace, so no boundary to name (an advisory workspace runs no jail) —
+	// no hint.
+	if got := confinementHint(nil, gitCase, 0); got != "" {
+		t.Errorf("a nil workspace must produce no hint, got %q", got)
 	}
 }
 
@@ -330,29 +355,147 @@ func TestConfinementHint_ExplainsRefusedWrites(t *testing.T) {
 // the packaging nor the remedy. The hint must say both, without waiting for a
 // path-attributed permission failure (there is none).
 func TestConfinementHint_TranslatesSnapConfine(t *testing.T) {
-	root := t.TempDir()
-	stderr := "snap-confine: required permitted capability cap_dac_override not found in current capabilities"
+	ws := newHintWorkspace(t.TempDir())
+	abort := "snap-confine: required permitted capability cap_dac_override not found in current capabilities"
 
-	got := confinementHint(stderr, root)
+	got := confinementHint(ws, abort, 1)
 	for _, want := range []string{"snap package", "/snap/bin", "tarball or distro build"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("hint must mention %q, got:\n%s", want, got)
 		}
 	}
 
+	// The phrasings snap-confine uses when it did not run, each on the aborting
+	// line. They are snap-specific by construction (see snapFailurePhrases): the
+	// generic words that used to be accepted — "failed to", "Permission denied" —
+	// appear in ordinary healthy output, this repository's own source included.
+	for _, s := range []string{
+		"snap-confine: cannot start: no_new_privs refused",
+		"snap-confine: can not start",
+		"snap-confine: cannot run: no_new_privs",
+		"snap-confine: cannot open /var/lib/snapd/state.json",
+		"snap-confine: Refusing to continue",
+	} {
+		// Exit 0 too: a composite can exit 0 with the abort in its transcript,
+		// which is why the exit code cannot be the only gate.
+		for _, code := range []int{0, 1} {
+			if got := confinementHint(ws, s, code); got == "" {
+				t.Errorf("snap-confine failing to start must still be explained (exit %d): %q", code, s)
+			}
+		}
+	}
+
 	// Generic capability text from something that is not snap-confine must not
 	// be captioned as a toolchain packaging problem.
-	if got := confinementHint("apparmor: required capability denied", root); got != "" {
+	if got := confinementHint(ws, "apparmor: required capability denied", 1); got != "" {
 		t.Errorf("a generic capability failure produced a snap hint: %q", got)
 	}
 
 	// snap-confine's capability abort without the executable's name in the
-	// message is still snap-confine: this exact pair is its wording, and the
-	// abort is often relayed without the token.
+	// message is still snap-confine: this exact wording is its own, and the abort
+	// is often relayed without the token. It counts only for a command that
+	// FAILED, because the same line is a fixture in this repository's own tests
+	// (see TestConfinementHint_DoesNotCaptionTheRepositorysOwnText): quoted source
+	// text is not an abort.
 	bare := "required permitted capability cap_dac_override not found in current capabilities"
-	if got := confinementHint(bare, root); got == "" {
+	if got := confinementHint(ws, bare, 1); got == "" {
 		t.Error("snap-confine's capability abort must be explained even without the token")
 	}
+	if got := confinementHint(ws, bare, 0); got != "" {
+		t.Errorf("a successful command quoting the capability abort is not an abort, got: %q", got)
+	}
+
+	// The bare token is not evidence of a failure, and neither is a failure
+	// phrasing printed on a different line: the pairing is line-scoped, so a
+	// transcript that merely lists the token cannot borrow a phrase from
+	// elsewhere in the output (bead yaah-pvm8 review, R1).
+	for _, s := range []string{
+		"internal/prompts/confinement.md: snap-confine is setuid and needs capabilities",
+		"snap-confine is setuid\ncannot start without privileges\n",
+	} {
+		if got := confinementHint(ws, s, 0); got != "" {
+			t.Errorf("a mere mention of the token is not a refusal: %q -> %q", s, got)
+		}
+	}
+}
+
+// TestConfinementHint_DoesNotCaptionTheRepositorysOwnText pins the reviewer's two
+// collisions (yaah-pvm8 review, R1) against the ACTUAL lines of this repository,
+// read out of the files rather than retyped: a sub-agent grepping this tree is an
+// ordinary action, and its output reaches the hint at exit 0.
+//
+// The previous negative case hand-crafted a line that happened to avoid the extra
+// phrases, which is how a fix round could look green while `grep -rn snap-confine
+// internal/` was still captioned as a sandbox refusal.
+func TestConfinementHint_DoesNotCaptionTheRepositorysOwnText(t *testing.T) {
+	ws := newHintWorkspace(t.TempDir())
+
+	fixtures := []struct {
+		path     string
+		contains [2]string
+	}{
+		// The packaging rationale in the workspace source, which states the token
+		// and the capability detail on one line.
+		{
+			path:     filepath.Join("substrate", "workspace.go"),
+			contains: [2]string{"snap-confine", "no_new_privs"},
+		},
+		// This file's own capability fixture: snap-confine's abort, verbatim. Kept
+		// on separate lines here so the search strings are not themselves a hit.
+		{
+			path: "confinement_test.go",
+			contains: [2]string{
+				"required permitted capability",
+				"not found in current capabilities",
+			},
+		},
+	}
+	for _, f := range fixtures {
+		lines := repoLinesWith(t, f.path, f.contains[:]...)
+		if len(lines) == 0 {
+			t.Fatalf("%s no longer carries %q and %q on one line; update this fixture",
+				f.path, f.contains[0], f.contains[1])
+		}
+		for _, line := range lines {
+			// grep's shape: path:line:text, and grep SUCCEEDS when it matched.
+			output := fmt.Sprintf("%s:%d:%s\n", f.path, line.number, line.text)
+			if got := confinementHint(ws, output, 0); got != "" {
+				t.Errorf("a successful grep over %s:%d was captioned as a sandbox refusal:\n  line: %s\n  hint: %s",
+					f.path, line.number, line.text, got)
+			}
+		}
+	}
+}
+
+// sourceLine is one line of a fixture file, with its 1-based number.
+type sourceLine struct {
+	number int
+	text   string
+}
+
+// repoLinesWith returns every line of path that contains all of the given
+// substrings. Reading the files keeps these fixtures honest: the collision is
+// whatever this repository actually says, not a handcrafted near-miss.
+func repoLinesWith(t *testing.T, path string, substrings ...string) []sourceLine {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the fixture file %s: %v", path, err)
+	}
+	var out []sourceLine
+	for i, line := range strings.Split(string(data), "\n") {
+		hasAll := true
+		for _, s := range substrings {
+			if !strings.Contains(line, s) {
+				hasAll = false
+				break
+			}
+		}
+		if hasAll {
+			out = append(out, sourceLine{number: i + 1, text: line})
+		}
+	}
+	return out
 }
 
 // TestScrubConfinementScratch_Removes: the scrub removes the whole scratch tree.

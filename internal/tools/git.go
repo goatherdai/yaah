@@ -3,7 +3,9 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,21 +14,39 @@ import (
 
 const gitMaxTimeoutSeconds = 300
 
+// allowedGitActions is the table of record for two INDEPENDENT questions:
+// whether a call needs approval (dangerous) and whether it writes git's
+// metadata (writes).
+//
+// They are kept apart because they diverge, and conflating them has already let
+// one gate pass what the other must refuse (bead yaah-pvm8). `fetch` is the
+// case: it changes no ref and no working-tree file, so it needs no approval, but
+// it writes the object store and FETCH_HEAD under the common gitdir — outside a
+// dispatch worktree's writable root — so it cannot land under the write jail.
 var allowedGitActions = map[string]struct {
 	description string
-	dangerous   bool
+	// dangerous marks a call that needs approval: it rewrites refs or the
+	// working tree, so approval gating asks the operator.
+	dangerous bool
+	// writes marks a call that writes git's metadata — index, object store,
+	// refs, FETCH_HEAD. That is the property the write jail decides on, since
+	// a dispatch worktree's metadata lives in the original repository.
+	//
+	// `branch` is a writer in general and is refined per argument (listing
+	// refs writes nothing), the same way its approval classification is.
+	writes bool
 }{
-	"status":      {"Working tree status", false},
-	"diff":        {"Show unstaged changes", false},
-	"diff_cached": {"Show staged/index changes", false},
-	"log":         {"Show recent commit history", false},
-	"show":        {"Show details of a commit", false},
-	"branch":      {"List, create, or delete branches. Branch names go in 'paths'.", false},
-	"add":         {"Stage file(s) for commit", true},
-	"commit":      {"Create a new commit", true},
-	"push":        {"Push commits to remote", true},
-	"pull":        {"Pull commits from remote", true},
-	"fetch":       {"Fetch from remote (read-only)", false},
+	"status":      {"Working tree status", false, false},
+	"diff":        {"Show unstaged changes", false, false},
+	"diff_cached": {"Show staged/index changes", false, false},
+	"log":         {"Show recent commit history", false, false},
+	"show":        {"Show details of a commit", false, false},
+	"branch":      {"List, create, or delete branches. Branch names go in 'paths'.", false, true},
+	"add":         {"Stage file(s) for commit", true, true},
+	"commit":      {"Create a new commit", true, true},
+	"push":        {"Push commits to remote", true, true},
+	"pull":        {"Pull commits from remote", true, true},
+	"fetch":       {"Fetch from remote (writes the object store)", false, true},
 }
 
 // GitTool runs git commands directly (not through a shell).
@@ -87,6 +107,10 @@ func (t *GitTool) Schema() json.RawMessage {
 // and deleting refs share one action name — `branch -D` used to pass as
 // read-only and delete a branch with no merged-commit protection (bead
 // yaah-5m5).
+//
+// This is the approval question only. Whether the call can run at all under the
+// write jail is a separate column of the same table (writes, via
+// gitActionWrites): `fetch` answers false here and true there.
 func (t *GitTool) IsDangerous(argsJSON string) bool {
 	var params struct {
 		Action string   `json:"action"`
@@ -96,17 +120,68 @@ func (t *GitTool) IsDangerous(argsJSON string) bool {
 	if err := json.Unmarshal([]byte(argsJSON), &params); err != nil {
 		return false
 	}
-	info, ok := allowedGitActions[params.Action]
+	return gitActionDangerous(params.Action, params.Flags, params.Paths)
+}
+
+// gitActionDangerous reports whether the call needs approval, from the table's
+// dangerous column with `branch` refined per argument.
+func gitActionDangerous(action string, flags, paths []string) bool {
+	info, ok := allowedGitActions[action]
 	if !ok {
 		return false
 	}
-	if info.dangerous {
-		return true
+	if action == "branch" {
+		return branchCallDangerous(flags, paths)
 	}
-	if params.Action == "branch" {
-		return branchCallDangerous(params.Flags, params.Paths)
+	return info.dangerous
+}
+
+// gitActionWrites reports whether the call writes git's metadata (index, object
+// store, refs), which is what the write jail decides — NOT whether it needs
+// approval. Reading the table's writes column keeps the two gates on one table
+// while letting them diverge where they must: `fetch` writes FETCH_HEAD and the
+// object store and needs no approval. `branch` is refined per argument, because
+// the same action both lists refs and rewrites them.
+func gitActionWrites(action string, flags, paths []string) bool {
+	info, ok := allowedGitActions[action]
+	if !ok {
+		return false
 	}
-	return false
+	if action == "branch" {
+		return branchCallDangerous(flags, paths)
+	}
+	return info.writes
+}
+
+// gitWriteActionList names the writers the git tool can actually be asked for,
+// derived from the same table the gate reads. The refusal message must not name
+// actions this tool cannot issue (the shell surface names its own, broader list)
+// nor omit a reachable writer: a sub-agent told only about add and commit would
+// reasonably try `branch -D` next.
+func gitWriteActionList() string {
+	plain := make([]string, 0, len(allowedGitActions))
+	branchWrites := false
+	for action, info := range allowedGitActions {
+		if !info.writes {
+			continue
+		}
+		if action == "branch" {
+			// The bare name would read as "git branch is blocked", listing
+			// forms included; name the writing forms instead.
+			branchWrites = true
+			continue
+		}
+		plain = append(plain, action)
+	}
+	slices.Sort(plain)
+	list := strings.Join(plain, ", ")
+	if branchWrites {
+		if list != "" {
+			list += ", "
+		}
+		list += "and the branch forms that create or delete a ref"
+	}
+	return list
 }
 
 func (t *GitTool) Execute(ctx context.Context, args string) (string, error) {
@@ -218,7 +293,35 @@ func (t *GitTool) Execute(ctx context.Context, args string) (string, error) {
 	// The injected workspace carries the working directory (a worktree for an
 	// isolated sub-agent); there is no PathValidator for git, which spawns a
 	// process rather than reading files directly.
-	res, err := workspaceOf(t.WS, nil).Exec(ctx, ExecRequest{Command: "git", Args: cmdArgs})
+	ws := workspaceOf(t.WS, nil)
+
+	// A confined dispatch workspace cannot run a git WRITE: its index and object
+	// store live in the original repository, outside the jail's writable root(s),
+	// so the kernel would refuse the write after a wasted round trip and the
+	// sub-agent would learn the rule only from a bare "Permission denied". Refuse
+	// up front instead.
+	//
+	// The split is deliberate. Which subcommands write is this tool's knowledge
+	// (gitActionWrites, from the action table) — including `fetch`, which is
+	// read-only for approval and still writes the shared object store and
+	// FETCH_HEAD. Whether a write can land HERE, and how to describe the boundary,
+	// is the workspace's knowledge: the substrate function reads the workspace's
+	// own writable set (plural roots when grants narrow the jail) and returns ""
+	// when a write can land, so this file never builds the sentence itself.
+	//
+	// It is unconfined in every workspace the orchestrator runs in — its
+	// workspace comes from NewLocalWorkspace, which carries no confiner (and
+	// reports unconfined once a jail has degraded to the advisory fallback) — so
+	// the parent's own git writes are untouched. A container lane's
+	// SandboxWorkspace does not implement the optional Confined interface either,
+	// so this gate covers the local jailed lane only, where the refusal is a fact.
+	if gitActionWrites(params.Action, params.Flags, params.Paths) {
+		if refusal := confinedGitWriteRefusal(ws, gitWriteActionList(), true); refusal != "" {
+			return "", errors.New(refusal)
+		}
+	}
+
+	res, err := ws.Exec(ctx, ExecRequest{Command: "git", Args: cmdArgs})
 	if ctx.Err() == context.DeadlineExceeded {
 		return "", ToolTimeoutError{Tool: "git", Timeout: timeout.String()}
 	}

@@ -1,0 +1,261 @@
+package substrate
+
+// workspace_hint_exit_test.go pins the exec-time half of the confinement hint:
+// WHEN it attaches. The hint's matching is tested as pure string work in
+// internal/tools/confinement_test.go; what regressed (bead yaah-pvm8) is the
+// gate in confinedExec, which used to attach it only when the whole command
+// exited non-zero — so a composite that ends in success (`git add -A; echo
+// rc=$?`, or any `cmd || true`) told the sub-agent nothing and left it staring
+// at a bare "Permission denied".
+//
+// The path runs through a fake containment backend, not a real LSM: the
+// question is what confinedExec does with a result, so replaying one is the
+// honest fixture, and it keeps the case platform-independent.
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
+	"github.com/goatherdai/goatherd-runtime/sandbox/containment"
+)
+
+// fakeConfinementBackend establishes its paddock unconditionally and replays one
+// canned result, standing in for the kernel so the exec→hint path can be driven
+// with any exit code and output.
+type fakeConfinementBackend struct{ result containment.LaunchResult }
+
+func (f fakeConfinementBackend) Name() string              { return "fake" }
+func (f fakeConfinementBackend) EnforcementTier() string   { return "fake" }
+func (f fakeConfinementBackend) Available() (bool, string) { return true, "" }
+func (f fakeConfinementBackend) SupportsNetwork(confinement.NetMode) bool {
+	return true
+}
+func (f fakeConfinementBackend) ProfileFor([]string, confinement.NetworkPolicy) string { return "" }
+func (f fakeConfinementBackend) Probe(string, string, []string) error                  { return nil }
+
+func (f fakeConfinementBackend) Launch(string, containment.LaunchRequest) (containment.LaunchResult, error) {
+	return f.result, nil
+}
+
+// TestConfinedExec_HintFollowsTheOutputNotTheExitCode is the regression for
+// yaah-pvm8: a refusal in a command that exits 0 must still be explained, and
+// the twin negatives that made the hint safe must stay empty at exit 0 too.
+func TestConfinedExec_HintFollowsTheOutputNotTheExitCode(t *testing.T) {
+	// Resolved, not raw: production canonicalizes the workspace root, so the hint
+	// names the canonical spelling — see resolvedTempDir.
+	root := resolvedTempDir(t)
+	outside := resolvedTempDir(t)
+	gitRefusal := fmt.Sprintf("fatal: Unable to create '%s': Permission denied",
+		filepath.Join(outside, ".git", "worktrees", "wt", "index.lock"))
+
+	cases := []struct {
+		name string
+		res  containment.LaunchResult
+		// separate is the request's SeparateStreams setting: with it, the hint
+		// is appended to stderr; without it, to the combined stdout.
+		separate bool
+		wantHint bool
+		// noRoot marks a hint that names no writable root (the snap
+		// translation, which is about packaging, not about the boundary); the
+		// table's root check applies to the boundary hints only.
+		noRoot bool
+	}{
+		{
+			// The hole: `git add -A; echo rc=$?` — the composite succeeds while
+			// the index write was refused.
+			name:     "zero exit, refusal on stderr",
+			res:      containment.LaunchResult{ExitCode: 0, Stdout: "rc=128\n", Stderr: gitRefusal},
+			separate: true,
+			wantHint: true,
+		},
+		{
+			// A backend that reports combined output leaves git's stderr in
+			// Stdout; the hint must not depend on which stream carried it.
+			name:     "zero exit, refusal in combined stdout",
+			res:      containment.LaunchResult{ExitCode: 0, Stdout: gitRefusal, Stderr: ""},
+			wantHint: true,
+		},
+		{
+			// A non-git refusal outside the root still names the boundary.
+			name: "zero exit, plain out-of-root refusal",
+			res: containment.LaunchResult{ExitCode: 0,
+				Stdout: "sh: 1: cannot create " + filepath.Join(outside, "motd") + ": Permission denied\nrc=2\n"},
+			separate: true,
+			wantHint: true,
+		},
+		{
+			name:     "non-zero exit keeps its hint",
+			res:      containment.LaunchResult{ExitCode: 128, Stderr: gitRefusal},
+			separate: true,
+			wantHint: true,
+		},
+		// Twin negatives: each of these produced no hint before the change and
+		// must still produce none, because widening the gate must not caption
+		// ordinary output as a boundary refusal.
+		{
+			name:     "zero exit, no output",
+			res:      containment.LaunchResult{ExitCode: 0},
+			separate: true,
+			wantHint: false,
+		},
+		{
+			name:     "zero exit, network failure",
+			res:      containment.LaunchResult{ExitCode: 0, Stdout: "fatal: unable to access 'https://example.invalid/x': Failed to connect: connection refused\n"},
+			wantHint: false,
+		},
+		{
+			name:     "zero exit, permission failure inside the root",
+			res:      containment.LaunchResult{ExitCode: 0, Stdout: "cat: " + filepath.Join(root, "secret") + ": Permission denied\n"},
+			wantHint: false,
+		},
+		{
+			name:     "zero exit, unattributable refusal",
+			res:      containment.LaunchResult{ExitCode: 0, Stdout: "git: Permission denied\n"},
+			wantHint: false,
+		},
+		{
+			// The other side of dropping the exit-code gate: a SUCCESSFUL command
+			// may merely MENTION the snap token (a grep over this repository's
+			// docs, a test log). The token alone is not a failure, so with no
+			// exit code left to filter on, the snap branch must require a failure
+			// phrasing of its own — otherwise healthy output gets captioned as a
+			// sandbox refusal (yaah-pvm8 review, F4).
+			name:     "zero exit, output merely mentions snap-confine",
+			res:      containment.LaunchResult{ExitCode: 0, Stdout: "docs/notes.md: snap-confine is setuid and needs capabilities\n"},
+			wantHint: false,
+		},
+		{
+			// The same token WITH a failure phrasing on the same line is a real snap
+			// start failure, and must still be translated at exit 0 (the composite
+			// case the widened gate exists for). See
+			// TestConfinementHint_TranslatesSnapConfine for the phrasings themselves.
+			name:     "zero exit, snap-confine aborted in a composite",
+			res:      containment.LaunchResult{ExitCode: 0, Stdout: "snap-confine: cannot start: no_new_privs refused\nrc=1\n"},
+			wantHint: true,
+			noRoot:   true,
+		},
+		{
+			name:     "non-zero exit, snap-confine cannot start",
+			res:      containment.LaunchResult{ExitCode: 1, Stdout: "snap-confine: cannot start: no_new_privs refused\n"},
+			wantHint: true,
+			noRoot:   true,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			backend := fakeConfinementBackend{result: c.res}
+			ws := confinedTestWorkspace(root, backend, containment.PlacementPaddock)
+
+			got, err := ws.Exec(context.Background(), ExecRequest{
+				Command: "sh", Args: []string{"-c", "true"}, Cwd: root, SeparateStreams: c.separate,
+			})
+			// The exit code decides only the error, never the hint.
+			if c.res.ExitCode != 0 {
+				if err == nil {
+					t.Fatalf("a non-zero confined exit must be reported as an error, got none")
+				}
+			} else if err != nil {
+				t.Fatalf("a zero exit must not be an error, got %v", err)
+			}
+
+			where := got.Stdout
+			if c.separate {
+				where = got.Stderr
+			}
+			hasHint := strings.Contains(where, "[yaah]")
+			if hasHint != c.wantHint {
+				t.Fatalf("hint present = %v, want %v\nstdout: %q\nstderr: %q",
+					hasHint, c.wantHint, got.Stdout, got.Stderr)
+			}
+			if !c.wantHint {
+				return
+			}
+			if !c.noRoot && !strings.Contains(where, root) {
+				t.Errorf("the hint must name the writable root %q, got:\n%s", root, where)
+			}
+			// The git case carries the deliberate rule, not just the boundary.
+			if strings.Contains(c.res.Stdout+c.res.Stderr, ".git/") &&
+				!strings.Contains(where, "orchestrator commits") {
+				t.Errorf("a git-metadata refusal must state the commit rule, got:\n%s", where)
+			}
+		})
+	}
+}
+
+// TestConfinedExec_HintNamesTheResolvedRoot pins, on every platform, the property
+// the macOS and Windows legs failed on: the message names the workspace's
+// RESOLVED root, because that is the spelling the sub-agent can act on.
+//
+// The workspace here is built from a SYMLINK to a real directory, so the test
+// exercises the resolution on a Linux host whose temp directory has no symlink
+// of its own — turning a platform-only failure into a regression every CI leg
+// runs (bead yaah-pvm8, CI-1).
+func TestConfinedExec_HintNamesTheResolvedRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "worktree")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink creation is unavailable on this host: %v", err)
+	}
+	resolved, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		t.Fatalf("resolve the fixture link: %v", err)
+	}
+	if resolved == link {
+		t.Fatalf("the fixture is not a symlink: %q resolved to itself", link)
+	}
+
+	outside := resolvedTempDir(t)
+	gitRefusal := fmt.Sprintf("fatal: Unable to create '%s': Permission denied\n",
+		filepath.Join(outside, ".git", "worktrees", "wt", "index.lock"))
+
+	t.Run("an out-of-root refusal names the resolved root", func(t *testing.T) {
+		ws := confinedTestWorkspace(link,
+			fakeConfinementBackend{result: containment.LaunchResult{ExitCode: 0, Stderr: gitRefusal}},
+			containment.PlacementPaddock)
+		got, err := ws.Exec(context.Background(), ExecRequest{
+			Command: "sh", Args: []string{"-c", "true"}, Cwd: link, SeparateStreams: true,
+		})
+		if err != nil {
+			t.Fatalf("a zero exit must not be an error, got %v", err)
+		}
+		if !strings.Contains(got.Stderr, "whose only writable root is "+resolved) {
+			t.Errorf("the hint must name the resolved root %q, got:\n%s", resolved, got.Stderr)
+		}
+		if strings.Contains(got.Stderr, "whose only writable root is "+link) {
+			t.Errorf("the hint must not name the unresolved path it was handed %q, got:\n%s", link, got.Stderr)
+		}
+		if !strings.Contains(got.Stderr, "orchestrator commits") {
+			t.Errorf("a git-metadata refusal must state the commit rule, got:\n%s", got.Stderr)
+		}
+	})
+
+	t.Run("an in-root refusal is still not a boundary refusal", func(t *testing.T) {
+		// Spelled the way a confined command sees it: the jail's root is the
+		// resolved path, so a refusal on a file inside it carries that spelling. A
+		// candidate spelled through the link need not exist, and an unresolvable
+		// candidate cannot be attributed to the boundary.
+		inRoot := "cat: " + filepath.Join(resolved, "secret") + ": Permission denied\n"
+		ws := confinedTestWorkspace(link,
+			fakeConfinementBackend{result: containment.LaunchResult{ExitCode: 0, Stdout: inRoot}},
+			containment.PlacementPaddock)
+		got, err := ws.Exec(context.Background(), ExecRequest{
+			Command: "sh", Args: []string{"-c", "true"}, Cwd: link, SeparateStreams: true,
+		})
+		if err != nil {
+			t.Fatalf("a zero exit must not be an error, got %v", err)
+		}
+		if strings.Contains(got.Stderr, "[yaah]") {
+			t.Errorf("a permission failure inside the root is not a boundary refusal, got:\n%s", got.Stderr)
+		}
+	})
+}
