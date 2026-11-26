@@ -73,19 +73,25 @@ func growSession(tb testing.TB, ui *App, turns int) {
 	}
 }
 
-// renderGateBudget scales a wall-clock budget by YAAH_TEST_RENDER_BUDGET
-// (a float multiplier, default 1). The gate measures ~5MB of wrap and
-// paint work; a loaded CI windows runner can be several times slower than
-// a laptop without any regression, so the multiplier gives such machines
-// an escape hatch without loosening the invariant assertions.
-func renderGateBudget(tb testing.TB, base time.Duration) time.Duration {
+// renderGateFactor is the YAAH_TEST_RENDER_BUDGET multiplier (default 1):
+// a manual escape hatch for slow or loaded machines. CI relies on the
+// ratio-based budgets, which cancel machine speed out; the factor exists
+// so a pathological environment can widen everything without a code
+// change.
+func renderGateFactor(tb testing.TB) float64 {
 	tb.Helper()
 	if f := os.Getenv("YAAH_TEST_RENDER_BUDGET"); f != "" {
 		if v, err := strconv.ParseFloat(f, 64); err == nil && v > 0 {
-			return time.Duration(float64(base) * v)
+			return v
 		}
 	}
-	return base
+	return 1
+}
+
+// renderGateBudget scales a wall-clock budget by the factor above.
+func renderGateBudget(tb testing.TB, base time.Duration) time.Duration {
+	tb.Helper()
+	return time.Duration(float64(base) * renderGateFactor(tb))
 }
 
 // isolateRenderLog points YAAH_HOME at a temp directory: the gate drives
@@ -97,25 +103,59 @@ func isolateRenderLog(tb testing.TB) {
 	tb.Setenv("YAAH_HOME", tb.TempDir())
 }
 
+// gateApp returns an app with an undrained queue: mutators' markDirty
+// enqueues exactly one event (the flags then stay set, so nothing more is
+// enqueued) instead of spawning direct-fallback goroutines that would
+// block forever on an app that never runs. Every refresh in these tests
+// is driven directly, on the test goroutine.
+func gateApp() *App {
+	ui := New("test")
+	ui.bgDone = make(chan struct{})
+	ui.uiEventCh = make(chan uiEvent, 512)
+	return ui
+}
+
+// measureRender runs one refresh plus screen draw — the per-event cost a
+// user pays — and returns the duration.
+func measureRender(ui *App, sim tcell.SimulationScreen) time.Duration {
+	start := time.Now()
+	ui.refreshMessages()
+	ui.Root.Draw(sim)
+	return time.Since(start)
+}
+
+// resizeSim re-lays the app out at a different width: the next full render
+// misses every width-keyed markdown cache (ci.cachedWidth != w), which is
+// the cold path a terminal resize hits at session scale.
+func resizeSim(ui *App, sim tcell.SimulationScreen) {
+	sim.SetSize(100, 40)
+	ui.Root.SetRect(0, 0, 100, 40)
+	ui.Root.Draw(sim)
+}
+
 // TestRefreshMessages_SessionScaleRenderBudget pins the per-event render
-// cost at the end of a full-scale session: one full render plus one screen
-// draw must stay inside the budget, and a tool-chunk append must stay far
-// below it (the incremental path T2 extends to text chunks).
+// cost at the end of a full-scale session. The budget is a ratio against
+// a small-session baseline measured in the same process on the same
+// machine, so runner speed cancels out and the gate keeps its signal in
+// CI (a wall-clock budget scaled 3x for hosted runners would only catch
+// pathological regressions). Both the warm-cache rebuild and the
+// cold-cache resize rebuild — the expensive path when cachedWidth no
+// longer matches — are gated.
 func TestRefreshMessages_SessionScaleRenderBudget(t *testing.T) {
 	if testing.Short() {
 		t.Skip("full-scale render gate: skipped in -short")
 	}
 	isolateRenderLog(t)
-	ui := New("test")
-	// Install an undrained queue: mutators' markDirty enqueues exactly one
-	// event (the flags then stay set, so nothing more is enqueued) instead
-	// of spawning direct-fallback goroutines that would block forever on
-	// an app that never runs. Every refresh in this test is driven
-	// directly, on the test goroutine.
-	ui.bgDone = make(chan struct{})
-	ui.uiEventCh = make(chan uiEvent, 512)
-	sim := setupSim(t, ui)
 
+	base := gateApp()
+	baseSim := setupSim(t, base)
+	growSession(t, base, 18)
+	baseWarm := measureRender(base, baseSim)
+	resizeSim(base, baseSim)
+	baseCold := measureRender(base, baseSim)
+
+	ui := gateApp()
+	sim := setupSim(t, ui)
 	buildStart := time.Now()
 	growSession(t, ui, 175)
 	build := time.Since(buildStart)
@@ -128,36 +168,39 @@ func TestRefreshMessages_SessionScaleRenderBudget(t *testing.T) {
 		t.Fatalf("painted transcript lost early or late turns (%d bytes)", len(rendered))
 	}
 
-	// Steady state: the cost a user pays per event at this scale.
-	start := time.Now()
-	ui.refreshMessages()
-	ui.Root.Draw(sim)
-	fullRender := time.Since(start)
+	warm := measureRender(ui, sim)
 
 	// The incremental path: one new tool chunk, no in-place mutation.
 	before := ui.fullRenderCount
 	ui.AddToolStart("tail", "bash", `{"command":"true"}`)
-	start = time.Now()
-	ui.refreshMessages()
-	ui.Root.Draw(sim)
-	appendRender := time.Since(start)
+	appendRender := measureRender(ui, sim)
 	if ui.fullRenderCount != before {
 		t.Fatalf("tool append took the full-render path (%d -> %d)", before, ui.fullRenderCount)
 	}
 
-	t.Logf("built 175 turns (%d items) in %s; full render+draw %s; append render+draw %s",
-		len(ui.conversationLog), build.Round(time.Millisecond),
-		fullRender.Round(time.Millisecond), appendRender.Round(time.Millisecond))
+	resizeSim(ui, sim)
+	cold := measureRender(ui, sim)
 
-	const fullBase = 3 * time.Second
-	const appendBase = 300 * time.Millisecond
-	fullBudget := renderGateBudget(t, fullBase)
-	appendBudget := renderGateBudget(t, appendBase)
-	if fullRender > fullBudget {
-		t.Errorf("full render+draw at session scale took %s, budget %s — the yaah-30t6 freeze shape", fullRender, fullBudget)
+	t.Logf("built 175 turns (%d items) in %s", len(ui.conversationLog), build.Round(time.Millisecond))
+	t.Logf("full render+draw: warm %s (base %s, ratio %.1f); cold %s (base %s, ratio %.1f); append %s",
+		warm.Round(time.Millisecond), baseWarm.Round(time.Millisecond),
+		float64(warm)/float64(baseWarm),
+		cold.Round(time.Millisecond), baseCold.Round(time.Millisecond),
+		float64(cold)/float64(baseCold),
+		appendRender.Round(time.Millisecond))
+
+	const ratioBase = 20.0
+	ratio := ratioBase * renderGateFactor(t)
+	if warm > time.Duration(float64(baseWarm)*ratio) {
+		t.Errorf("warm full render+draw took %s, %.1fx the small-session baseline %s (budget %.0fx) — the yaah-30t6 freeze shape",
+			warm, float64(warm)/float64(baseWarm), baseWarm, ratio)
 	}
-	if appendRender > appendBudget {
-		t.Errorf("append render+draw took %s, budget %s", appendRender, appendBudget)
+	if cold > time.Duration(float64(baseCold)*ratio) {
+		t.Errorf("cold (resize) full render+draw took %s, %.1fx the small-session baseline %s (budget %.0fx)",
+			cold, float64(cold)/float64(baseCold), baseCold, ratio)
+	}
+	if appendRender > renderGateBudget(t, 300*time.Millisecond) {
+		t.Errorf("append render+draw took %s, budget %s", appendRender, renderGateBudget(t, 300*time.Millisecond))
 	}
 }
 
@@ -253,11 +296,7 @@ func BenchmarkRefreshMessages_SessionScale(b *testing.B) {
 		b.Skip("full-scale benchmark: skipped in -short")
 	}
 	isolateRenderLog(b)
-	ui := New("test")
-	// Undrained queue, as in the budget test: no direct-fallback
-	// goroutines blocked on an app that never runs.
-	ui.bgDone = make(chan struct{})
-	ui.uiEventCh = make(chan uiEvent, 512)
+	ui := gateApp()
 	sim := setupSim(b, ui)
 	growSession(b, ui, 175)
 

@@ -194,8 +194,8 @@ func (t *App) refreshMessages() {
 	observability.RecordTUIRefresh(context.Background(), totalDur, cadence, queueDepth)
 
 	if totalDur > slowRenderThreshold {
-		t.slowLog.printf("SLOW refreshMessages: %d items, %d bytes, appended=%v total=%v format=%v write=%v",
-			n, msgLen, appended, totalDur, formatDur, writeDur)
+		t.slowLog.printf("SLOW refreshMessages: %d items, %d bytes, appended=%v full_renders=%d total=%v format=%v write=%v",
+			n, msgLen, appended, t.fullRenderCount, totalDur, formatDur, writeDur)
 	}
 }
 
