@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.220.0](https://github.com/goatherdai/yaah/compare/v0.219.1...v0.220.0) (2026-11-26)
+
+
+### Features
+
+* **delegate:** seed a dispatch worktree at a named ref (yaah-witj increment B) ([#428](https://github.com/goatherdai/yaah/issues/428)) ([baaf75f](https://github.com/goatherdai/yaah/commit/baaf75fefee11889cde16c5295745ff37c5abcb1))
+
 ## [0.219.1](https://github.com/goatherdai/yaah/compare/v0.219.0...v0.219.1) (2026-11-26)
 
 
