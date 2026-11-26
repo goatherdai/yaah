@@ -323,13 +323,14 @@ func runTUI(initialSpec string) error {
 	}
 	app.OnClear = func() {}
 	app.OnSteer = func(text string) {
-		// Echo the steer in the conversation as a prompt so what woke the
-		// turn is visible where the response lands.
-		app.AddPrompt(text)
+		// Flush in-flight streamed text and echo the steer as a prompt so
+		// what woke the turn is visible where the response lands, after
+		// the assistant text that was streaming when it was sent.
+		app.EchoPrompt(text)
 		sess.Steer(text)
 	}
 	app.OnFollowUp = func(text string) {
-		app.AddPrompt(text)
+		app.EchoPrompt(text)
 		sess.FollowUp(text)
 	}
 	app.OnStop = func() {

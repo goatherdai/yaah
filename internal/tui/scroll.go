@@ -48,7 +48,8 @@ func (t *App) requestRefresh() {
 
 	// Refresh is critical: dropping it would leave refreshQueued set while
 	// the rendered pane stays stale forever. enqueueUIEvent falls back to
-	// a direct QueueUpdateDraw when the queue is saturated.
+	// a direct QueueUpdateDraw when the queue is saturated, and reports a
+	// drop (waiter pool full, or shutdown) so the flag can be recovered.
 	run := func() {
 		if !t.enqueueUIEvent(true, func() {
 			t.flushRefresh()
@@ -57,8 +58,10 @@ func (t *App) requestRefresh() {
 				t.requestRefresh()
 			}
 		}, true) {
-			// Shutdown raced the enqueue. Clear the flag so a later caller can
-			// schedule a refresh instead of being coalesced into nothing.
+			// The refresh was not scheduled — dropped at the waiter cap
+			// or abandoned at shutdown. Clear the flag so a later caller
+			// can schedule a refresh instead of being coalesced into
+			// nothing.
 			t.refreshQueued.Store(false)
 		}
 	}
@@ -75,7 +78,26 @@ func (t *App) requestRefresh() {
 	}
 	elapsed := time.Since(time.Unix(0, t.lastRefreshUnixNano.Load()))
 	if remaining := delay - elapsed; remaining > 0 {
-		time.AfterFunc(remaining, run)
+		t.bgMu.Lock()
+		done := t.bgDone
+		t.bgMu.Unlock()
+		time.AfterFunc(remaining, func() {
+			// The throttle window can outlive the app: Stop/Run
+			// teardown may have happened since this refresh was
+			// scheduled. Enqueueing after the background loops are
+			// stopped would take the ch==nil direct path toward a
+			// stopped tview app, so clear the coalescing flag and
+			// let a future Run schedule fresh work instead.
+			if done != nil {
+				select {
+				case <-done:
+					t.refreshQueued.Store(false)
+					return
+				default:
+				}
+			}
+			run()
+		})
 		return
 	}
 	run()

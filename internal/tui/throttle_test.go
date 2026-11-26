@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// waitForNotRefreshed / waitForRefreshed give the throttle test generous
-// margins so runner jitter cannot flip the assertions.
+// waitForRefreshed gives the throttle test generous margins so runner
+// jitter cannot flip the assertions.
 
 func waitForRefreshed(t *testing.T, ui *App, within time.Duration) {
 	t.Helper()
@@ -150,6 +150,46 @@ func TestEnqueueUIEventDirect_WaitersCapped(t *testing.T) {
 	}
 	if got := ui.uiEventDrops.Load(); got != before+1 {
 		t.Fatalf("uiEventDrops = %d, want %d", got, before+1)
+	}
+}
+
+func TestEnqueueUIEventDirect_WaiterAbortsAtShutdown(t *testing.T) {
+	ui := New("test")
+	done := make(chan struct{})
+	ui.bgDone = done
+	for i := 0; i < uiMaxDirectFallbacks; i++ {
+		ui.fallbackSem <- struct{}{}
+	}
+
+	ran := make(chan struct{})
+	// Saturated: the event goes to a waiter goroutine blocked on
+	// fallbackSem.
+	ui.enqueueUIEventDirect(false, func() { close(ran) })
+	if got := ui.uiEventFallbackSat.Load(); got != 1 {
+		t.Fatalf("uiEventFallbackSat = %d, want 1", got)
+	}
+
+	close(done)
+
+	// The waiter must abort without running the event and release its
+	// waiter token so the bounded pool is not leaked.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		select {
+		case <-ui.fallbackWaiters:
+		default:
+			if time.Now().After(deadline) {
+				t.Fatal("waiter token never released after shutdown")
+			}
+			time.Sleep(5 * time.Millisecond)
+			continue
+		}
+		break
+	}
+	select {
+	case <-ran:
+		t.Fatal("waiter ran the event after shutdown")
+	default:
 	}
 }
 

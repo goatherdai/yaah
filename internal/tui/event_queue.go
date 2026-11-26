@@ -167,8 +167,7 @@ func (t *App) enqueueUIEvent(draw bool, fn func(), critical bool) bool {
 
 	if ch == nil {
 		observability.RecordTUIQueueEvent(context.Background(), "direct", "fallback", -1)
-		t.enqueueUIEventDirect(draw, fn)
-		return true
+		return t.enqueueUIEventDirect(draw, fn)
 	}
 
 	eventType := "update"
@@ -201,14 +200,16 @@ func (t *App) enqueueUIEvent(draw bool, fn func(), critical bool) bool {
 	case <-timer.C:
 		t.uiEventFallbacks.Add(1)
 		observability.RecordTUIQueueEvent(context.Background(), eventType, "fallback", depth)
-		t.enqueueUIEventDirect(draw, fn)
-		return true
+		return t.enqueueUIEventDirect(draw, fn)
 	}
 }
 
 // enqueueUIEventDirect runs an event outside the managed queue. It is the
 // critical-path fallback when the queue is saturated, or the path before
-// Run() starts the consumer.
+// Run() starts the consumer. It reports whether the event was scheduled:
+// false means it was dropped (waiter pool full) or abandoned at shutdown,
+// so the caller — requestRefresh's coalescing flag — can recover instead
+// of treating the loss as a scheduled refresh.
 //
 // Runner concurrency is capped by uiMaxDirectFallbacks. When the cap is
 // held, the event still runs: a runner goroutine waits for a slot —
@@ -219,7 +220,7 @@ func (t *App) enqueueUIEvent(draw bool, fn func(), critical bool) bool {
 // (TestHandleEvent_DoesNotBlock). uiMaxDirectWaiters bounds the runner
 // pileup when the UI thread stops servicing work; beyond it events are
 // dropped and counted.
-func (t *App) enqueueUIEventDirect(draw bool, fn func()) {
+func (t *App) enqueueUIEventDirect(draw bool, fn func()) bool {
 	t.bgMu.Lock()
 	done := t.bgDone
 	t.bgMu.Unlock()
@@ -238,7 +239,7 @@ func (t *App) enqueueUIEventDirect(draw bool, fn func()) {
 		default:
 			t.uiEventDrops.Add(1)
 			observability.RecordTUIQueueEvent(context.Background(), "direct", "dropped", -1)
-			return
+			return false
 		}
 	}
 
@@ -271,6 +272,7 @@ func (t *App) enqueueUIEventDirect(draw bool, fn func()) {
 			t.App.QueueUpdate(fn)
 		}
 	}()
+	return true
 }
 
 func (t *App) uiQueueDepth() int {
