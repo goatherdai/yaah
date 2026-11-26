@@ -50,6 +50,13 @@ jobs:
         run: go test -shuffle=on ./...
         env:
           CGO_ENABLED: '0'
+          # Hosted runners are several times slower than a laptop under
+          # load; the TUI render gate measures wall-clock budgets over
+          # ~5MB of wrap and paint work, so scale them here rather than
+          # let runner variance redden CI without a regression. The
+          # invariant assertions (append path, transcript contents) stay
+          # absolute. See internal/tui/render_gate_test.go.
+          YAAH_TEST_RENDER_BUDGET: '3'
 
       - name: build
         run: go build -trimpath -ldflags '-s -w' -o yaah .

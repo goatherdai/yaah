@@ -107,6 +107,13 @@ func TestRefreshMessages_SessionScaleRenderBudget(t *testing.T) {
 	}
 	isolateRenderLog(t)
 	ui := New("test")
+	// Install an undrained queue: mutators' markDirty enqueues exactly one
+	// event (the flags then stay set, so nothing more is enqueued) instead
+	// of spawning direct-fallback goroutines that would block forever on
+	// an app that never runs. Every refresh in this test is driven
+	// directly, on the test goroutine.
+	ui.bgDone = make(chan struct{})
+	ui.uiEventCh = make(chan uiEvent, 512)
 	sim := setupSim(t, ui)
 
 	buildStart := time.Now()
@@ -180,8 +187,17 @@ func TestInputEchoDuringRenderStorm(t *testing.T) {
 	})
 
 	ui.App.SetScreen(sim)
-	go ui.App.Run()
-	defer ui.App.Stop()
+	runErr := make(chan error, 1)
+	go func() { runErr <- ui.App.Run() }()
+	// Cleanup order matters: this runs before setupSim's sim.Fini
+	// (cleanups are LIFO), so the loop is stopped and awaited before the
+	// screen underneath it is finalized.
+	t.Cleanup(func() {
+		ui.App.Stop()
+		if err := <-runErr; err != nil {
+			t.Errorf("event loop: %v", err)
+		}
+	})
 
 	// Queue the storm the way live events do: full renders handed to the
 	// tview event queue while keystrokes arrive, so echo latency is
@@ -238,6 +254,10 @@ func BenchmarkRefreshMessages_SessionScale(b *testing.B) {
 	}
 	isolateRenderLog(b)
 	ui := New("test")
+	// Undrained queue, as in the budget test: no direct-fallback
+	// goroutines blocked on an app that never runs.
+	ui.bgDone = make(chan struct{})
+	ui.uiEventCh = make(chan uiEvent, 512)
 	sim := setupSim(b, ui)
 	growSession(b, ui, 175)
 

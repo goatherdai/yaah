@@ -6,8 +6,50 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
+
+// waitForLog polls for the diagnostics file to hold want: the write is
+// asynchronous (it must not block the tview event-loop goroutine), so the
+// tests wait briefly instead of racing it.
+func waitForLog(t *testing.T, path, want string) []byte {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		data, err := os.ReadFile(path)
+		if err == nil && strings.Contains(string(data), want) {
+			return data
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				t.Fatalf("diagnostics file not written: %v", err)
+			}
+			t.Fatalf("diagnostics file missing %q after 2s: %q", want, string(data))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// syncWriter is a goroutine-safe io.Writer for capturing log output from
+// the slowLogger's asynchronous write goroutine.
+type syncWriter struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (w *syncWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
+}
+
+func (w *syncWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
 
 // TestSlowLoggerWritesToYaahHome pins the diagnostics path: slow-render
 // lines land in the yaah home directory, not on stderr, which the TUI
@@ -21,16 +63,31 @@ func TestSlowLoggerWritesToYaahHome(t *testing.T) {
 	l.printf("SLOW test %d", 42)
 	l.printf("SLOW test %d", 43)
 
-	data, err := os.ReadFile(filepath.Join(home, slowLogName))
-	if err != nil {
-		t.Fatalf("read diagnostics file: %v", err)
-	}
+	path := filepath.Join(home, slowLogName)
+	data := waitForLog(t, path, "SLOW test 43")
 	if got := strings.Count(string(data), "SLOW test"); got != 2 {
 		t.Fatalf("diagnostics file has %d SLOW lines, want 2: %q", got, string(data))
 	}
-	if !strings.Contains(string(data), "SLOW test 42") || !strings.Contains(string(data), "SLOW test 43") {
-		t.Errorf("diagnostics file missing entries: %q", string(data))
+	if !strings.Contains(string(data), "SLOW test 42") {
+		t.Errorf("diagnostics file missing the first entry: %q", string(data))
 	}
+}
+
+// TestSlowRenderWiring pins the wiring in refreshMessages: a slow refresh
+// records a SLOW line in the diagnostics file. The threshold var makes the
+// trigger deterministic instead of depending on wall-clock luck.
+func TestSlowRenderWiring(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("YAAH_HOME", home)
+	old := slowRenderThreshold
+	slowRenderThreshold = 0
+	t.Cleanup(func() { slowRenderThreshold = old })
+
+	ui := New("test")
+	ui.appendMessage("wiring check")
+	ui.refreshMessages()
+
+	waitForLog(t, filepath.Join(home, slowLogName), "SLOW refreshMessages")
 }
 
 // TestSlowLoggerCreatesMissingHome verifies the first-run path: a yaah home
@@ -43,9 +100,7 @@ func TestSlowLoggerCreatesMissingHome(t *testing.T) {
 	var l slowLogger
 	l.printf("SLOW first run")
 
-	if _, err := os.Stat(filepath.Join(home, slowLogName)); err != nil {
-		t.Fatalf("diagnostics file not created in a missing home: %v", err)
-	}
+	waitForLog(t, filepath.Join(home, slowLogName), "SLOW first run")
 }
 
 // TestSlowLoggerFallsBackToLog verifies the fallback: when the diagnostics
@@ -60,15 +115,19 @@ func TestSlowLoggerFallsBackToLog(t *testing.T) {
 	}
 	t.Setenv("YAAH_HOME", blocker)
 
-	var buf bytes.Buffer
-	log.SetOutput(&buf)
+	captured := &syncWriter{}
+	log.SetOutput(captured)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
 	var l slowLogger
 	l.printf("SLOW fallback %d", 7)
 
-	if !strings.Contains(buf.String(), "SLOW fallback 7") {
-		t.Errorf("fallback did not reach the log package; output: %q", buf.String())
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(captured.String(), "SLOW fallback 7") {
+		if time.Now().After(deadline) {
+			t.Fatalf("fallback did not reach the log package; output: %q", captured.String())
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -88,14 +147,8 @@ func TestSlowLoggerTruncatesWhenLarge(t *testing.T) {
 	var l slowLogger
 	l.printf("SLOW fresh %d", 1)
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read diagnostics file: %v", err)
-	}
+	data := waitForLog(t, path, "SLOW fresh 1")
 	if int64(len(data)) > slowLogMaxBytes {
 		t.Fatalf("file still oversized after write: %d bytes", len(data))
-	}
-	if !strings.Contains(string(data), "SLOW fresh 1") {
-		t.Errorf("fresh entry missing after truncate: %d bytes", len(data))
 	}
 }

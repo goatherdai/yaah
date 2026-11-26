@@ -180,6 +180,7 @@ func (t *App) refreshMessages() {
 			attribute.Int("items", n),
 			attribute.Int("msg_bytes", msgLen),
 			attribute.Bool("appended", appended),
+			attribute.Bool("full_render", !appended),
 			attribute.Int("full_renders", t.fullRenderCount),
 			attribute.Int64("dur_total_us", totalDur.Microseconds()),
 			attribute.Int64("dur_format_us", formatDur.Microseconds()),
@@ -192,7 +193,7 @@ func (t *App) refreshMessages() {
 	span.End()
 	observability.RecordTUIRefresh(context.Background(), totalDur, cadence, queueDepth)
 
-	if totalDur > 50*time.Millisecond {
+	if totalDur > slowRenderThreshold {
 		t.slowLog.printf("SLOW refreshMessages: %d items, %d bytes, appended=%v total=%v format=%v write=%v",
 			n, msgLen, appended, totalDur, formatDur, writeDur)
 	}
