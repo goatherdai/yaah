@@ -58,6 +58,11 @@ type retainedProposalMeta struct {
 	// it is frequently the only surviving copy, because a digest-failure
 	// artifact records no workspace state at all). Every envelope prefers the
 	// live state and falls back to this when the state is gone.
+	//
+	// It carries the caller's spelling of the ref it came from in Ref when the
+	// dispatch named one — the one place that spelling is persisted, which is
+	// what lets show, list and settlement report a requested basis as requested
+	// (see proposalBasisRecord.Ref).
 	Basis *proposalBasisRecord `json:"basis,omitempty"`
 }
 
@@ -101,11 +106,27 @@ func proposalSealOptions(meta retainedProposalMeta, transcriptID string) (goathe
 	// record (retainedProposalMeta.Basis), not here: anything added to
 	// SubAgentParams and silently stripped would leave the durable record
 	// claiming a basis the dispatch never used (yaah-witj increment A).
+	//
+	// BaseRef is still stripped from these params, and the reason is NOT the
+	// one this comment used to give. It is stripped because Params is a LIVE
+	// TEMPLATE, not a record: a continuation copies it wholesale
+	// (ContinueRetainedRun), so a ref name left here would be RE-RESOLVED against
+	// a repository that has moved — the phantom-drift class yaah-9m0c closed,
+	// reintroduced as a seed instruction.
+	//
+	// The spelling is instead persisted on Basis above, beside the commit and
+	// tree it resolved to at dispatch time, where it is a historical record and
+	// never an instruction. Dropping it from the durable record altogether
+	// would be the opposite mistake, and was: an envelope that names a basis
+	// without the ref it was seeded from left a reader to interpret a REQUESTED
+	// basis as unexplained drift — the reading the tool docs promise against
+	// (PR #428 review finding 1).
 	params := meta.Params
 	params.SeedMessages = nil
 	params.Workdir = ""
 	params.SeedFrom = ""
 	params.SeedMode = ""
+	params.BaseRef = ""
 	meta.Params = params
 
 	opts := goatherd.SealOptions{

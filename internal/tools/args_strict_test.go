@@ -34,9 +34,10 @@ func TestDelegate_RejectsUnknownArguments(t *testing.T) {
 				t.Errorf("unknown arguments = %v, want [%s]", unknown.Arguments, tc.key)
 			}
 			wantAllowed := []string{
-				"background", "description", "json_mode", "max_iterations",
-				"max_turns", "model", "output_limit", "prompt", "provider",
-				"role", "seed_from", "seed_mode", "supervise", "timeout_seconds",
+				"background", "base_ref", "description", "json_mode",
+				"max_iterations", "max_turns", "model", "output_limit", "prompt",
+				"provider", "role", "seed_from", "seed_mode", "supervise",
+				"timeout_seconds",
 			}
 			if len(unknown.Allowed) != len(wantAllowed) {
 				t.Fatalf("allowed keys = %v, want all %d", unknown.Allowed, len(wantAllowed))

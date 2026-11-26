@@ -67,6 +67,13 @@ From `retained.md` (injected when the retained lane is live):
   `delegate(seed_from: <proposal_id>)` seeds a fresh clone from that proposal's
   sealed workspace (its own role/prompt/toolset), and `seed_mode: conversation`
   also carries the captured messages for the same role. The source stays open.
+- A new dispatch can also start from a ref instead of the working tree:
+  `delegate(base_ref: <branch|tag|commit>)` seeds the worktree at that commit,
+  resolved in the parent repository (an unfetched remote-tracking ref is
+  refused — a dispatch cannot fetch). Its delta is measured against that
+  commit, so the proposal settles with `apply`; `select` fails closed against a
+  basis that is not the parent's HEAD. Combining it with `seed_from` or
+  `seed_mode` is refused.
 - Worktree proposals are durable: their result and transcript survive a restart,
   so a resumed session can still list, settle, and continue them.
 - The dispatch envelope names `world` (`worktree` or `container`); a

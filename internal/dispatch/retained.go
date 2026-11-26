@@ -238,6 +238,24 @@ type proposalEnvelope struct {
 	BasisHead    string `json:"basis_head,omitempty"`
 	BasisTree    string `json:"basis_tree,omitempty"`
 	BasisBackend string `json:"basis_backend,omitempty"`
+	// BaseRef is the caller's own spelling of the ref the basis came from,
+	// present when this dispatch was seeded at a ref it named (yaah-witj
+	// increment B): `"side"`, whose commit is basis_head. Without it a reader
+	// sees a basis that differs from the repository's HEAD and has no way to
+	// know the difference was requested — the divergence warning is
+	// deliberately suppressed for a named ref, because the mismatch IS the
+	// point. Absent means the basis came from the parent's workspace or from
+	// seed_from.
+	//
+	// It is persisted on the durable basis record
+	// (retainedProposalMeta.Basis → proposalBasisRecord.Ref) and stamped by
+	// setBasis wherever the basis is stamped — the dispatch, show, list and
+	// every settlement envelope — because a spelling that only survived as far
+	// as the dispatch response left a later reader to read a requested basis as
+	// unexplained drift (PR #428 review finding 1). It is a RECORD of the
+	// request, never a live lookup: nothing re-resolves it, so a ref that has
+	// since moved cannot change what it says.
+	BaseRef string `json:"base_ref,omitempty"`
 	// Strategy records the apply strategy used by a settlement.
 	Strategy string `json:"strategy,omitempty"`
 	// StopReason is why a dispatch/continuation run ended: completed,
@@ -404,6 +422,12 @@ type retainedProposal struct {
 	// It never substitutes for the state where the state is used to VERIFY
 	// anything: an unverified basis fails select closed.
 	sealBasisRecord *proposalBasisRecord
+	// basisRef is the caller's spelling of the ref this proposal's basis came
+	// from, when the dispatch named one. The live state cannot answer it (a
+	// kernel capture holds no request), and most in-session proposals have no
+	// sealBasisRecord to read it from either, so it is carried here and merged
+	// into every dispatchBasisRecord (see proposalBasisRecord.Ref).
+	basisRef string
 	// authorityPlanDigest is the compiled permission plan the world that
 	// produced this proposal enforced — the seal fact's citation, carried so
 	// settlement can record the declaration it is the commit-time monitor for.
@@ -574,6 +598,11 @@ type proposalSummary struct {
 	BasisHead    string `json:"basis_head,omitempty"`
 	BasisTree    string `json:"basis_tree,omitempty"`
 	BasisBackend string `json:"basis_backend,omitempty"`
+	// BaseRef is the caller's spelling of the ref that basis came from, on the
+	// same terms as the envelope's field of the same name: a list entry that
+	// names a basis without naming the ref it was seeded from leaves the same
+	// unexplained-drift reading as a dispatch response would.
+	BaseRef string `json:"base_ref,omitempty"`
 }
 
 // proposalListEnvelope is the JSON a `list` action answers with: the same
@@ -902,6 +931,16 @@ func startRetainedRun(
 			}
 			// The session container is the predecessor world in the ladder;
 			// a report seals nothing, so it can run there unretained.
+			//
+			// A caller-named basis is the exception, and it is refused rather
+			// than degraded: that fallback runs the body on the SESSION's tree,
+			// so a dispatch that asked to start at `base_ref` would silently
+			// read a different commit — the class of silent substitution
+			// increment A exists to prevent (a caller-named basis must never
+			// degrade to a different tree without the caller knowing).
+			if subParams.BaseRef != "" {
+				return retainedRunResult{}, fmt.Errorf("delegate: base_ref %q cannot be honoured: no world is available to seed it in (the container world is unavailable and the session-container fallback would run this dispatch on the session's tree, not at the named ref); dispatch with a world that can be seeded, or omit base_ref: %w", subParams.BaseRef, werr)
+			}
 			return sessionContainerFallback(base, rt, prompt, subParams, remaining, requestedKind, werr.Error())
 		}
 		return retainedRunResult{}, fmt.Errorf("delegate: %w", werr)
@@ -918,6 +957,13 @@ func startRetainedRun(
 		if worldRes.Resolved == subagent.WorldContainer {
 			return retainedRunResult{}, fmt.Errorf("delegate: seed_from is worktree-lane only; the container lane ends its world at seal")
 		}
+	}
+
+	// A caller-named basis (base_ref) is worktree-lane only; the rule and its
+	// rationale live in baseRefWorldRefusal, which is pure so a table can pin it
+	// across every world a resolution can produce.
+	if reason := baseRefWorldRefusal(subParams.BaseRef, worldRes.Resolved); reason != "" {
+		return retainedRunResult{}, fmt.Errorf("delegate: %s", reason)
 	}
 
 	// A container world serves both lanes. A report never seals, so the
@@ -1017,13 +1063,31 @@ func startRetainedRun(
 		return retainedRunResult{Stage: RetainedStageRefused}, fmt.Errorf("delegate: %w", digestErr)
 	}
 
-	// The basis: the parent's workspace at dispatch, or — for retained-result
-	// threading — the source proposal's sealed workspace as the seed and its
-	// recorded basis as the delta base. The proposal's delta is everything
-	// the sub-agent changes relative to that basis; for threading it is
-	// therefore cumulative (the source's work plus this run's edits). A
-	// container report dispatch never needs it — it returns above, before the
-	// copy-in.
+	// The proposal's delta is everything the sub-agent changes relative to the
+	// basis; for a threaded dispatch it is therefore cumulative (the source's
+	// work plus this run's edits). A container report dispatch never needs it —
+	// it returns above, before the copy-in.
+	//
+	// The basis has exactly THREE sources, and they are mutually exclusive:
+	//
+	//   1. seed_from — a retained proposal's sealed workspace. The child starts
+	//      from that proposal's work and its delta is measured against that
+	//      proposal's recorded basis, which is what keeps a cumulative delta
+	//      stable across host drift (yaah-9m0c).
+	//   2. base_ref — a ref the caller named, resolved in the PARENT's
+	//      repository. The child starts at that commit and is measured against
+	//      it.
+	//   3. neither — the parent's workspace captured at dispatch: the default,
+	//      where seed and basis are the same capture.
+	//
+	// Exclusive by construction, not by priority. api.go refuses seed_from +
+	// base_ref and base_ref + seed_mode before a world is resolved, and it is
+	// the single enforcement point for every production caller (Run);
+	// StartRetainedRun is a test-only adapter. The switch below therefore is not
+	// a precedence order. That guarantee would be lost silently if a future
+	// in-package caller reached this function directly, so the exclusive claim
+	// is ALSO asserted here, right where the arms select — defence in depth for
+	// an invariant the docs and this comment assert.
 	var forkSeed threadSeed
 	var seedMessages []types.Message
 	// basisWarnings carries the dispatch-basis caveats this dispatch recorded,
@@ -1032,13 +1096,45 @@ func startRetainedRun(
 	// takes (both empty when the basis and the repo agree).
 	var basisWarnings []string
 	var basisDivergenceFact map[string]any
-	if subParams.SeedFrom != "" {
+	switch {
+	case subParams.SeedFrom != "" && subParams.BaseRef != "":
+		// Unreachable through Run (api.go refuses the pair first). A caller that
+		// arrives here has skipped that gate, and the silent outcome would be
+		// that the seed_from arm wins and the base_ref the caller asked for is
+		// dropped without a word — so it is refused instead.
+		return retainedRunResult{Stage: RetainedStageRefused}, fmt.Errorf("delegate: seed_from %q and base_ref %q both name a basis for this dispatch; pass one — seed_from continues a proposal's sealed work, base_ref starts from a ref", subParams.SeedFrom, subParams.BaseRef)
+	case subParams.SeedFrom != "":
 		fs, serr := resolveThreadSeed(rt, subParams.SeedFrom, subParams.SeedMode, subParams.Role)
 		if serr != nil {
 			return retainedRunResult{Stage: RetainedStageRefused}, fmt.Errorf("delegate: %w", serr)
 		}
 		forkSeed, seedMessages = fs, fs.messages
-	} else {
+	case subParams.BaseRef != "":
+		// A caller-named basis (yaah-witj increment B): the ref is resolved in
+		// the PARENT's repository BEFORE the worktree exists, then synthesized
+		// into the workspace state the fork applies. Routing it through
+		// freshForkSeed is what makes the seed and the baseline the same state,
+		// so the recorded basis describes this child's fork point.
+		commit, rerr := resolveBaseRef(ctx, rt.RepoPath, subParams.BaseRef)
+		if rerr != nil {
+			// A ref that does not resolve is as permanent as a seed_from
+			// naming no proposal: re-running the same dispatch resolves the
+			// same name to the same nothing.
+			return retainedRunResult{Stage: RetainedStageRefused}, fmt.Errorf("delegate: %w", rerr)
+		}
+		forkSeed = freshForkSeed(commit.workspaceState())
+		// The resolved commit and tree are the basis; the spelling the
+		// caller used rides WITH them, so every envelope that names the basis
+		// (this one, show, list, settlement) can also say the basis was
+		// requested rather than drifted (see proposalBasisRecord.Ref).
+		forkSeed.ref = commit.Ref
+		// No basis-divergence warning here on purpose: the basis is
+		// DELIBERATELY not the repository's HEAD, so the check would fire on
+		// every base_ref dispatch and tell the reader nothing. That warning
+		// exists to catch an ACCIDENTAL basis/HEAD mismatch (increment A); a
+		// named ref is not one, exactly as a threaded dispatch's source basis
+		// is not.
+	default:
 		// The basis is the first provisioning work the worktree lane does: from
 		// here a failure leaves nothing to retry against less than a partially
 		// created world.
@@ -1074,6 +1170,8 @@ func startRetainedRun(
 
 	scopeID, provErr := provisionRetainedBranch(ctx, rt, id, wt, forkSeed)
 	env := proposalEnvelope{ProposalID: id, Next: proposalVerbs(), World: string(worldRes.Resolved)}
+	// One stamp for both halves of the basis — the resolved state and the
+	// caller's spelling of the ref it came from (see setBasis).
 	env.setBasis(forkSeed.resolvedBasisRecord())
 	addDispatchWarnings(&env, worldRes, basisWarnings)
 	if scopeID == "" {
@@ -1081,7 +1179,13 @@ func startRetainedRun(
 		// the session container — the world that preserves the report's
 		// authority — rather than returning an empty error envelope (yaah-apjo).
 		// Its result is mutable, so the retry policy treats it as final.
-		if report && sessionContainerFallbackAllowed(rt, subParams.Role) {
+		//
+		// NOT for a caller-named basis: the session container is the session's
+		// tree, so this fallback would run the body on a tree the caller did not
+		// name. The dispatch fails instead, and the envelope says why the
+		// fallback was declined — a refusal the caller can act on, where a
+		// silent different tree is one it cannot even see.
+		if subParams.BaseRef == "" && report && sessionContainerFallbackAllowed(rt, subParams.Role) {
 			return sessionContainerFallback(base, rt, prompt, subParams, remaining, worldRes.Requested, provErr.Error())
 		}
 		// Nothing ran and nothing was sealed: report, register nothing. The
@@ -1089,6 +1193,9 @@ func startRetainedRun(
 		// proposal lane has — and it carries no error value to say so.
 		env.Status = "error"
 		env.Error = provErr.Error()
+		if subParams.BaseRef != "" && report && sessionContainerFallbackAllowed(rt, subParams.Role) {
+			env.AddWarning(fmt.Sprintf("the session-container fallback was declined: it would have run this dispatch on the session's tree instead of at base_ref %q", subParams.BaseRef))
+		}
 		return retainedRunResult{Proposal: &env, Stage: RetainedStageProvisioning}, nil
 	}
 	recordWorldFact(ctx, mgr, scopeID, worldRes)
@@ -1390,6 +1497,7 @@ func startRetainedRun(
 		// worktree settle fact names the plan this world enforced rather than
 		// re-deriving it from config that may have moved since.
 		authorityPlanDigest: planDigest,
+		basisRef:            forkSeed.ref,
 	}
 	rt.Proposals.add(proposal)
 	rt.Proposals.recordSealConflictFacts(ctx, proposal)
@@ -1416,6 +1524,13 @@ type threadSeed struct {
 	seed       kerneltrace.WorkspaceState
 	baseline   kerneltrace.WorkspaceState
 	messages   []types.Message
+	// ref is the caller's own spelling of the ref this seed's basis was
+	// resolved from — set when the dispatch named one with base_ref, or
+	// inherited from a source proposal that did. It rides beside the states so
+	// the basis record every consumer of this seed stamps can name the request
+	// that produced the basis, not just the commit it resolved to (see
+	// proposalBasisRecord.Ref).
+	ref string
 }
 
 // resolveThreadSeed resolves a source proposal for retained-result threading:
@@ -1449,6 +1564,13 @@ func resolveThreadSeed(rt RetainedRuntime, sourceID, seedMode, newRole string) (
 	// every reported basis actually use (yaah-9m0c, yaah-witj increment A1).
 	if baseline := src.output.Baseline(); baseline.Backend != "" {
 		ts.baseline = baseline
+	}
+	// The basis's provenance travels with the basis: a source seeded at a named
+	// ref yields a continuation (or a seed_from dispatch) measured against that
+	// ref's commit, and an envelope naming the commit without the ref reads as
+	// drift exactly as the original's would (see proposalBasisRecord.Ref).
+	if rec := src.dispatchBasisRecord(); rec != nil {
+		ts.ref = rec.Ref
 	}
 	switch seedMode {
 	case "", jobs.SeedModeWorkspace:
@@ -1585,11 +1707,17 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	if p.failedSeal != nil {
 		// A failed seal has no output; its runtime artifact carries the same
 		// workspace, baseline and verified transcript a sealed output would.
+		// The basis's provenance comes from the artifact's record, since
+		// resolveThreadSeed (the branch below) is not on this path and the
+		// request fields on sp are cleared a few lines down.
 		seed = threadSeed{
 			failedSeal: p.failedSeal,
 			seed:       p.failedSeal.Workspace,
 			baseline:   p.failedSeal.Baseline,
 			messages:   p.transcript,
+		}
+		if rec := p.dispatchBasisRecord(); rec != nil {
+			seed.ref = rec.Ref
 		}
 		// The artifact's baseline is recorded as it stands, zero included. The
 		// fork resolves a missing one to the artifact's own workspace
@@ -1630,8 +1758,15 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	// A continuation seeds from the original itself, not from whatever that
 	// proposal was originally threaded from; clear the thread fields so a
 	// continuation of a threaded proposal cannot re-resolve an older source.
+	// BaseRef is cleared for the same reason (yaah-witj increment B): a ref
+	// name here would be resolved AGAIN, against a repository that may have
+	// moved, and the seed would come from a different commit than the basis
+	// this continuation is measured against. The basis — and the spelling it
+	// reports — comes from the source's recorded basis (seed.ref), never from
+	// re-reading the name.
 	sp.SeedFrom = ""
 	sp.SeedMode = ""
+	sp.BaseRef = ""
 	sp.SeedMessages = seed.messages
 	sp.MaxToolTurns = extraTurns
 	if strings.TrimSpace(prompt) == "" {
@@ -1834,6 +1969,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		// Same citation as the seal: settlement records the declaration the
 		// continuation's world enforced.
 		authorityPlanDigest: planDigest,
+		basisRef:            seed.ref,
 	}
 	rt.Proposals.add(cont)
 	rt.Proposals.recordSealConflictFacts(ctx, cont)

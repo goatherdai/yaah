@@ -13,6 +13,15 @@ import (
 // human-facing restatement.
 const superviseParamDescription = "Optional per-dispatch supervision override. Under supervision a dispatch that WOULD run on the shared workspace, and whose role can change it, is upgraded to the isolated report lane, so its work can be reverted by construction; role routing already isolates a mutating dispatch, so in practice the upgrade covers a non-standard lane source, while a dispatch that owns an isolated workspace and whose pre-run snapshot cannot be captured fails instead of running unrevertable. A read-only role keeps the shared lane, and a dispatch whose scope has no workspace of its own starts with Reversible false (only supervisor.require_reversible refuses it). false keeps the lane the role's routing chose; true requires the session itself to be supervised. Omitted follows the session."
 
+// baseRefParamDescription is the "base_ref" parameter's schema text. One const,
+// two consumers: both schema builders embed it verbatim, so the two cannot
+// drift — the same reason superviseParamDescription exists. The builders were
+// byte-for-byte duplicates of every property, and adding a parameter to only
+// one produced an environment-dependent divergence (the inline literal serves a
+// tool with no role names, i.e. an unconfigured surface) that nothing covered.
+// internal/prompts/tools/delegate.md carries the human-facing restatement.
+const baseRefParamDescription = "Optional ref (branch, tag or commit) to seed this dispatch's world from, resolved in the PARENT repository before the worktree exists, instead of the parent's workspace at dispatch time. The dispatch starts at that commit and its delta is measured against it. An alternative basis source to seed_from, never a modifier of it: passing both is refused. Worktree lane only (proposal or report). A base_ref proposal settles with apply, because select fails closed against a basis that is not the parent's HEAD; apply lands when the parent's current content on the proposal's own paths still matches that basis (a content comparison, not a commit-time one), so a basis behind HEAD, or divergence that predates the dispatch, can be refused as a path overlap — correctly. A ref carries no uncommitted state. A ref that is not already present locally cannot be used — a dispatch cannot fetch."
+
 func (t *DelegateTool) Schema() json.RawMessage {
 	known := t.roleNames()
 	if len(known) > 0 {
@@ -32,6 +41,7 @@ func (t *DelegateTool) Schema() json.RawMessage {
 			"background": {"type": "boolean", "description": "When true, dispatch the sub-agent asynchronously and return immediately. Results arrive in a follow-up message. Returns a job_id you can use with subagent_jobs to check status, cancel, or wait."},
 			"seed_from": {"type": "string", "description": "Optional retained proposal id whose sealed workspace seeds this dispatch (retained-result threading); the source proposal stays open. Proposal-lane only."},
 			"seed_mode": {"type": "string", "enum": ["workspace", "conversation"], "description": "seed_from only: workspace (default) seeds the sealed worktree state; conversation also seeds the captured messages and is same-role only."},
+			"base_ref": {"type": "string", "description": "` + baseRefParamDescription + `"},
 			"provider": {"type": "string", "description": "Optional provider override for this dispatch (must be a configured provider name). Prefer omitting — the role file or config decides. Omitted falls back to the role's resolution chain."},
 			"model": {"type": "string", "description": "Optional model override for this dispatch. Omitted falls back to the role's resolution chain (call > config role entry > role file > parent session model > config default)."},
 			"supervise": {"type": "boolean", "description": "` + superviseParamDescription + `"}
@@ -170,6 +180,10 @@ func BuildDelegateSchemaFiltered(roleNames []string, roleDescriptions map[string
 				"type":        "string",
 				"enum":        []string{"workspace", "conversation"},
 				"description": "seed_from only: workspace (default) seeds the sealed worktree state; conversation also seeds the captured messages and is same-role only.",
+			},
+			"base_ref": map[string]any{
+				"type":        "string",
+				"description": baseRefParamDescription,
 			},
 			"provider": map[string]any{
 				"type":        "string",

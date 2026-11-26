@@ -32,6 +32,29 @@ type proposalBasisRecord struct {
 	Backend string `json:"backend,omitempty"`
 	Head    string `json:"head,omitempty"`
 	Tree    string `json:"tree,omitempty"`
+	// Ref is the caller's own spelling of the ref this basis was seeded from,
+	// recorded only when a dispatch named one with `base_ref` (yaah-witj
+	// increment B). It sits BESIDE the resolved Head and Tree rather than
+	// instead of them: Head and Tree are what anything is verified against,
+	// while Ref is the historical record of what was ASKED for.
+	//
+	// It is persisted deliberately, and this is the decision a previous version
+	// of this code reversed. That version stripped the ref from the durable
+	// record on the grounds that it is request state and what it names moves —
+	// true, and beside the point: what it names moving is exactly why an
+	// envelope needs it. Without the spelling a reader sees basis_head that
+	// differs from the repository's HEAD and nothing saying the difference was
+	// REQUESTED, so a caller-named basis reads as unexplained drift. "The
+	// caller asked for origin/feature-x" does not go stale when the ref moves;
+	// re-resolving the name would, which is why nothing here ever re-resolves
+	// it.
+	//
+	// It lives on the basis record rather than in a field of its own so the two
+	// cannot be persisted in different places: every surface that names the
+	// basis names the request with it (setBasis stamps both), which is what
+	// keeps `proposal show`, `list` and the settlement envelopes from promising
+	// less than the tool docs say they carry.
+	Ref string `json:"ref,omitempty"`
 }
 
 // basisRecord renders one workspace state as a durable record. A zero state has
@@ -45,20 +68,33 @@ func basisRecord(state kerneltrace.WorkspaceState) *proposalBasisRecord {
 	if rec.Head == "" {
 		// Revision is the git HEAD SHA for a git state; a hand-built state may
 		// carry only the data field.
-		rec.Head, _ = state.Data["head_sha"].(string)
+		rec.Head, _ = state.Data[workspaceStateHeadKey].(string)
 	}
-	rec.Tree, _ = state.Data["tree_sha"].(string)
+	rec.Tree, _ = state.Data[workspaceStateTreeKey].(string)
 	return rec
 }
 
 // resolvedBasisRecord is the durable record of the state this fork's delta is
-// measured against — the resolved baseline, not the requested one.
+// measured against — the resolved baseline, not the requested one — carrying
+// the caller's spelling of the ref it came from when the fork was seeded from
+// one (see proposalBasisRecord.Ref).
+//
+// The spelling is stamped only when a basis exists at all: a ref with no
+// recorded basis would put `base_ref` on an envelope with no `basis_head`, and
+// the documented reading of the field is "a branch or tag name whose commit is
+// basis_head" — a pairing, not a lone name.
 func (s threadSeed) resolvedBasisRecord() *proposalBasisRecord {
-	return basisRecord(s.resolvedBaseline())
+	rec := basisRecord(s.resolvedBaseline())
+	if rec != nil {
+		rec.Ref = s.ref
+	}
+	return rec
 }
 
 // factFields renders the record as trace-fact keys. The settle facts use them so
-// the basis stays legible after the proposal's own record is consumed.
+// the basis stays legible after the proposal's own record is consumed — the
+// ref spelling included, because a settlement is the last envelope a reader
+// sees and an unexplained basis there is the same misreading one step later.
 func (r *proposalBasisRecord) factFields() map[string]any {
 	if r == nil {
 		return nil
@@ -69,6 +105,9 @@ func (r *proposalBasisRecord) factFields() map[string]any {
 	}
 	if r.Tree != "" {
 		fields["basis_tree"] = r.Tree
+	}
+	if r.Ref != "" {
+		fields["base_ref"] = r.Ref
 	}
 	return fields
 }
@@ -114,29 +153,50 @@ func (p *retainedProposal) dispatchBasisRecord() *proposalBasisRecord {
 		return nil
 	}
 	if state, ok := p.dispatchBasis(); ok {
-		return basisRecord(state)
+		rec := basisRecord(state)
+		// A live state says which commit and tree the work started from; it
+		// cannot say that the caller NAMED the ref those came from, because a
+		// kernel capture has no request in it. That half survives only in the
+		// record the seal wrote (retainedProposalMeta.Basis), so the spelling is
+		// carried over rather than left to a live-state-wins rule that would
+		// silently drop it for every in-session proposal.
+		if rec != nil {
+			rec.Ref = p.basisRef
+			if rec.Ref == "" && p.sealBasisRecord != nil {
+				rec.Ref = p.sealBasisRecord.Ref
+			}
+		}
+		return rec
 	}
 	return p.sealBasisRecord
 }
 
-// setBasis stamps the dispatch basis onto the envelope. Absent means none: a
-// proposal with no recorded basis leaves every basis field out of the JSON
-// rather than emitting them empty, so a reader can tell "not recorded" from
-// "recorded as empty".
+// setBasis stamps the dispatch basis onto the envelope, together with the
+// caller's spelling of the ref it was seeded from when one was named. Absent
+// means none: a proposal with no recorded basis leaves every basis field out of
+// the JSON rather than emitting them empty, so a reader can tell "not recorded"
+// from "recorded as empty".
+//
+// Both halves are stamped HERE, in one place, and every surface that names a
+// basis calls this: the dispatch envelope, show, list, the conflict response and
+// every settlement. Stamping the ref anywhere else is what let the tool docs
+// promise it on envelopes that never carried it (PR #428 review finding 1).
 func (e *proposalEnvelope) setBasis(rec *proposalBasisRecord) {
 	if rec == nil {
 		return
 	}
 	e.BasisBackend, e.BasisHead, e.BasisTree = rec.Backend, rec.Head, rec.Tree
+	e.BaseRef = rec.Ref
 }
 
 // setBasis stamps the dispatch basis onto one list summary, with the same
-// absent-means-none rule as the envelope.
+// absent-means-none rule (and the same ref spelling) as the envelope.
 func (s *proposalSummary) setBasis(rec *proposalBasisRecord) {
 	if rec == nil {
 		return
 	}
 	s.BasisBackend, s.BasisHead, s.BasisTree = rec.Backend, rec.Head, rec.Tree
+	s.BaseRef = rec.Ref
 }
 
 // basisDivergence reports that the repository the worktree will be created from
@@ -160,7 +220,7 @@ func basisDivergence(ctx context.Context, repoPath string, state kerneltrace.Wor
 	}
 	head := state.Revision
 	if head == "" {
-		head, _ = state.Data["head_sha"].(string)
+		head, _ = state.Data[workspaceStateHeadKey].(string)
 	}
 	if head == "" {
 		return "", nil

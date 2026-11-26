@@ -38,7 +38,7 @@ not claim it wholesale.
 | Kernel / record | `shepherd2` `abi.v0` | `goatherd-kernel v0.22.0`, golden vectors | **Shipped, exact** |
 | Retained runs / settlement | `workspace.run` + four settlement verbs | `delegate` + `proposal` verbs | **Shipped** |
 | Context continuation | not shipped (paper's fork/revert vision) | `proposal continue` / `proposal fork` over retained proposals | **Shipped, beyond reference**; `yaah-hxk3.6` |
-| Retained-result threading | not shipped (roadmap row) | `delegate(seed_from)` over retained proposals; worktree proposals survive restart | **Shipped, beyond reference**; `yaah-hxk3.7` |
+| Retained-result threading | not shipped (roadmap row) | `delegate(seed_from)` over retained proposals; `delegate(base_ref)` seeds at a caller-named ref; worktree proposals survive restart | **Shipped, beyond reference**; `yaah-hxk3.7` |
 | Dispatch worlds | `vcs-core` carriers | git worktree + croft container | **Shipped**; live container verification in `yaah-kit` |
 | Authority | Landlock / Seatbelt | Landlock / winacl / Seatbelt | **Shipped** |
 | Per-binding grants | `May[GitRepo, ReadOnly/ReadWrite]` | world-relative RW/RO config grants | **Shipped**, different surface |
@@ -629,6 +629,14 @@ sealed worktree state; `conversation` also carries the captured messages and is
 same-role only, so a different role's system prompt cannot leak in. Threading is
 worktree-lane only: a container world ends at seal.
 
+Increment B added the third basis source, `delegate(base_ref: <ref>)`: the ref
+is resolved in the parent repository and synthesized into the kernel workspace
+state the fork applies, so a dispatch starts at a commit the parent names rather
+than at whatever the parent's workspace held. It is an alternative to
+`seed_from`, never a modifier, and worktree-lane only (proposal or report
+world). `select` fast-forwards and therefore refuses it by design; `apply` is
+its settlement path.
+
 Worktree proposals are now durable in the substrate. At seal the conversation
 rides in the output's execution snapshot, the result/failure note/stop
 reason/params/session id in its metadata, and the review diff is retained by the
@@ -668,7 +676,9 @@ roles/budgets, same-role/seed-mode rules, conflict analysis, the tool surface):
   `RetainedOutput.Snapshot() / Metadata() / Diff()`.
 - Continuations and `seed_from` fork through `ForkFromOutput` with the source
   output's recorded baseline, so the delta is cumulative against the original
-  basis. Host commits or uncommitted sibling changes landing between the
+  basis. A `base_ref` dispatch instead forks through `ForkIsolated` with a
+  SYNTHESIZED workspace state (commit + tree), routed through `freshForkSeed` so
+  the seed and the baseline are the same state. Host commits or uncommitted sibling changes landing between the
   original dispatch and the re-run no longer appear as phantom
   deletions/reversions (`yaah-9m0c`).
 - Continuations record `derived_from` / `supersedes` natively (fork records

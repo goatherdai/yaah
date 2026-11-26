@@ -55,6 +55,18 @@ type SubAgentParams struct {
 	// otherwise be carried into the new loop).
 	SeedMode string
 
+	// BaseRef, when non-empty, names the ref (branch, tag or commit) the
+	// dispatch's world is seeded from in the PARENT's repository, instead of
+	// the parent's workspace captured at dispatch. It is an alternative basis
+	// source to SeedFrom, never a modifier of it: both set is refused.
+	// Worktree lane only, both proposal and report. A dispatch seeded at a
+	// non-HEAD basis settles via apply, because select fails closed against a
+	// basis whose commit is not the parent's HEAD.
+	//
+	// This is REQUEST state, not durable state: the resolved basis (the commit
+	// and tree it names) is what a seal persists, because a ref moves.
+	BaseRef string
+
 	// JSONMode enables structured JSON output for this sub-agent.
 	JSONMode bool
 

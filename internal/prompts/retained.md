@@ -12,7 +12,10 @@ it with the `proposal` tool:
 
 - `select` — fast-forward the proposal onto the dispatch basis. The worktree
   lane applies the sealed delta; the container lane writes its whole-path
-  post-images. It fails closed if the basis moved since the dispatch.
+  post-images. It fails closed if the basis moved since the dispatch, and a
+  dispatch seeded at a caller-named ref (`base_ref`) is always such a case:
+  its basis is deliberately not your HEAD, so `select` refuses it by design
+  and `apply` is the settlement path.
 - `apply` — path-disjoint integration onto a moved tree. It uses a three-way
   merge on the worktree lane and whole-path post-images on the container lane,
   and refuses if the parent changed any of the same paths. Pass
