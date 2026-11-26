@@ -1,0 +1,7 @@
+# Robin reviewer configuration for yaah.
+# Read from the PR base branch, not from PRs. See docs/ADVANCED.md in
+# https://github.com/antongulin/robin for every available key.
+
+# Release-please PRs are authored by the github-actions Bot and carry no
+# reviewable signal; skip all Bot authors. Human PRs and /robin are unaffected.
+bot-review-policy: none
