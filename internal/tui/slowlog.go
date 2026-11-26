@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/goatherdai/yaah/internal/atomicfile"
 	"github.com/goatherdai/yaah/internal/config"
 )
 
@@ -130,16 +131,18 @@ func (l *slowLogger) write(w slowWrite) {
 
 // open prepares the diagnostics file for one append: the home directory
 // is created if missing, and an oversized file is rotated aside so a
-// stall-heavy session cannot grow it without bound.
+// stall-heavy session cannot grow it without bound. The rotation is
+// best-effort — Windows can transiently refuse a rename while a scanner
+// holds the fresh file (the contention internal/atomicfile retries) — and
+// a failed rotation must not cost the diagnostic line: appending to the
+// oversized file is strictly better than losing the line.
 func (l *slowLogger) open(dir string) (*os.File, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
 	path := filepath.Join(dir, slowLogName)
 	if st, err := os.Stat(path); err == nil && st.Size() > slowLogMaxBytes {
-		if err := os.Rename(path, path+".1"); err != nil {
-			return nil, err
-		}
+		_ = atomicfile.Replace(path, path+".1")
 	}
 	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 }
