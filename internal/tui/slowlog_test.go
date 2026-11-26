@@ -80,7 +80,10 @@ func TestSlowRenderWiring(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("YAAH_HOME", home)
 	old := slowRenderThreshold
-	slowRenderThreshold = 0
+	// Negative: Go's monotonic clock on Windows has coarse granularity,
+	// so a microsecond-fast refresh can measure totalDur == 0 and a 0
+	// threshold would never fire. Below zero fires unconditionally.
+	slowRenderThreshold = -time.Millisecond
 	t.Cleanup(func() { slowRenderThreshold = old })
 
 	ui := New("test")
