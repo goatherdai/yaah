@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.220.3](https://github.com/goatherdai/yaah/compare/v0.220.2...v0.220.3) (2026-11-26)
+
+
+### CI / Build
+
+* **review:** pin Robin action to v2.13.5 via direct action step ([#435](https://github.com/goatherdai/yaah/issues/435)) ([66bae40](https://github.com/goatherdai/yaah/commit/66bae409f7b95fe18f41855f4a3775b4d15a340c))
+
 ## [0.220.2](https://github.com/goatherdai/yaah/compare/v0.220.1...v0.220.2) (2026-11-26)
 
 
