@@ -505,6 +505,16 @@ type proposalMeta struct {
 	// is persisted so a proposal rehydrated in a later process still cites the
 	// declaration it is being settled against, instead of a guess.
 	AuthorityPlanDigest string `json:"authority_plan_digest,omitempty"`
+	// Basis is the resolved host workspace state the manifest is measured
+	// against (yaah-witj increment A). basis.json holds the FULL state, and is
+	// what settlement verifies against — this directory refusing to rehydrate
+	// without a digest-verified basis is what keeps select fail-closed. The
+	// record is the legible identity of that same state: the backend and the
+	// commit/tree, small enough to read and to cite, and the answer an envelope
+	// falls back to when the state itself is no longer readable. The directory
+	// is removed on settlement, so the post-settlement record is the settle fact
+	// in the trace, which names the same basis.
+	Basis *proposalBasisRecord `json:"basis,omitempty"`
 }
 
 const (
@@ -593,6 +603,7 @@ func persistGitDelta(
 		RunErr:              runErr,
 		ManifestDigest:      digest,
 		AuthorityPlanDigest: authorityPlanDigest,
+		Basis:               basisRecord(basis),
 	}, "", "  ")
 	if err != nil {
 		return "", "", fmt.Errorf("marshal proposal meta: %w", err)
@@ -1114,6 +1125,11 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 	if sessionTarget && p.session == nil {
 		return Settlement{}, fmt.Errorf("proposal %s: session target has no live session container", p.id)
 	}
+	// The basis this settlement was decided against, read BEFORE the manifest is
+	// consumed with its artifact directory. The settle fact below is the only
+	// post-settlement record of it, so both the response and the fact read this
+	// one snapshot (yaah-witj increment A).
+	basisRec := p.dispatchBasisRecord()
 	env := proposalEnvelope{
 		Status:     "settled",
 		ProposalID: p.id,
@@ -1122,6 +1138,7 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 		World:      string(subagent.WorldContainer),
 		Target:     target,
 	}
+	env.setBasis(basisRec)
 	if action == "apply" {
 		env.Strategy = proposalApplyPathDisjoint
 	}
@@ -1226,7 +1243,7 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 	// records its sealed output.
 	if p.mgr != nil && p.parentID != "" {
 		if scope, ok := p.mgr.Get(p.parentID); ok {
-			if _, ferr := scope.AppendFact(ctx, SchemaProposalSettled, "proposal", map[string]any{
+			payload := map[string]any{
 				"proposal_id":     p.id,
 				"action":          action,
 				"world":           string(subagent.WorldContainer),
@@ -1237,7 +1254,14 @@ func (r *ProposalRegistry) settleGitDeltaProposal(ctx context.Context, p *retain
 				// produced the manifest.
 				"authority_plan_digest": p.authorityPlanDigest,
 				"files":                 p.delta.Paths(),
-			}); ferr != nil {
+			}
+			// The artifact directory is consumed at the end of this settle, so
+			// the settle fact is the only post-settlement record of the basis —
+			// taken from the pre-consume snapshot (yaah-witj increment A).
+			for k, v := range basisRec.factFields() {
+				payload[k] = v
+			}
+			if _, ferr := scope.AppendFact(ctx, SchemaProposalSettled, "proposal", payload); ferr != nil {
 				env.Notes = appendSettleNote(env.Notes, "trace: settle fact: "+ferr.Error())
 			}
 		} else {

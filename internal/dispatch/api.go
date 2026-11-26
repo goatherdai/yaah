@@ -450,12 +450,18 @@ func Settle(ctx context.Context, registry *ProposalRegistry, id string, verb Set
 				Proposals: []string{conflict.ProposalID},
 				Changes:   conflict.Changes,
 			}
+			// ONE lookup for both the conflict details and the basis: they
+			// describe the same proposal, and two lookups could only agree
+			// today — a later registry change would let them attach evidence
+			// and a basis from different proposals. A failed lookup degrades
+			// gracefully either way: the generic verbs and no basis.
+			p, perr := registry.get(conflict.ProposalID)
 			next := proposalVerbs()
-			if p, perr := registry.get(conflict.ProposalID); perr == nil {
+			if perr == nil {
 				conflictView = attachProposalConflictDetails(ctx, []proposalConflict{conflictView}, []proposalAnalysis{{proposal: p}})[0]
 				next = nextVerbsFor(p)
 			}
-			return newSettlement(proposalEnvelope{
+			conflictEnv := proposalEnvelope{
 				Status:     "conflict",
 				ProposalID: conflict.ProposalID,
 				Action:     string(verb),
@@ -463,7 +469,15 @@ func Settle(ctx context.Context, registry *ProposalRegistry, id string, verb Set
 				Error:      conflict.Error(),
 				Conflicts:  []proposalConflict{conflictView},
 				Next:       next,
-			}, Outcome{}), nil
+			}
+			// A refused apply is still a settlement response, so it names the
+			// same basis the settled envelope would (yaah-witj) — from the one
+			// lookup above, so the basis and the conflict details cannot come
+			// from different proposals.
+			if perr == nil {
+				conflictEnv.setBasis(p.dispatchBasisRecord())
+			}
+			return newSettlement(conflictEnv, Outcome{}), nil
 		}
 		return Settlement{}, err
 	}

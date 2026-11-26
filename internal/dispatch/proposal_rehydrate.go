@@ -171,6 +171,11 @@ func loadWorktreeProposals(reg *ProposalRegistry, mgr *goatherd.ScopeManager, re
 				// records no citation rather than inventing one.
 				authorityPlanDigest: meta.AuthorityPlanDigest,
 				world:               "worktree",
+				// The seal's own legible basis record. The output's baseline is
+				// the state and answers first; this is what the envelope still
+				// reports if a recovered output no longer carries one, which is
+				// the whole reason the seal persisted it (yaah-witj A).
+				sealBasisRecord: meta.Basis,
 			})
 		}
 	}
@@ -285,6 +290,11 @@ func loadGitDeltaProposal(dir, repoPath string, mgr *goatherd.ScopeManager, root
 		// digest this process cannot know.
 		authorityPlanDigest: meta.AuthorityPlanDigest,
 		world:               "container",
+		// The seal's legible basis record, kept as the reporting fallback.
+		// basis.json above stays authoritative: this path refuses to rehydrate
+		// at all without a digest-verified state, so the record never stands in
+		// for a verification it cannot support (yaah-witj increment A).
+		sealBasisRecord: meta.Basis,
 	}, "", nil
 }
 

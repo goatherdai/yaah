@@ -386,10 +386,10 @@ func (p *retainedProposal) baseContentViewCached(ctx context.Context, rel string
 	if p.delta != nil && p.target == "session" {
 		return "", "base unavailable for a session-target proposal"
 	}
-	state := p.basisState
-	if p.output != nil {
-		state = p.output.Baseline()
-	}
+	// The base these conflict excerpts are read from is the SAME basis the
+	// envelope reports, so the evidence and the record cannot disagree: the
+	// ladder lives in dispatchBasis, not here (yaah-witj increment A).
+	state, _ := p.dispatchBasis()
 	if state.Backend != "git" {
 		return "", "base unavailable: non-git basis"
 	}

@@ -174,10 +174,14 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 	}
 
 	files := p.changedFiles()
+	// The basis this merge was decided against, read BEFORE the sealed output is
+	// consumed below. The settle fact, and every envelope this path returns, read
+	// this one snapshot rather than re-reading a consumed output (yaah-witj A).
+	basisRec := p.dispatchBasisRecord()
 	notes := ""
 	if p.mgr != nil && p.parentID != "" {
 		if scope, ok := p.mgr.Get(p.parentID); ok {
-			if _, err := scope.AppendFact(ctx, SchemaProposalSettled, "proposal", map[string]any{
+			payload := map[string]any{
 				"proposal_id": p.id,
 				"action":      "apply",
 				"strategy":    proposalApplyThreeWay,
@@ -190,7 +194,13 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 				// move between dispatch and settlement.
 				"authority_plan_digest": p.authorityPlanDigest,
 				"files":                 files,
-			}); err != nil {
+			}
+			// The basis stays legible after the sealed output is consumed
+			// (yaah-witj increment A) — from the pre-consume snapshot.
+			for k, v := range basisRec.factFields() {
+				payload[k] = v
+			}
+			if _, err := scope.AppendFact(ctx, SchemaProposalSettled, "proposal", payload); err != nil {
 				notes = appendSettleNote(notes, "trace: settle fact: "+err.Error())
 			}
 		}
@@ -221,6 +231,7 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 			Error:      message,
 			Notes:      notes,
 		}
+		env.setBasis(basisRec)
 		outcome := settleOutcome(goatherd.SettleApply, p, env)
 		env.Outcome = outcome.String()
 		return newSettlement(env, outcome), nil
@@ -235,6 +246,7 @@ func (r *ProposalRegistry) settleWorktreeThreeWay(ctx context.Context, p *retain
 		Files:      files,
 		Notes:      notes,
 	}
+	env.setBasis(basisRec)
 	outcome := settleOutcome(goatherd.SettleApply, p, env)
 	env.Outcome = outcome.String()
 	return newSettlement(env, outcome), nil
@@ -356,10 +368,10 @@ func (p *retainedProposal) baseContentFull(ctx context.Context, rel string) ([]b
 	if p.repoPath == "" {
 		return nil, false, fmt.Errorf("no repository path")
 	}
-	state := p.basisState
-	if p.output != nil {
-		state = p.output.Baseline()
-	}
+	// The base the merge is measured against is the SAME basis the envelope
+	// reports: dispatchBasis is the one statement of that ladder, so a record
+	// and a measurement cannot disagree (yaah-witj increment A).
+	state, _ := p.dispatchBasis()
 	if state.Backend != "git" {
 		return nil, false, fmt.Errorf("basis backend is %q, not git", state.Backend)
 	}
