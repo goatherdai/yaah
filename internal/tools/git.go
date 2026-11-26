@@ -46,7 +46,7 @@ var allowedGitActions = map[string]struct {
 	"commit":      {"Create a new commit", true, true},
 	"push":        {"Push commits to remote", true, true},
 	"pull":        {"Pull commits from remote", true, true},
-	"fetch":       {"Fetch from remote (read-only)", false, true},
+	"fetch":       {"Fetch from remote (writes the object store)", false, true},
 }
 
 // GitTool runs git commands directly (not through a shell).

@@ -101,8 +101,11 @@ func newLocalWorkspace(pv *PathValidator) Workspace {
 
 type localWorkspace = substrate.LocalWorkspace
 
-func confinementHint(stderr, root string) string {
-	return substrate.ConfinementHint(stderr, root)
+// confinementHint answers for the workspace the command ran in: it names that
+// workspace's root and, for a git-metadata refusal, asks the workspace itself
+// whether a git write can land there.
+func confinementHint(ws Workspace, output string, exitCode int) string {
+	return substrate.ConfinementHint(ws, output, exitCode)
 }
 
 // confinedGitWriteRefusal is the one statement of the git-write rule for a

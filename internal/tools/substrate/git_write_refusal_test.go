@@ -15,7 +15,9 @@ package substrate
 //     and the codebase treats that distinction as evidence quality.
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -27,7 +29,7 @@ import (
 const testGitWriters = "add, commit, fetch, pull, push"
 
 func TestConfinedGitWriteRefusal_UnconfinedWorkspaceCanWrite(t *testing.T) {
-	root := t.TempDir()
+	root := resolvedTempDir(t)
 	pv := NewPathValidator(root, false, nil)
 	pv.WorkDir = pv.WorkspaceRoot
 	ws := newLocalWorkspace(pv)
@@ -43,7 +45,7 @@ func TestConfinedGitWriteRefusal_UnconfinedWorkspaceCanWrite(t *testing.T) {
 }
 
 func TestConfinedGitWriteRefusal_SurfacesAreDistinguishable(t *testing.T) {
-	root := t.TempDir()
+	root := resolvedTempDir(t)
 	ws := confinedTestWorkspace(root, fakeConfinementBackend{}, containment.PlacementPaddock)
 
 	pre := ConfinedGitWriteRefusal(ws, testGitWriters, true)
@@ -79,7 +81,9 @@ func TestConfinedGitWriteRefusal_SurfacesAreDistinguishable(t *testing.T) {
 }
 
 func TestConfinedGitWriteRefusal_NamesTheWorkspacesOwnRoots(t *testing.T) {
-	root := t.TempDir()
+	// Resolved, not raw: the workspace canonicalizes its root, and the message is
+	// built from the workspace — see resolvedTempDir.
+	root := resolvedTempDir(t)
 	base := confinedTestWorkspace(root, fakeConfinementBackend{}, containment.PlacementPaddock)
 
 	single := ConfinedGitWriteRefusal(base, testGitWriters, true)
@@ -108,5 +112,43 @@ func TestConfinedGitWriteRefusal_NamesTheWorkspacesOwnRoots(t *testing.T) {
 	}
 	if strings.Contains(got, "only writable root") {
 		t.Errorf("a read-only grant set must not claim a writable root:\n%s", got)
+	}
+}
+
+// TestConfinedGitWriteRefusal_NamesTheResolvedRoot is the CI-1 regression for this
+// surface, pinning on every platform what the macOS and Windows legs caught: the
+// refusal names the workspace's RESOLVED root, because that is the only spelling
+// the sub-agent can act on. The workspace is built from a SYMLINK to a real
+// directory, so the resolution runs on a Linux host whose temp directory has no
+// symlink of its own.
+func TestConfinedGitWriteRefusal_NamesTheResolvedRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "worktree")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink creation is unavailable on this host: %v", err)
+	}
+	resolved, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		t.Fatalf("resolve the fixture link: %v", err)
+	}
+	if resolved == link {
+		t.Fatalf("the fixture is not a symlink: %q resolved to itself", link)
+	}
+
+	ws := confinedTestWorkspace(link, fakeConfinementBackend{}, containment.PlacementPaddock)
+	got := ConfinedGitWriteRefusal(ws, testGitWriters, true)
+	if !strings.Contains(got, "whose only writable root is "+resolved) {
+		t.Errorf("the refusal must name the resolved root %q, got:\n%s", resolved, got)
+	}
+	if strings.Contains(got, "whose only writable root is "+link) {
+		t.Errorf("the refusal must not name the unresolved path it was handed %q, got:\n%s", link, got)
+	}
+	// Both surfaces share the sentence, so the exec-time form has to canonicalize
+	// the same way — this is the branch that used to be unreachable (R2).
+	if post := ConfinedGitWriteRefusal(ws, testGitWriters, false); !strings.Contains(post, "whose only writable root is "+resolved) {
+		t.Errorf("the exec-time form must name the resolved root %q, got:\n%s", resolved, post)
 	}
 }
