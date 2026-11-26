@@ -78,7 +78,8 @@ records it, so treat that note as cleanup you owe.
 
 **You commit, not the sub-agent.** In the worktree lane the child's git index
 and object store live in this repository, outside its sandbox, so git write
-commands (`add`, `commit`, `stash`) are refused. In the container lane any
+commands are refused — `add`, `commit`, `stash`, `checkout`, `reset`, `pull` and
+the rest, and `fetch` too, since fetching writes the object store. In the container lane any
 commit stays inside the disposable world. In both lanes, changes reach your
 tree only when you settle the proposal — ask the child for the change, not for
 a commit, and do the committing yourself afterwards.

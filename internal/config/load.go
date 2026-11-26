@@ -404,7 +404,7 @@ type SubAgentConfig struct {
 	// original repository, outside the jail's sole writable root. Read-only git
 	// is unaffected, and nothing is lost — the sub-agent prepares changes and
 	// the orchestrator commits when it settles the proposal. A denied write says
-	// so (see internal/tools/workspace.go confinementHint), and the sub-agent's
+	// so (see internal/tools/substrate/workspace.go ConfinementHint), and the sub-agent's
 	// prompt states the rule up front.
 	//
 	// A confined dispatch also records the resolved placement (paddock vs

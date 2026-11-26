@@ -285,13 +285,35 @@ func (w *LocalWorkspace) WithWritableRoots(roots []string) *LocalWorkspace {
 // Confined reports whether this local workspace runs commands under a
 // confinement backend, or is configured to fail closed without one. A client
 // workspace overlay must not bypass either posture.
+//
+// A nil receiver is not confined: a test double embedding *LocalWorkspace
+// promotes this method, and a double that leaves the embedded pointer nil still
+// has to answer the question (the git tool asks it before every write).
 func (w *LocalWorkspace) Confined() bool {
+	if w == nil {
+		return false
+	}
 	if _, ok := w.degrade.get(); ok {
 		// The jail was requested and could not be established, so commands run on
 		// the host path: reporting "jailed" here would be a lie.
 		return false
 	}
 	return w.confiner != nil || w.placement == containment.PlacementPaddock
+}
+
+// WritableRoots reports the jail's declared writable set and whether a set was
+// declared at all. The two facts are separate because an all-readonly
+// declaration is legitimately empty and means "nothing writable", not "the
+// legacy whole-worktree root" (see WithWritableRoots). Whoever explains the
+// boundary needs the distinction: a narrowed workspace has plural roots (or
+// none), so a sentence about "its only writable root" would name a boundary it
+// does not have (yaah-ihfh.2). A nil receiver declares nothing, matching
+// Confined.
+func (w *LocalWorkspace) WritableRoots() (roots []string, declared bool) {
+	if w == nil {
+		return nil, false
+	}
+	return append([]string(nil), w.writableRoots...), w.narrowed
 }
 
 // WithEnv returns a copy of the workspace with extra environment variables
@@ -748,26 +770,41 @@ func (w *LocalWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 	} else {
 		out.Stdout = res.Stdout + res.Stderr
 	}
-	if res.ExitCode != 0 {
-		// A write the kernel refused looks like any other failure to the model
-		// ("Permission denied", no clue why), which is the jail's real usability
-		// cost. Say what happened and where the boundary is.
-		// A narrowed grant set has plural roots, so the legacy single-root
-		// explanation would name the wrong boundary. Use the grant list
-		// instead whenever one is set.
-		var hint string
-		if w.narrowed {
-			hint = grantsHint(w.writableRoots, res.Stderr+out.Stdout)
+	// A write the kernel refused looks like any other output to the model
+	// ("Permission denied", no clue why), which is the jail's real usability
+	// cost. Say what happened and where the boundary is.
+	//
+	// The hint is keyed on the evidence in the output, NOT on the exit code: a
+	// composite command that ends in success (`git add -A; echo rc=$?`, or any
+	// `cmd || true`) exits 0 with the refusal sitting in its transcript, and
+	// gating on ExitCode dropped the explanation for exactly those callers
+	// (bead yaah-pvm8). ConfinementHint's own preconditions are the whole test,
+	// so an empty, non-permission, in-root or unattributable output still gets
+	// no hint whatever the exit code — and so does a successful command whose
+	// output merely mentions snap-confine, since the snap branch requires a
+	// failure phrasing of its own.
+	//
+	// Both raw streams are handed over in either mode: with separate streams the
+	// refusal is usually on stderr while a composite's success output is on
+	// stdout, and a backend that reports combined output leaves git's stderr in
+	// Stdout. A narrowed grant set has plural roots, so the legacy single-root
+	// explanation would name the wrong boundary — use the grant list instead
+	// whenever one is set.
+	output := res.Stdout + res.Stderr
+	var hint string
+	if w.narrowed {
+		hint = grantsHint(w.writableRoots, output)
+	} else {
+		hint = ConfinementHint(output, root)
+	}
+	if hint != "" {
+		if req.SeparateStreams {
+			out.Stderr = appendHint(out.Stderr, hint)
 		} else {
-			hint = ConfinementHint(res.Stderr, root)
+			out.Stdout = appendHint(out.Stdout, hint)
 		}
-		if hint != "" {
-			if req.SeparateStreams {
-				out.Stderr = strings.TrimRight(out.Stderr, "\n") + "\n" + hint
-			} else {
-				out.Stdout = strings.TrimRight(out.Stdout, "\n") + "\n" + hint
-			}
-		}
+	}
+	if res.ExitCode != 0 {
 		// Match the host path's wording (exec's *exec.ExitError) so callers
 		// that surface the message read the same either way.
 		return out, fmt.Errorf("exit status %d", res.ExitCode)
@@ -775,11 +812,32 @@ func (w *LocalWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 	return out, nil
 }
 
+// appendHint places hint on its own line after existing output, without the
+// blank leading line a bare concatenation would leave when there is no output
+// to follow (a successful command the jail partially refused prints nothing).
+func appendHint(existing, hint string) string {
+	existing = strings.TrimRight(existing, "\n")
+	if existing == "" {
+		return hint
+	}
+	return existing + "\n" + hint
+}
+
 // ConfinementHint explains a failure the jail caused, or "" when the failure
 // does not look like one. The jail is the boundary, not a bug, and a sub-agent
 // that cannot see why a command failed will retry it (or flail) instead of
 // routing around it — so the message names the boundary and, for the git case,
 // the rule that makes it deliberate.
+//
+// It takes output, not an exit code, on purpose: whether the jail refused a
+// write is a property of what the command printed, and a composite command can
+// end in success with the refusal still in its transcript (bead yaah-pvm8). The
+// matching is therefore the whole question asked, so it must also carry the
+// evidence of a FAILURE: a permission phrase attributed to a denied path, or
+// snap-confine's own abort. Matching a bare token instead (the snap-confine name
+// with no failure around it) would caption a healthy command's output — a grep
+// over this repository's docs mentions the token — as a sandbox refusal, which
+// is exactly the false explanation this function exists to avoid.
 //
 // Detection of a refused write requires BOTH a permission failure and a denied
 // path the message names that lies outside the writable root. The leading
@@ -802,16 +860,106 @@ func ConfinementHint(stderr, root string) string {
 	if _, ok := deniedOutsideRoot(stderr, root); !ok {
 		return ""
 	}
-	const gitWorkRule = " Your changes are still captured — the orchestrator commits when it accepts your work, so there is nothing for you to commit."
 	// git names the offending path in quotes; a path under the repo but outside
 	// this workspace is the retained-lane case (the worktree's index and object
-	// store live in the original repository's .git).
+	// store live in the original repository's .git). Only the legacy single-root
+	// workspace reaches this: a narrowed grant set takes grantsHint in
+	// confinedExec, so the single-root wording below is a fact here.
 	if strings.Contains(stderr, ".git/") || strings.Contains(stderr, ".git\\") {
-		return "[yaah] This write was refused by the sub-agent sandbox. You work in an isolated worktree whose only writable root is " + root +
-			"; git's index and object store live in the original repository, outside it, so git write commands (add, commit, stash, checkout, reset) cannot run here." + gitWorkRule
+		return "[yaah] This write was refused by the sub-agent sandbox. This dispatch works in an isolated worktree whose only writable root is " + root +
+			"; " + gitWriteRule("that root", shellGitWriters)
 	}
 	return "[yaah] This write was refused by the sub-agent sandbox: its only writable root is " + root +
 		", and writes outside it are denied by the kernel. Housekeeping paths (HOME, TMPDIR, build caches) are redirected inside that root, so work there instead."
+}
+
+// GitWorkRule states what happens to the work a confined dispatch cannot commit
+// itself. It is the shared tail of the rule so the exec-time hint and the git
+// tool's pre-execution refusal say exactly the same thing.
+const GitWorkRule = " Your changes are still captured — the orchestrator commits when it accepts your work, so there is nothing for you to commit."
+
+// gitWriteRule is the shared core of the git-write refusal: the one statement
+// that a confined workspace's index and object store live in the original
+// repository, outside what the jail makes writable. Both surfaces build their
+// sentence on it so they cannot drift into two accounts of the same boundary;
+// only the opening (who refused) and the action list (what the asking surface
+// can actually issue) differ.
+//
+// outside completes "…outside …" with the noun phrase for the writable roots;
+// actions names the git writers the asking surface can issue.
+func gitWriteRule(outside, actions string) string {
+	return "git's index and object store live in the original repository, outside " + outside +
+		", so git write commands (" + actions + ") cannot run here." + GitWorkRule
+}
+
+// shellGitWriters names the git writers a shell command can issue inside a
+// confined workspace. It is the shell surface's own list — broader than the git
+// tool's, which can only run the actions in its table — and is kept equal to the
+// list internal/prompts/confinement.md states to the sub-agent.
+const shellGitWriters = "add, commit, stash, checkout, reset, merge, rebase, pull"
+
+// ConfinedGitWriteRefusal is the one statement of the git-write rule for a
+// confined workspace, or "" when a git write can land there — an unconfined
+// workspace: the orchestrator's own, an advisory fallback, or a container lane
+// whose sandbox declares no confinement.
+//
+// Two surfaces ask, and their difference is evidence a parent settling the
+// dispatch reads: with preExec the git tool declined before it spawned git,
+// while the exec-time hint reports a write the sandbox actually refused. Only
+// the opening says which; the rule itself is single-sourced through gitWriteRule
+// so the two can never describe the same boundary differently.
+//
+// The boundary is named from the workspace's OWN writable set, never from a
+// single assumed root: a dispatch with restrictive grants has plural roots (or
+// none at all), and "whose only writable root is <worktree>" would then be a
+// false statement about the boundary.
+//
+// actions names the git writers the asking surface can issue, so the model is
+// never told that commands it cannot send are blocked while a reachable writer
+// is left out.
+func ConfinedGitWriteRefusal(ws Workspace, actions string, preExec bool) string {
+	if ws == nil || !WorkspaceConfined(ws) {
+		return ""
+	}
+	clause, outside := gitWriteBoundary(ws)
+	if preExec {
+		// Nothing was refused by the sandbox here: the tool declined before git
+		// ran. Saying "refused by the sandbox" would misreport a wasted kernel
+		// round trip as an up-front refusal (or the reverse).
+		return "[yaah] The git tool refused this before running git: this dispatch works in an isolated worktree " + clause +
+			"; " + gitWriteRule(outside, actions)
+	}
+	return "[yaah] This write was refused by the sub-agent sandbox. This dispatch works in an isolated worktree " + clause +
+		"; " + gitWriteRule(outside, actions)
+}
+
+// gitWriteBoundary names where ws may write: the clause completing "works in an
+// isolated worktree …", and the noun phrase the rule refers back to.
+func gitWriteBoundary(ws Workspace) (clause, outside string) {
+	roots, declared := workspaceWritableRoots(ws)
+	switch {
+	case !declared:
+		// The legacy lane: one root, the worktree itself.
+		return "whose only writable root is " + ws.WorkDir(), "that root"
+	case len(roots) == 0:
+		// A declared all-readonly grant set: nothing is writable but the
+		// housekeeping scratch, and a root list would read as empty.
+		return "whose grant set declares no writable root (a read-only dispatch)", "its read-only grant set"
+	default:
+		return "whose writable roots are " + strings.Join(roots, ", "), "those roots"
+	}
+}
+
+// workspaceWritableRoots reports the writable set a workspace declares, if it
+// declares one. The optional interface keeps sandbox implementations free to
+// omit it, matching WorkspaceConfined.
+func workspaceWritableRoots(ws Workspace) ([]string, bool) {
+	if d, ok := ws.(interface {
+		WritableRoots() ([]string, bool)
+	}); ok {
+		return d.WritableRoots()
+	}
+	return nil, false
 }
 
 // snapToolchainHint translates the one jail failure that is a packaging
@@ -821,22 +969,54 @@ func ConfinementHint(stderr, root string) string {
 // message names neither the packaging nor the remedy, so the model retries it
 // or blames its own code.
 //
-// Detection anchors on the snap-confine token, or on snap-confine's exact
-// capability wording. Generic capability text also appears in non-snap
-// failures, and mis-captioning those sends the model to the wrong remedy — but
-// the "required permitted capability … not found in current capabilities" pair
-// is specific to snap-confine, so it is safe without the executable's name in
-// the message (the abort reaches the tool through a shell that does not always
+// Detection anchors on snap-confine's exact capability wording, or on the
+// snap-confine token together with one of the phrasings a snap command uses when
+// it cannot start. Generic capability text also appears in non-snap failures,
+// and mis-captioning those sends the model to the wrong remedy — but the
+// "required permitted capability … not found in current capabilities" pair is
+// specific to snap-confine, so it is safe without the executable's name in the
+// message (the abort reaches the tool through a shell that does not always
 // prefix it).
+//
+// The bare token is NOT evidence: a successful command's output can merely
+// mention snap-confine (a grep over this repository's docs, a test log), and
+// since the hint no longer waits for a non-zero exit code an unfailed mention
+// would caption healthy output as a sandbox refusal. Requiring a failure
+// phrasing keeps the composite case working — `snap-app; echo done` exits 0 with
+// the abort still in its transcript.
 func snapToolchainHint(stderr string) string {
-	snapToken := strings.Contains(stderr, "snap-confine")
-	capabilityAbort := strings.Contains(stderr, "required permitted capability") &&
-		strings.Contains(stderr, "not found in current capabilities")
-	if !snapToken && !capabilityAbort {
-		return ""
+	if strings.Contains(stderr, "required permitted capability") &&
+		strings.Contains(stderr, "not found in current capabilities") {
+		return snapConfineHint
 	}
-	return "[yaah] This command resolved to a snap package, which cannot start inside the sub-agent sandbox: snap-confine is setuid and needs capabilities the sandbox never grants it (commands run with no_new_privs, so it cannot raise them). " +
-		"Install a tarball or distro build of this toolchain and put it ahead of /snap/bin on PATH."
+	if strings.Contains(stderr, "snap-confine") && snapStartFailure(stderr) {
+		return snapConfineHint
+	}
+	return ""
+}
+
+// snapConfineHint is the translated packaging failure handed to the model.
+const snapConfineHint = "[yaah] This command resolved to a snap package, which cannot start inside the sub-agent sandbox: " +
+	"snap-confine is setuid and needs capabilities the sandbox never grants it (commands run with no_new_privs, so it cannot raise them). " +
+	"Install a tarball or distro build of this toolchain and put it ahead of /snap/bin on PATH."
+
+// snapStartFailure reports whether output carries one of the ways a snap-confined
+// command announces that it did not run.
+func snapStartFailure(output string) bool {
+	for _, phrase := range []string{
+		"cannot start", "can not start",
+		"cannot run", "can not run",
+		"cannot open",
+		"failed to",
+		"no_new_privs",
+		"Refusing to continue",
+		"Permission denied",
+	} {
+		if strings.Contains(output, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 // deniedOutsideRoot reports whether stderr carries a permission failure on a path

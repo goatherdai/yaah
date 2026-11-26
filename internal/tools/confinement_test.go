@@ -353,6 +353,26 @@ func TestConfinementHint_TranslatesSnapConfine(t *testing.T) {
 	if got := confinementHint(bare, root); got == "" {
 		t.Error("snap-confine's capability abort must be explained even without the token")
 	}
+
+	// The bare token is not evidence of a failure. The hint no longer waits for
+	// a non-zero exit code, so a SUCCESSFUL command whose output merely mentions
+	// snap-confine (a grep over this repository's docs, a test log) must produce
+	// nothing: the token alone says nothing about whether the command ran
+	// (bead yaah-pvm8 review, F4).
+	if got := confinementHint("internal/prompts/confinement.md: snap-confine is setuid and needs capabilities", root); got != "" {
+		t.Errorf("a mere mention of the token is not a refusal, got: %q", got)
+	}
+	// The same token WITH a failure phrasing is snap-confine failing to start,
+	// and must still translate: a composite can exit 0 with the abort in its
+	// transcript, which is why the exit code cannot be the gate.
+	for _, s := range []string{
+		"snap-confine: cannot start: no_new_privs refused",
+		"snap-confine: failed to start",
+	} {
+		if got := confinementHint(s, root); got == "" {
+			t.Errorf("snap-confine failing to start must still be explained: %q", s)
+		}
+	}
 }
 
 // TestScrubConfinementScratch_Removes: the scrub removes the whole scratch tree.

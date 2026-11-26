@@ -104,3 +104,11 @@ type localWorkspace = substrate.LocalWorkspace
 func confinementHint(stderr, root string) string {
 	return substrate.ConfinementHint(stderr, root)
 }
+
+// confinedGitWriteRefusal is the one statement of the git-write rule for a
+// confined workspace, shared with the exec-time hint. It answers for the
+// workspace (whether a write can land, and where the boundary is) and returns
+// "" when one can; preExec marks the tool surface, where git never ran.
+func confinedGitWriteRefusal(ws Workspace, actions string, preExec bool) string {
+	return substrate.ConfinedGitWriteRefusal(ws, actions, preExec)
+}
