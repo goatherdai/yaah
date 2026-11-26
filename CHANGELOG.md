@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.221.0](https://github.com/goatherdai/yaah/compare/v0.220.3...v0.221.0) (2026-11-26)
+
+
+### Features
+
+* **tui:** adaptive render throttle and bounded event backpressure (yaah-30t6 T1) ([#437](https://github.com/goatherdai/yaah/issues/437)) ([5f3081e](https://github.com/goatherdai/yaah/commit/5f3081eb97222d90724482193637f164efd9953a))
+
 ## [0.220.3](https://github.com/goatherdai/yaah/compare/v0.220.2...v0.220.3) (2026-11-26)
 
 
