@@ -254,7 +254,14 @@ returns a proposal the orchestrator settles.
   dispatch basis, `apply` is path-disjoint (three-way for a worktree,
   whole-path post-images for a container), `release` exports the delta before
   dropping the record, and `discard` removes the worktree or manifest. A
-  rejected attempt never touches the parent tree.
+  rejected attempt never touches the parent tree. The default basis is the
+  parent's workspace captured at dispatch; `delegate(base_ref: <ref>)` names a
+  different one, seeding the world at that commit and measuring the proposal's
+  delta against it. Because `select` fast-forwards onto the basis, a
+  `base_ref` proposal settles with `apply`: its basis is deliberately not the
+  parent's HEAD, so `select` fails closed by design, while `apply` integrates
+  path-disjoint against the stored basis and lands cleanly as long as the
+  parent's later commits do not touch the proposal's own paths.
 - **Report roles.** A role whose frontmatter declares `output: report`
   decouples the output contract from the substrate (yaah-7yf): a report that
   can mutate runs in an isolated report world (worktree or container) so
@@ -265,7 +272,7 @@ returns a proposal the orchestrator settles.
   and runs directly on the shared workspace, so its reads see fresh data.
   Roles that declare nothing keep the proposal lane, and an explicit
   `output: proposal` always seals.
-- **Supervised lane upgrade.** With an explicit `supervisor.enabled: true`, a dispatch that lane routing would run directly on the shared workspace — and whose role can change the workspace — is upgraded to the report lane (an isolated worktree forked at HEAD), so its work is revertable by construction. Today's role routing already isolates a workspace-mutating dispatch (proposal or report lane, both of which own a world) and reaches the shared lane only for a role that cannot write, so in a default session this upgrade is a GUARD rather than the mechanism: it fires for a lane source that is not the role registry — a plugin or hand-built `LaneForRole` routing a mutating role to shared while a retained runtime exists (not the nested seam: a nested dispatch has no retained runtime and is refused under `require_reversible` instead) — and what a default session actually gets from supervision is the second promise: a pre-run snapshot that cannot be captured fails the dispatch instead of letting it run unrevertable, for a dispatch whose scope owns an isolated world; a dispatch on the session's shared sandbox was never revertable, so a capture failure there does not abort it. A read-only role is never upgraded: it can write nothing a revert would undo, and it keeps the shared lane's fresh reads. Two consequences: the dispatch does not see the session's uncommitted working-tree edits, and under `supervisor.require_reversible: true` a per-call `supervise: false` and any NESTED dispatch (a sub-agent calling `delegate`) are refused at the tool boundary — a grandchild would otherwise write on the session tree, where the parent's revert cannot reach it.
+- **Supervised lane upgrade.** With an explicit `supervisor.enabled: true`, a dispatch that lane routing would run directly on the shared workspace — and whose role can change the workspace — is upgraded to the report lane (an isolated worktree forked at HEAD, or at `base_ref` when the dispatch names one), so its work is revertable by construction. Today's role routing already isolates a workspace-mutating dispatch (proposal or report lane, both of which own a world) and reaches the shared lane only for a role that cannot write, so in a default session this upgrade is a GUARD rather than the mechanism: it fires for a lane source that is not the role registry — a plugin or hand-built `LaneForRole` routing a mutating role to shared while a retained runtime exists (not the nested seam: a nested dispatch has no retained runtime and is refused under `require_reversible` instead) — and what a default session actually gets from supervision is the second promise: a pre-run snapshot that cannot be captured fails the dispatch instead of letting it run unrevertable, for a dispatch whose scope owns an isolated world; a dispatch on the session's shared sandbox was never revertable, so a capture failure there does not abort it. A read-only role is never upgraded: it can write nothing a revert would undo, and it keeps the shared lane's fresh reads. Two consequences: the dispatch does not see the session's uncommitted working-tree edits, and under `supervisor.require_reversible: true` a per-call `supervise: false` and any NESTED dispatch (a sub-agent calling `delegate`) are refused at the tool boundary — a grandchild would otherwise write on the session tree, where the parent's revert cannot reach it.
 - **Supervisor policy modes.** `supervisor.policy` (default `none`) decides who runs the meta-agent supervision loop over the session's dispatches (design §4.7–§4.9). `agent` registers the `supervise` tool so the DISPATCHING AGENT's own turn cycle is the loop. `headless` runs a host loop instead: one stateless JSON-mode completion per tick over the rendered snapshot, with the locked v1 meta-prompt as the system prompt — no conversation, no tools, and a required `supervisor.policy_model` (missing is a load-time validation error). Both modes apply every decision through the same Batch arbiter (cooldowns, action mask, intervention cap, stop > revert > redirect > steer precedence, revert preconditions) and record every action — taken or dropped — into the dispatch envelope and the trace. Under `headless` one loop serves all of the session's supervised dispatches (the batch's membership is the live descendant scopes), and it never outlives them: it stops when the last supervised dispatch settles, and session teardown stops and joins it before the rules service closes.
 - **Shared mode.** `agents.subagent.mode: shared` is the explicit
   direct-to-host opt-out. Without a trace store, or in a containerd/isolated
@@ -307,6 +314,19 @@ returns a proposal the orchestrator settles.
   `seed_mode: conversation` also carries the captured messages and is same-role
   only. Worktree lane only; report-lane roles cannot be seed sources. The same
   new-workspace-root rule applies.
+- **Naming a basis.** `delegate(base_ref: <branch|tag|commit>)` is the third
+  basis source next to `seed_from` and the default capture, never a modifier of
+  either (passing `base_ref` with `seed_from` or `seed_mode` is refused). The
+  ref is resolved in the PARENT repository before the worktree exists, peeled
+  to a commit (`^{commit}`), checked present, and turned into the synthesized
+  workspace state the fork applies — so a worktree is still created at HEAD and
+  then seeded, exactly as for threading. Consequences: a ref must already be
+  present locally, because `git fetch` is a write refused inside a dispatch
+  world, so an unfetched `origin/main` is refused with a message saying so; a
+  ref carries no uncommitted state; the world may be a project or report
+  worktree but never a container or shared one; and the proposal settles with
+  `apply`, not `select`. A base-ref dispatch records no basis/repo divergence
+  warning — the mismatch is the point.
 - **Durable proposals.** A worktree proposal's conversation, result, and
   dispatch params are carried by the sealed output itself (execution snapshot +
   metadata + retained diff), and at startup the proposal registry is rebuilt

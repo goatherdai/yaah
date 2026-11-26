@@ -123,3 +123,48 @@ func TestDelegateSchemaExcludesPrimaryOnlyRoles(t *testing.T) {
 		}
 	})
 }
+
+// TestDelegateSchema_BaseRefInBothBuilders covers the duplicate-builder trap
+// (yaah-witj increment B): Schema()'s inline literal serves a tool with no role
+// names and BuildDelegateSchemaFiltered serves a configured one, and the two
+// property bodies were byte-for-byte duplicates. A parameter added to only one
+// is an environment-dependent silent divergence, so both are asserted here.
+func TestDelegateSchema_BaseRefInBothBuilders(t *testing.T) {
+	type prop struct {
+		Type        string `json:"type"`
+		Description string `json:"description"`
+	}
+	read := func(t *testing.T, raw json.RawMessage) prop {
+		t.Helper()
+		var schema struct {
+			Properties map[string]prop `json:"properties"`
+		}
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatalf("unmarshal schema: %v", err)
+		}
+		p, ok := schema.Properties["base_ref"]
+		if !ok {
+			t.Fatalf("schema has no base_ref property: %v", schema.Properties)
+		}
+		return p
+	}
+
+	t.Run("inline builder", func(t *testing.T) {
+		p := read(t, (&DelegateTool{}).Schema())
+		if p.Type != "string" {
+			t.Fatalf("base_ref = %+v, want a string property", p)
+		}
+		if p.Description != baseRefParamDescription {
+			t.Fatalf("description = %q, want the shared const", p.Description)
+		}
+	})
+	t.Run("filtered builder", func(t *testing.T) {
+		p := read(t, BuildDelegateSchemaFiltered([]string{"developer"}, nil, nil))
+		if p.Type != "string" {
+			t.Fatalf("base_ref = %+v, want a string property", p)
+		}
+		if p.Description != baseRefParamDescription {
+			t.Fatalf("description = %q, want the shared const (the two builders must not drift)", p.Description)
+		}
+	})
+}

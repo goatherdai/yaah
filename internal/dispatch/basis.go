@@ -45,9 +45,9 @@ func basisRecord(state kerneltrace.WorkspaceState) *proposalBasisRecord {
 	if rec.Head == "" {
 		// Revision is the git HEAD SHA for a git state; a hand-built state may
 		// carry only the data field.
-		rec.Head, _ = state.Data["head_sha"].(string)
+		rec.Head, _ = state.Data[workspaceStateHeadKey].(string)
 	}
-	rec.Tree, _ = state.Data["tree_sha"].(string)
+	rec.Tree, _ = state.Data[workspaceStateTreeKey].(string)
 	return rec
 }
 
@@ -160,7 +160,7 @@ func basisDivergence(ctx context.Context, repoPath string, state kerneltrace.Wor
 	}
 	head := state.Revision
 	if head == "" {
-		head, _ = state.Data["head_sha"].(string)
+		head, _ = state.Data[workspaceStateHeadKey].(string)
 	}
 	if head == "" {
 		return "", nil

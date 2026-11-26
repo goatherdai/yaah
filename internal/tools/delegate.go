@@ -170,7 +170,7 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	strict, err := DecodeStrictObject("delegate", args,
 		"description", "prompt", "role", "timeout_seconds", "max_iterations",
 		"max_turns", "json_mode", "output_limit", "background", "seed_from",
-		"seed_mode", "provider", "model", "supervise")
+		"seed_mode", "provider", "model", "supervise", "base_ref")
 	if err != nil {
 		return "", err
 	}
@@ -209,6 +209,7 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 		Background     bool   `json:"background"`
 		SeedFrom       string `json:"seed_from"`
 		SeedMode       string `json:"seed_mode"`
+		BaseRef        string `json:"base_ref"`
 		Provider       string `json:"provider"`
 		Model          string `json:"model"`
 		// Supervise is the per-dispatch supervision override: nil follows
@@ -275,6 +276,7 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 		OutputLimit:    clampedOutput,
 		SeedFrom:       params.SeedFrom,
 		SeedMode:       params.SeedMode,
+		BaseRef:        params.BaseRef,
 		Provider:       params.Provider,
 		Model:          params.Model,
 	}

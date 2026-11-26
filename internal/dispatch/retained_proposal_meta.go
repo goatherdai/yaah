@@ -101,11 +101,21 @@ func proposalSealOptions(meta retainedProposalMeta, transcriptID string) (goathe
 	// record (retainedProposalMeta.Basis), not here: anything added to
 	// SubAgentParams and silently stripped would leave the durable record
 	// claiming a basis the dispatch never used (yaah-witj increment A).
+	//
+	// BaseRef is stripped for exactly that reason and NOT because it is
+	// uninteresting: it is a REQUEST field, and what it names MOVES. The
+	// durable record of where this work started from is Basis above, which the
+	// dispatch stamped with the commit and tree the ref resolved to at
+	// dispatch time. Keeping the ref name too would let a resumed proposal,
+	// and a continuation built from these params (ContinueRetainedRun copies
+	// them wholesale), carry a name that now points somewhere else — the
+	// phantom-drift class yaah-9m0c closed, reintroduced as a stale label.
 	params := meta.Params
 	params.SeedMessages = nil
 	params.Workdir = ""
 	params.SeedFrom = ""
 	params.SeedMode = ""
+	params.BaseRef = ""
 	meta.Params = params
 
 	opts := goatherd.SealOptions{

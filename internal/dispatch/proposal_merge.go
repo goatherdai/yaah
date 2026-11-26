@@ -375,7 +375,7 @@ func (p *retainedProposal) baseContentFull(ctx context.Context, rel string) ([]b
 	if state.Backend != "git" {
 		return nil, false, fmt.Errorf("basis backend is %q, not git", state.Backend)
 	}
-	tree, _ := state.Data["tree_sha"].(string)
+	tree, _ := state.Data[workspaceStateTreeKey].(string)
 	if tree == "" {
 		tree = state.Revision
 	}

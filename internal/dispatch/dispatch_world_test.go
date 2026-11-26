@@ -260,3 +260,41 @@ func TestResolveDispatchWorld_ContainerSessionSibling(t *testing.T) {
 		t.Fatalf("proposal resolved = %q, want container", proposal.Resolved)
 	}
 }
+
+// TestBaseRefWorldRefusal is the pure base_ref x world table: the lane rule is
+// decided by the world a dispatch RESOLVED to, so it can be pinned without a
+// repository, a runner or a world. The shared case is here deliberately and
+// asserts NO refusal: a shared dispatch has no world of its own to seed, so that
+// refusal belongs to api.go (which knows the lane by name and runs before any
+// world exists), not to this predicate.
+func TestBaseRefWorldRefusal(t *testing.T) {
+	cases := []struct {
+		name     string
+		baseRef  string
+		resolved subagent.WorldKind
+		want     string
+	}{
+		{name: "absent on the worktree", resolved: subagent.WorldWorktree},
+		{name: "absent on a container", resolved: subagent.WorldContainer},
+		{name: "blank on a container is absent", baseRef: "   ", resolved: subagent.WorldContainer},
+		{name: "a branch on the worktree", baseRef: "side", resolved: subagent.WorldWorktree},
+		{name: "a commit on the worktree", baseRef: "0c54a79", resolved: subagent.WorldWorktree},
+		{name: "a branch on the shared lane is api.go's refusal", baseRef: "side", resolved: subagent.WorldShared},
+		{name: "a branch on a container", baseRef: "side", resolved: subagent.WorldContainer, want: "worktree-lane only"},
+		{name: "a tag on a container", baseRef: "v1.2.3", resolved: subagent.WorldContainer, want: "worktree-lane only"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := baseRefWorldRefusal(tc.baseRef, tc.resolved)
+			if tc.want == "" {
+				if got != "" {
+					t.Fatalf("baseRefWorldRefusal(%q, %q) = %q, want no refusal", tc.baseRef, tc.resolved, got)
+				}
+				return
+			}
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("baseRefWorldRefusal(%q, %q) = %q, want it to contain %q", tc.baseRef, tc.resolved, got, tc.want)
+			}
+		})
+	}
+}

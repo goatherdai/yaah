@@ -393,7 +393,7 @@ func (p *retainedProposal) baseContentViewCached(ctx context.Context, rel string
 	if state.Backend != "git" {
 		return "", "base unavailable: non-git basis"
 	}
-	tree, _ := state.Data["tree_sha"].(string)
+	tree, _ := state.Data[workspaceStateTreeKey].(string)
 	if tree == "" {
 		tree = state.Revision
 	}

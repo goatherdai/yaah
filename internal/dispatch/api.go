@@ -163,6 +163,45 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 		label = label + " — " + req.Description
 	}
 
+	// A blank base_ref is ABSENT, never a value: normalise it once, here, so
+	// every layer below tests the same field with the same rule. A whitespace
+	// value left in the struct would otherwise be judged by two different
+	// rules in two layers — this block trims and skips it, while the
+	// worktree-lane gate downstream tests the raw string and reports
+	// `base_ref "   "` for a value that means nothing at all.
+	params.BaseRef = strings.TrimSpace(params.BaseRef)
+
+	// base_ref names the commit this dispatch starts from and is measured
+	// against (yaah-witj increment B). Its cross-field rules run here, before
+	// any world is resolved or provisioned, for the same reason the seed rules
+	// below do: a refusal must cost nothing, and this is where the resolved
+	// lane is available by name. The three basis sources are mutually
+	// exclusive — seed_from (a proposal's sealed work), base_ref (a ref) and
+	// neither (the parent's workspace) — so combining two is refused rather
+	// than resolved by a silent priority.
+	//
+	// It sits before the seed_mode block deliberately: seed_mode modifies
+	// seed_from, so a caller that passed both base_ref and seed_mode must be
+	// told THAT, not handed the bare "seed_mode requires seed_from" rule, which
+	// would leave the base_ref still in the request looking accepted.
+	if ref := params.BaseRef; ref != "" {
+		if params.SeedFrom != "" {
+			return DispatchResult{}, fmt.Errorf("delegate: base_ref %q and seed_from %q both name a basis for this dispatch; pass one — seed_from continues a proposal's sealed work, base_ref starts from a ref", ref, params.SeedFrom)
+		}
+		if params.SeedMode != "" {
+			return DispatchResult{}, fmt.Errorf("delegate: base_ref %q and seed_mode %q cannot be combined; seed_mode selects what seed_from carries, and a ref carries no conversation", ref, params.SeedMode)
+		}
+		if req.Retained == nil || lane == LaneShared {
+			// A shared dispatch runs directly on the session's tree, so there
+			// is no separate world to seed at another ref: honouring base_ref
+			// would mean rewriting the caller's own workspace. A report-lane
+			// role is NOT refused — seeding a report world at a ref (a reviewer
+			// dispatched against a branch) is genuinely useful and the
+			// worktree mechanism is identical.
+			return DispatchResult{}, fmt.Errorf("delegate: base_ref %q needs the retained lane (%s lane here), which gives the dispatch its own world to seed; a shared dispatch runs directly on the session's tree, so there is nothing to seed at another ref", ref, lane)
+		}
+	}
+
 	// Validate seed_mode independently: a typo that empties seed_from must not
 	// leave a stray seed_mode silently ignored.
 	if params.SeedMode != "" {

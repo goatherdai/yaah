@@ -819,7 +819,10 @@ work can be reverted by construction, and a dispatch whose pre-run workspace
 snapshot cannot be captured fails at start instead of running unrevertable. A
 role that cannot mutate the workspace keeps the shared lane — there is nothing
 for a revert to undo, and a world forked at HEAD would only hide the session's
-live tree from a dispatch that just reads it.
+live tree from a dispatch that just reads it. Such a dispatch can never name a
+`base_ref` world either: `base_ref` is refused on the shared lane, because
+seeding one would mean rewriting the session's own tree rather than giving the
+dispatch a world of its own.
 
 **The upgrade is a guard, not the everyday mechanism.** Today's role routing
 already isolates a workspace-mutating dispatch: it goes to the proposal lane or
