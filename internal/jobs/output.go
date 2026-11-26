@@ -63,8 +63,15 @@ type SubAgentParams struct {
 	// non-HEAD basis settles via apply, because select fails closed against a
 	// basis whose commit is not the parent's HEAD.
 	//
-	// This is REQUEST state, not durable state: the resolved basis (the commit
-	// and tree it names) is what a seal persists, because a ref moves.
+	// This is LIVE TEMPLATE state, not the durable record of the request:
+	// Params is copied wholesale by a continuation, so a ref name left here
+	// would be RE-RESOLVED against a repository that may have moved. That is
+	// why proposalSealOptions strips it from the persisted params, and why a
+	// continuation re-derives its basis from the source's recorded basis rather
+	// than replaying this field. The request is still recorded: the caller's
+	// spelling rides the durable basis record beside the commit and tree it
+	// resolved to (proposalBasisRecord.Ref), as a historical fact for
+	// reporting, never as an instruction — nothing re-resolves it.
 	BaseRef string
 
 	// JSONMode enables structured JSON output for this sub-agent.

@@ -71,9 +71,12 @@ From `retained.md` (injected when the retained lane is live):
   `delegate(base_ref: <branch|tag|commit>)` seeds the worktree at that commit,
   resolved in the parent repository (an unfetched remote-tracking ref is
   refused — a dispatch cannot fetch). Its delta is measured against that
-  commit, so the proposal settles with `apply`; `select` fails closed against a
-  basis that is not the parent's HEAD. Combining it with `seed_from` or
-  `seed_mode` is refused.
+  commit, so the proposal settles with `apply` whenever that commit is not your
+  HEAD: `select` fails closed against a basis that is not the parent's HEAD. A
+  `base_ref` naming HEAD settles with `select` only while your working tree
+  still matches that commit — a ref carries no uncommitted state, so a pending
+  edit makes `select` fail closed and `apply` the path. Combining it with
+  `seed_from` or `seed_mode` is refused.
 - Worktree proposals are durable: their result and transcript survive a restart,
   so a resumed session can still list, settle, and continue them.
 - The dispatch envelope names `world` (`worktree` or `container`); a

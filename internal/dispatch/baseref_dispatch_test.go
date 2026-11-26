@@ -3,7 +3,10 @@ package dispatch
 // baseref_dispatch_test.go covers the base_ref dispatch wiring (yaah-witj
 // increment B): the refusal on a resolved container world, the fact that the
 // child's world really starts at the named commit, and the settlement
-// consequence — a base_ref proposal settles with apply, never select.
+// consequence — a base_ref proposal settles with apply, not select, when the
+// ref names a commit other than the parent's HEAD (one naming HEAD stays
+// selectable, but only while the parent's working tree still matches that
+// commit: see the dirty-tree case below).
 
 import (
 	"context"
@@ -15,6 +18,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	goatherdgit "github.com/goatherdai/goatherd-runtime/sandbox/git"
 
 	"github.com/goatherdai/yaah/internal/tools/substrate"
 )
@@ -135,6 +140,181 @@ func TestRetained_BaseRefReprovisionsAtTheRef(t *testing.T) {
 		if strings.Contains(w, "differs from the worktree repository's HEAD") {
 			t.Fatalf("unexpected basis-divergence warning on a base_ref dispatch: %q", w)
 		}
+	}
+}
+
+// TestRetained_BaseRefAtHEADStaysSelectable pins the other side of the
+// settlement rule, the half the docs used to over-claim: `select` fails closed
+// against a basis that is not the parent's HEAD, so a `base_ref` that names HEAD
+// selects like any default dispatch — as long as the parent's working tree
+// still matches that commit, which the case next door pins. Without this, the
+// scoped claim ("settles with apply WHEN the ref is not HEAD") would be an
+// assertion nothing verified — and the unscoped version it replaced ("a base_ref
+// proposal settles with apply, never select") would read as consistent with the
+// suite, since every other base_ref settlement test names a non-HEAD commit.
+func TestRetained_BaseRefAtHEADStaysSelectable(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	head := revParseTest(t, repo, "HEAD")
+
+	rt := RetainedRuntime{
+		Runner: func(_ context.Context, _ string, params SubAgentParams) (string, error) {
+			writeTestFile(t, params.Workdir, "work.txt", "work\n")
+			return "done", nil
+		},
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		SessionID:    "sess-baseref-head",
+		Proposals:    NewProposalRegistry(),
+	}
+	res, err := StartRetainedRun(context.Background(), rt, "go", SubAgentParams{Role: "developer", BaseRef: "HEAD"}, 10*time.Second, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	dispatched := decodeProposalEnvelope(t, res)
+	if dispatched.Status != "proposal" {
+		t.Fatalf("status = %q (%s)", dispatched.Status, dispatched.Error)
+	}
+	if dispatched.BaseRef != "HEAD" || dispatched.BasisHead != head {
+		t.Fatalf("base_ref/basis_head = %q/%q, want \"HEAD\"/%q", dispatched.BaseRef, dispatched.BasisHead, head)
+	}
+
+	// The basis IS the parent's HEAD, so the fail-closed rule does not apply.
+	settled, err := rt.Proposals.settleRetainedProposal(context.Background(), dispatched.ProposalID, "select")
+	if err != nil {
+		t.Fatalf("select on a base_ref naming HEAD: %v (the basis is the parent's HEAD, so select must not fail closed)", err)
+	}
+	env := decodeProposalEnvelope(t, settled)
+	if env.Status != "settled" || env.Action != "select" {
+		t.Fatalf("settle envelope = %+v, want settled/select", env)
+	}
+	if env.BaseRef != "HEAD" || env.BasisHead != head {
+		t.Errorf("settlement base_ref/basis_head = %q/%q, want \"HEAD\"/%q", env.BaseRef, env.BasisHead, head)
+	}
+	if _, serr := os.Stat(filepath.Join(repo, "work.txt")); serr != nil {
+		t.Fatalf("select did not land the proposal's file: %v", serr)
+	}
+}
+
+// TestRetained_BaseRefAtHEADWithADirtyParentStillFailsClosed pins the CONDITION
+// behind the clean-tree case above — the half a scoping that says "a base_ref
+// naming HEAD keeps an ORDINARY basis" gets wrong.
+//
+// The two bases are not the same shape. The default lane records the parent's
+// own capture, which stages the working tree (untracked, non-ignored files
+// included) into a scratch index and writes it out as tree_sha. A base_ref
+// basis is synthesized from the COMMIT alone — head_sha plus that commit's
+// tree_sha (baseRefCommit.workspaceState) — because a ref carries no
+// uncommitted state. So a parent that already held an uncommitted edit when it
+// dispatched is a parent whose settlement capture is a DIFFERENT tree from the
+// one the basis names: select's fast-forward-only digest check fails and the
+// caller is told to use apply, exactly as for a basis at another commit.
+//
+// The edit is in place BEFORE the dispatch on purpose, and that is what makes
+// this test able to fail. With a clean tree at dispatch the two candidate bases
+// are indistinguishable then (commit tree == clean capture), so a change that
+// recorded the captured workspace as a base_ref basis would still pass. Dirty
+// at dispatch, the two diverge: the commit's tree is clean, the capture is not.
+//
+// That is the fail-closed rule applied honestly, not a defect. The point of
+// pinning it is that the scoped claim "base_ref: HEAD stays selectable" is true
+// only WHILE the parent still matches that commit, and an untested scoping
+// clause is the same kind of assertion this PR's previous round committed
+// without a test.
+func TestRetained_BaseRefAtHEADWithADirtyParentStillFailsClosed(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	head := revParseTest(t, repo, "HEAD")
+	headTree := revParseTest(t, repo, "HEAD^{tree}")
+
+	// The uncommitted edit, in place before the dispatch: nothing is committed,
+	// so HEAD and its tree are untouched and only the working tree differs.
+	writeTestFile(t, repo, "parent-dirty.txt", "uncommitted\n")
+	if got := revParseTest(t, repo, "HEAD"); got != head {
+		t.Fatalf("HEAD moved to %q; the fixture must leave the timeline alone", got)
+	}
+	if status := mustGitIn(t, repo, "status", "--porcelain", "--", "parent-dirty.txt"); !strings.Contains(status, "parent-dirty.txt") {
+		t.Fatalf("git status = %q, want the uncommitted file named; the fixture is not dirty", status)
+	}
+
+	rt := RetainedRuntime{
+		Runner: func(_ context.Context, _ string, params SubAgentParams) (string, error) {
+			// A ref carries committed state only: the parent's dirty file must
+			// not reach the child's world, or the delta below would start from
+			// the worktree instead of from the commit.
+			if _, serr := os.Stat(filepath.Join(params.Workdir, "parent-dirty.txt")); !errors.Is(serr, os.ErrNotExist) {
+				t.Errorf("the child's world holds the parent's uncommitted file (err=%v); a ref carries committed state only", serr)
+			}
+			writeTestFile(t, params.Workdir, "work.txt", "work\n")
+			return "done", nil
+		},
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		SessionID:    "sess-baseref-head-dirty",
+		Proposals:    NewProposalRegistry(),
+	}
+	res, err := StartRetainedRun(context.Background(), rt, "go", SubAgentParams{Role: "developer", BaseRef: "HEAD"}, 10*time.Second, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	dispatched := decodeProposalEnvelope(t, res)
+	if dispatched.Status != "proposal" {
+		t.Fatalf("status = %q (%s)", dispatched.Status, dispatched.Error)
+	}
+	// The basis is the COMMIT's tree, not the tree of the parent's dirty
+	// working tree. This is the assertion a captured-workspace basis breaks
+	// even while the tree is dirty at dispatch.
+	if dispatched.BasisHead != head || dispatched.BasisTree != headTree {
+		t.Fatalf("basis = head %q tree %q, want the commit's %q / %q (the basis must not be the parent's captured working tree)", dispatched.BasisHead, dispatched.BasisTree, head, headTree)
+	}
+	// The same distinction shows up in the delta: measured against the dirty
+	// capture, the child's world would look like it DELETED parent-dirty.txt.
+	if len(dispatched.Files) != 1 || dispatched.Files[0] != "work.txt" {
+		t.Fatalf("proposal files = %v, want only the child's own work.txt", dispatched.Files)
+	}
+
+	// The mechanism, as an assertion: the state the kernel captures from this
+	// parent at settlement is NOT the basis — same commit, different tree.
+	captured, cerr := goatherdgit.NewLocalGitSandbox(repo, goatherdgit.WithCleanPolicy(goatherdgit.CleanPreserveUntracked)).Capture(context.Background())
+	if cerr != nil {
+		t.Fatalf("capture the dirty parent: %v", cerr)
+	}
+	if captured.Revision != head {
+		t.Fatalf("captured revision = %q, want the unchanged HEAD %q", captured.Revision, head)
+	}
+	capturedTree, _ := captured.Data["tree_sha"].(string)
+	if capturedTree == "" || capturedTree == headTree {
+		t.Fatalf("captured tree = %q, want a tree DIFFERENT from the commit's %q: the uncommitted edit has to show up in the capture for this test to prove anything", capturedTree, headTree)
+	}
+
+	// ... so select fails closed, exactly as it does for a basis at another
+	// commit.
+	if _, serr := rt.Proposals.settleRetainedProposal(context.Background(), dispatched.ProposalID, "select"); serr == nil {
+		t.Fatal("select succeeded against a base_ref basis while the parent held an uncommitted edit; the basis is the commit's tree, not the captured working tree, so select must fail closed")
+	} else if !strings.Contains(serr.Error(), "use SettleApply") {
+		t.Fatalf("select error = %q, want the fail-closed basis refusal", serr)
+	}
+
+	// apply remains the settlement path, and it must leave the parent's
+	// uncommitted edit alone: the proposal owns work.txt, not parent-dirty.txt.
+	settled, err := rt.Proposals.settleRetainedProposal(context.Background(), dispatched.ProposalID, "apply")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	env := decodeProposalEnvelope(t, settled)
+	if env.Status != "settled" || env.Action != "apply" {
+		t.Fatalf("settle envelope = %+v, want settled/apply", env)
+	}
+	if env.BasisHead != head || env.BasisTree != headTree {
+		t.Fatalf("settle basis = head %q tree %q, want the dispatch basis %q / %q", env.BasisHead, env.BasisTree, head, headTree)
+	}
+	if content, rerr := os.ReadFile(filepath.Join(repo, "work.txt")); rerr != nil || string(content) != "work\n" {
+		t.Fatalf("work.txt = %q (err=%v), want the proposal's content", content, rerr)
+	}
+	if content, rerr := os.ReadFile(filepath.Join(repo, "parent-dirty.txt")); rerr != nil || string(content) != "uncommitted\n" {
+		t.Fatalf("the parent's uncommitted edit was disturbed: %q (err=%v)", content, rerr)
 	}
 }
 

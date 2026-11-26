@@ -258,13 +258,18 @@ returns a proposal the orchestrator settles.
   parent's workspace captured at dispatch; `delegate(base_ref: <ref>)` names a
   different one, seeding the world at that commit and measuring the proposal's
   delta against it. Because `select` fast-forwards onto the basis, a
-  `base_ref` proposal settles with `apply`: its basis is deliberately not the
-  parent's HEAD, so `select` fails closed by design, while `apply` lands when
-  the parent's CURRENT content on the proposal's own paths still matches the
-  stored basis. That is a content comparison against the basis, not a
-  commit-time one, so a basis behind HEAD — and any divergence that predates
-  the dispatch — is more likely to be refused as a path overlap; that refusal
-  is the correct report of a real conflict, not a defect.
+  `base_ref` proposal settles with `apply` whenever the ref names a commit
+  other than the parent's HEAD: its basis is deliberately some other commit, so
+  `select` fails closed by design, while `apply` lands when the parent's
+  CURRENT content on the proposal's own paths still matches the stored basis. A
+  `base_ref` naming HEAD is not such a case and settles with `select` — but
+  only while the parent's working tree still matches that commit: the basis is
+  the commit's tree, not the captured working tree, so an uncommitted edit
+  makes `select` fail closed there too. The apply comparison just described is
+  a content comparison against the basis, not a commit-time one, so a basis
+  behind HEAD — and any divergence that predates the dispatch — is more likely
+  to be refused as a path overlap; that refusal is the correct report of a real
+  conflict, not a defect.
 - **Report roles.** A role whose frontmatter declares `output: report`
   decouples the output contract from the substrate (yaah-7yf): a report that
   can mutate runs in an isolated report world (worktree or container) so
@@ -328,8 +333,10 @@ returns a proposal the orchestrator settles.
   world, so an unfetched `origin/main` is refused with a message saying so; a
   ref carries no uncommitted state; the world may be a project or report
   worktree but never a container or shared one; and the proposal settles with
-  `apply`, not `select`. A base-ref dispatch records no basis/repo divergence
-  warning — the mismatch is the point.
+  `apply`, not `select`, when the ref names a commit other than the parent's
+  HEAD (a `base_ref: HEAD` dispatch stays selectable, but only while the
+  parent's working tree still matches that commit). A base-ref dispatch records
+  no basis/repo divergence warning — the mismatch is the point.
 - **Durable proposals.** A worktree proposal's conversation, result, and
   dispatch params are carried by the sealed output itself (execution snapshot +
   metadata + retained diff), and at startup the proposal registry is rebuilt
