@@ -105,7 +105,14 @@ func (p *retainedProposal) dispatchBasis() (kerneltrace.WorkspaceState, bool) {
 // left to read — a proposal rehydrated in a later process whose sealed output no
 // longer carries a baseline — the record the seal itself persisted still answers,
 // because surviving the state is the whole reason that record exists.
+//
+// A nil proposal answers nil, matching dispatchBasis: the two are the state and
+// its rendering, so a caller that inherits one method's nil-safety cannot fall
+// into a panic by switching to the other.
 func (p *retainedProposal) dispatchBasisRecord() *proposalBasisRecord {
+	if p == nil {
+		return nil
+	}
 	if state, ok := p.dispatchBasis(); ok {
 		return basisRecord(state)
 	}

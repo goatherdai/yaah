@@ -390,8 +390,12 @@ func runDispatchContainerProposal(
 	runCtx = jobs.WithSubAgentDenials(runCtx, &denials)
 	runCtx = jobs.WithSubAgentInterventions(runCtx, &interventions)
 	result, bodyErr := rt.Runner(runCtx, prompt, sp)
-	env.Warnings = append(env.Warnings, denialWarnings(denials)...)
-	env.Warnings = append(env.Warnings, interventionWarnings(interventions)...)
+	// The same funnel the worktree lane uses: the refusals this body recorded
+	// and the interventions made on it keep the scalar `warning` in step with
+	// the list, instead of appending past it (yaah-witj increment A review).
+	// The degraded-world and basis caveats were already stamped at construction,
+	// so a reader of either channel sees the same ordered set.
+	addRunWarnings(&env, denials, interventions)
 	runErrState := runCtx.Err()
 	parentErr := ctx.Err()
 	if cancel != nil {

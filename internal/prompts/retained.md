@@ -39,8 +39,10 @@ it with the `proposal` tool:
 `proposal` with `action: "list"` answers with the same JSON envelope as the other
 verbs: `proposals` is a list of summaries (id, files), and it is an
 explicit empty `[]` when nothing is open — not prose, not an error. Each summary
-also carries `parent_drift` (paths the parent changed since that proposal's
-dispatch basis; `parent_drift_error` if the basis cannot be inspected), its
+also carries the recorded basis (`basis_head`, `basis_tree`, `basis_backend`, as
+described with the dispatch envelope below), `parent_drift` (paths the parent
+changed since that proposal's dispatch basis; `parent_drift_error` if the basis
+cannot be inspected), its
 content-aware `changes` (`path`, `kind`, `base_digest`, `digest`, `mode`), a
 `changes_error` if a worktree post-image cannot be inspected, and its own
 `conflicts` and `duplicates`; each conflicting path also carries bounded
@@ -61,9 +63,20 @@ report is in.
 
 A dispatch envelope carries `world` (`worktree` or `container`); a container
 proposal also carries `target` (`host` or `session`), and its settlement
-envelope repeats both. An optional
-`warning` says the dispatch ran in a degraded world instead of the one
-requested; read it before accepting. An optional `notes` records settlement
+envelope repeats both. When a basis was recorded, the dispatch, `show`, `list`,
+failed-seal discard and every settlement envelope names the state the work was
+measured against: `basis_head` (the basis revision: the commit SHA when
+`basis_backend` is `git`, otherwise the backend's own revision), `basis_tree`
+(that revision's tree, when the backend records one) and `basis_backend` (the
+workspace backend — `git` for a repository-backed dispatch). The basis is the
+state settlement compares the parent against, not the parent's HEAD at read
+time, so it tells you which revision a proposal started from and whether the
+branch has since moved past it; `parent_drift` and the `apply` guards are
+measured against it. Absent means none: a proposal with no recorded basis omits
+all three fields rather than emitting them empty. `warnings` is the typed list
+of caveats and `warning` repeats the first (a degraded world, a dispatch-basis
+divergence, a guard refusal, a supervision intervention); read the first before
+accepting. An optional `notes` records settlement
 caveats such as a failed teardown or stranded worktree.
 
 Report roles (`reviewer`, `tester`, `analyst`) are different: their dispatch

@@ -123,6 +123,15 @@ func newFailedSealProposal(h *goatherd.FailedSeal, mgr *goatherd.ScopeManager, r
 		repoPath:            rt.RepoPath,
 		status:              "seal_failed",
 		failedSeal:          h,
+		// The seal's own legible basis record, read back from the metadata this
+		// function already decodes. The handle's workspace state answers first
+		// (dispatchBasis), but a handle carrying no workspace state — exactly
+		// what a digest-failure artifact looks like, because the state-values
+		// fact is deliberately never written on that path — leaves this record
+		// as the ONLY surviving copy of the basis. Dropping it made show, list
+		// and discard report no basis for an artifact the seal recorded one for
+		// (yaah-witj increment A review).
+		sealBasisRecord: meta.Basis,
 	}
 	return p, nil
 }

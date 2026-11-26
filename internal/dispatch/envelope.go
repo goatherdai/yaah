@@ -197,6 +197,28 @@ func addDispatchWarnings(env *proposalEnvelope, res subagent.WorldResolution, ba
 	}
 }
 
+// addRunWarnings stamps the refusals one run recorded and the supervision
+// interventions made on it onto an envelope, in that fixed order, through
+// AddWarning.
+//
+// Both dispatch lanes carry these two lists (yaah-938, yaah-vaxv), and a lane
+// that appends them to Warnings directly leaves the scalar `warning` empty —
+// so a reader of the scalar alone sees a clean dispatch that was actually
+// refused part of what it attempted. proposal.md documents the scalar as
+// repeating warnings[0]; stamping both channels from one helper is what keeps
+// that true whichever lane the dispatch took.
+func addRunWarnings(env *proposalEnvelope, denials []jobs.SubAgentDenial, interventions []jobs.SubAgentIntervention) {
+	if env == nil {
+		return
+	}
+	for _, w := range denialWarnings(denials) {
+		env.AddWarning(w)
+	}
+	for _, w := range interventionWarnings(interventions) {
+		env.AddWarning(w)
+	}
+}
+
 // SetProposalArtifacts mirrors the envelope's proposal_id/files/diff into the
 // nested artifacts block. The flat fields stay exactly as they were: they are
 // what the proposal tool and the model settle on.

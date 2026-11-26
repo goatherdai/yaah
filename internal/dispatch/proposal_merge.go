@@ -368,10 +368,10 @@ func (p *retainedProposal) baseContentFull(ctx context.Context, rel string) ([]b
 	if p.repoPath == "" {
 		return nil, false, fmt.Errorf("no repository path")
 	}
-	state := p.basisState
-	if p.output != nil {
-		state = p.output.Baseline()
-	}
+	// The base the merge is measured against is the SAME basis the envelope
+	// reports: dispatchBasis is the one statement of that ladder, so a record
+	// and a measurement cannot disagree (yaah-witj increment A).
+	state, _ := p.dispatchBasis()
 	if state.Backend != "git" {
 		return nil, false, fmt.Errorf("basis backend is %q, not git", state.Backend)
 	}

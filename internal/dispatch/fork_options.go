@@ -5,10 +5,13 @@ package dispatch
 // (Baseline) cannot be set independently of each other. "Only place" is
 // enforced by a text tripwire, not by construction: the test
 // TestForkOptionsHasOneConstructionSite scans this package's non-test files for
-// the byte string `ForkOptions{`, so a field-by-field assignment (declare a zero
+// the qualified construction form `goatherd.ForkOptions{` (type name AND opening
+// brace), skipping comment lines, so a field-by-field assignment (declare a zero
 // ForkOptions, then set Seed and Baseline separately) would evade it, and it
 // never reads cmd/yaah or internal/agent. It catches the ordinary way the pair
-// would come back, not every way.
+// would come back, not every way. Comment lines are skipped so that this doc
+// comment can quote the marker without satisfying it — a marker a comment can
+// satisfy makes the scan's "the scan is stale, not green" guard unable to fire.
 //
 // The pairing is forced, not incidental. The runtime treats a zero Baseline as
 // "capture the parent's workspace at fork time", so a fork that supplies a Seed

@@ -1156,12 +1156,7 @@ func startRetainedRun(
 	// it attempted must say so, whether it sealed completely or as a partial.
 	// The interventions the supervisor made on it follow the same route
 	// (yaah-vaxv).
-	for _, w := range denialWarnings(denials) {
-		env.AddWarning(w)
-	}
-	for _, w := range interventionWarnings(interventions) {
-		env.AddWarning(w)
-	}
+	addRunWarnings(&env, denials, interventions)
 
 	// The report lane (yaah-7yf) never seals: the deliverable is the
 	// result text. Surface any provisioning problem the proposal lane
@@ -1784,12 +1779,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	// The same refusals channel the original run's do (yaah-938): a continuation
 	// is a dispatch of its own, and its envelope is what the orchestrator reads.
 	// The interventions made on it follow the same route (yaah-vaxv).
-	for _, w := range denialWarnings(denials) {
-		env.AddWarning(w)
-	}
-	for _, w := range interventionWarnings(interventions) {
-		env.AddWarning(w)
-	}
+	addRunWarnings(&env, denials, interventions)
 	if output == nil {
 		if derr := recordFailedReviewDecision(ctx, mgr, reviewProposal, reviewFactID, sealErr); derr != nil {
 			notes = append(notes, "review decision: "+derr.Error())

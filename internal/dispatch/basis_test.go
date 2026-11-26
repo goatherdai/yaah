@@ -119,9 +119,10 @@ func TestForkOptionsFor_PairsSeedAndBaseline(t *testing.T) {
 
 // TestForkOptionsHasOneConstructionSite is the structural half of A1: it fails
 // if any file but fork_options.go builds a goatherd.ForkOptions, which is how a
-// seed-without-baseline pair would come back.
+// seed-without-baseline pair would come back, and it fails the other way too if
+// the home file stops building one (the scan is stale, not green — see
+// buildsForkOptions for why that assertion can actually fire).
 func TestForkOptionsHasOneConstructionSite(t *testing.T) {
-	const marker = "ForkOptions{"
 	const home = "fork_options.go"
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -137,7 +138,7 @@ func TestForkOptionsHasOneConstructionSite(t *testing.T) {
 		if rerr != nil {
 			t.Fatalf("read %s: %v", name, rerr)
 		}
-		if !bytes.Contains(data, []byte(marker)) {
+		if !buildsForkOptions(data) {
 			continue
 		}
 		if name != home {
@@ -149,6 +150,29 @@ func TestForkOptionsHasOneConstructionSite(t *testing.T) {
 	if !foundInHome {
 		t.Fatalf("%s no longer builds a goatherd.ForkOptions; the scan is stale, not green", home)
 	}
+}
+
+// buildsForkOptions reports whether a source file contains a
+// goatherd.ForkOptions composite literal outside a comment.
+//
+// Both halves of that are load-bearing. The marker is the QUALIFIED
+// construction form rather than the bare type name, and comment lines are
+// skipped: fork_options.go's own doc comment quotes the construction form, so a
+// raw search (or a bare-name search) matches the home file even after its real
+// construction site is gone — which is exactly the case the staleness guard
+// below exists to catch.
+func buildsForkOptions(src []byte) bool {
+	const marker = "goatherd.ForkOptions{"
+	for _, line := range bytes.Split(src, []byte("\n")) {
+		trimmed := bytes.TrimSpace(line)
+		if bytes.HasPrefix(trimmed, []byte("//")) {
+			continue
+		}
+		if bytes.Contains(trimmed, []byte(marker)) {
+			return true
+		}
+	}
+	return false
 }
 
 // TestProposalEnvelopeBasisFields pins A3: the envelope and the list summary
@@ -658,4 +682,124 @@ func readPackageSourceLines(t *testing.T, name string) []string {
 		t.Fatalf("read %s: %v", name, err)
 	}
 	return strings.Split(string(data), "\n")
+}
+
+// TestFailedSealBasis_PersistedRecordAnswersWithoutWorkspaceState pins the one
+// lane where the seal's own basis record is the ONLY surviving copy: a
+// failed-seal artifact whose handle carries no workspace state. That is exactly
+// what a digest-failure handle looks like after a restart — the state-values
+// fact is deliberately never written on that path (see failed_seal.go) — so the
+// sealed metadata is all there is. The constructor decoded that metadata and
+// dropped the basis, so show/list/discard reported NO basis for an artifact the
+// seal had recorded one for (yaah-witj increment A review).
+func TestFailedSealBasis_PersistedRecordAnswersWithoutWorkspaceState(t *testing.T) {
+	fx, _, rootID := newSessionFixtures(t)
+	sealed := &proposalBasisRecord{
+		Backend: "git",
+		Head:    strings.Repeat("ab", 20),
+		Tree:    strings.Repeat("cd", 20),
+	}
+	meta, err := json.Marshal(retainedProposalMeta{
+		ID:            "proposal:failed:persisted",
+		SessionID:     "sess-failed-basis",
+		ParentScopeID: rootID,
+		Basis:         sealed,
+	})
+	if err != nil {
+		t.Fatalf("marshal failed-seal metadata: %v", err)
+	}
+	h := &goatherd.FailedSeal{
+		ArtifactID: "art:persisted-basis",
+		ScopeID:    "scope:gone-after-restart",
+		Metadata:   meta,
+		Transcript: []byte(`[{"role":"user","content":"do the work"}]`),
+		Stage:      "digest_state",
+	}
+	rt := RetainedRuntime{RootScopeID: rootID, Proposals: NewProposalRegistry()}
+	if err := registerFailedSealProposal(h, fx.mgr, rt); err != nil {
+		t.Fatalf("register failed-seal proposal: %v", err)
+	}
+	p, err := rt.Proposals.get(h.ArtifactID)
+	if err != nil {
+		t.Fatalf("failed-seal proposal: %v", err)
+	}
+	// The premise: no live state to read, which is why the record matters.
+	if state, ok := p.dispatchBasis(); ok {
+		t.Fatalf("dispatchBasis = %+v, want no live state: this handle records no workspace", state)
+	}
+	rec := p.dispatchBasisRecord()
+	if rec == nil || rec.Backend != sealed.Backend || rec.Head != sealed.Head || rec.Tree != sealed.Tree {
+		t.Fatalf("record = %+v, want the seal's persisted basis %+v", rec, sealed)
+	}
+	// What show/list/discard actually emit for it.
+	env := proposalEnvelope{Status: "seal_failed", ProposalID: h.ArtifactID}
+	env.setBasis(p.dispatchBasisRecord())
+	data, merr := json.Marshal(env)
+	if merr != nil {
+		t.Fatalf("marshal envelope: %v", merr)
+	}
+	for _, want := range []string{
+		`"basis_head":"` + sealed.Head + `"`,
+		`"basis_tree":"` + sealed.Tree + `"`,
+		`"basis_backend":"git"`,
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("failed-seal envelope %s does not carry %s", data, want)
+		}
+	}
+}
+
+// TestDispatchBasis_NilContractsAgree pins that the state reader and its
+// rendering share ONE nil contract. dispatchBasis has always answered
+// (zero state, false) for a nil proposal; dispatchBasisRecord used to dereference
+// that nil receiver on the same path, so a caller latching onto the safer of the
+// pair got a panic from the other (yaah-witj increment A review).
+func TestDispatchBasis_NilContractsAgree(t *testing.T) {
+	var p *retainedProposal
+	if state, ok := p.dispatchBasis(); ok || state.Backend != "" {
+		t.Fatalf("dispatchBasis on a nil proposal = %+v/%v, want the zero state and false", state, ok)
+	}
+	if rec := p.dispatchBasisRecord(); rec != nil {
+		t.Fatalf("dispatchBasisRecord on a nil proposal = %+v, want nil", rec)
+	}
+}
+
+// TestBasisReaders_AgreeWithTheReportedBasis pins the single-source-of-truth
+// half of A4: the two readers that decide what the MERGE and the CONFLICT
+// EVIDENCE are measured against answer from dispatchBasis, like the record every
+// envelope reports — so a record and a measurement cannot diverge.
+//
+// A failed-seal proposal is the case that separates the two designs: it has no
+// sealed output, so the inline "output.Baseline() else basisState" ladder saw no
+// basis at all and refused with `basis backend is "", not git`, while
+// dispatchBasis resolves the artifact's recorded workspace. The path asserted
+// here is absent from that tree, which is "no base", not "no git basis".
+func TestBasisReaders_AgreeWithTheReportedBasis(t *testing.T) {
+	repo := newTestGitRepo(t)
+	ctx := context.Background()
+	head, err := gitHeadSHA(ctx, repo)
+	if err != nil || head == "" {
+		t.Fatalf("read repo HEAD: %q %v", head, err)
+	}
+	state := kerneltrace.WorkspaceState{
+		Backend:  "git",
+		Revision: head,
+		Data:     map[string]any{"tree_sha": head},
+	}
+	p := &retainedProposal{
+		id:         "art:readers",
+		status:     "seal_failed",
+		repoPath:   repo,
+		failedSeal: &goatherd.FailedSeal{ArtifactID: "art:readers", Workspace: state},
+	}
+	if got, ok := p.dispatchBasis(); !ok || got.Revision != head {
+		t.Fatalf("dispatchBasis = %+v/%v, want the artifact's recorded workspace", got, ok)
+	}
+	const absent = "no-such-file-in-basis.txt"
+	if _, exists, berr := p.baseContentFull(ctx, absent); berr != nil || exists {
+		t.Fatalf("baseContentFull = exists %v, err %v; want the recorded git basis consulted (absent path, no error)", exists, berr)
+	}
+	if _, note := p.baseContentViewCached(ctx, absent, nil); note != "base missing" {
+		t.Fatalf("conflict base note = %q, want %q: the recorded git basis must be consulted, not rejected as non-git", note, "base missing")
+	}
 }

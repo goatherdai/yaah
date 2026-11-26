@@ -51,10 +51,13 @@ type retainedProposalMeta struct {
 	// proposal must still be able to say what its work started from, and
 	// resolved because the request parameters say what was ASKED for. Absent
 	// means no basis was recorded, never "the basis is empty" — so a seal that
-	// wrote nothing here reports no basis rather than an empty one. Its reader
-	// is the rehydration path (proposal_rehydrate.go), which hands it to
-	// retainedProposal.sealBasisRecord: every envelope prefers the live state
-	// and falls back to this when the state is gone.
+	// wrote nothing here reports no basis rather than an empty one. Its readers
+	// are BOTH rehydration paths, and each hands it to
+	// retainedProposal.sealBasisRecord: the worktree/container rehydration in
+	// proposal_rehydrate.go, and newFailedSealProposal in failed_seal.go (where
+	// it is frequently the only surviving copy, because a digest-failure
+	// artifact records no workspace state at all). Every envelope prefers the
+	// live state and falls back to this when the state is gone.
 	Basis *proposalBasisRecord `json:"basis,omitempty"`
 }
 
