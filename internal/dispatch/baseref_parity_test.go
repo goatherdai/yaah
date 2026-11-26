@@ -8,14 +8,21 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	kerneltrace "github.com/goatherdai/goatherd-kernel"
+	goatherd "github.com/goatherdai/goatherd-runtime"
+
 	"github.com/goatherdai/yaah/internal/agent/recovery"
+	"github.com/goatherdai/yaah/internal/jobs"
+	"github.com/goatherdai/yaah/internal/types"
 )
 
 // TestRetained_BaseRefSurvivesOnEveryBasisSurface pins where the spelling
@@ -254,5 +261,243 @@ func TestRetained_BaseRefSeedsAReportWorld(t *testing.T) {
 	}
 	if !strings.Contains(res, "the report") {
 		t.Fatalf("result = %q, want the report text", res)
+	}
+}
+
+// TestRetained_BaseRefSpellingSurvivesContinuation is the CONTINUATION twin of
+// the surface and restart tests above, and it pins the one route neither of
+// them can see: `proposal continue` / `proposal fork` of a base_ref dispatch.
+//
+// A continuation clears `BaseRef` from the copied params on purpose (a ref name
+// there would be resolved AGAIN, against a repository that may have moved), so
+// the only way its envelope can still name the request is
+// resolveThreadSeed copying the source's recorded spelling into the seed. This
+// test therefore MOVES the `side` branch between the dispatch and the
+// continuation: without that, "the recorded basis was reused" and "the name was
+// re-resolved" would produce the same commit and the test could not tell them
+// apart. Deleting the `ts.ref = rec.Ref` copy in resolveThreadSeed must fail
+// here (mutation-verified; see the PR discussion).
+func TestRetained_BaseRefSpellingSurvivesContinuation(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	side := baseRefSideBranch(t, repo)
+
+	var calls int
+	var contParams SubAgentParams
+	var contHead string
+	rt := RetainedRuntime{
+		Runner: func(ctx context.Context, _ string, params SubAgentParams) (string, error) {
+			calls++
+			if calls == 1 {
+				writeTestFile(t, params.Workdir, "work.txt", "work\n")
+				jobs.CaptureSubAgentTranscript(ctx, []types.Message{
+					types.SystemMsg("sys"),
+					types.UserMsg("do the work"),
+				})
+				return "first result", nil
+			}
+			contParams = params
+			contHead = mustGitIn(t, params.Workdir, "rev-parse", "HEAD")
+			writeTestFile(t, params.Workdir, "more.txt", "more\n")
+			jobs.CaptureSubAgentTranscript(ctx, []types.Message{
+				types.SystemMsg("sys"),
+				types.UserMsg("do the work"),
+				types.UserMsg("continue"),
+			})
+			return "second result", nil
+		},
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		SessionID:    "sess-baseref-continuation",
+		Proposals:    NewProposalRegistry(),
+	}
+	res, err := StartRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "developer", BaseRef: "side"}, 10*time.Second, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	orig := decodeProposalEnvelope(t, res)
+	if orig.Status != "proposal" {
+		t.Fatalf("status = %q (%s)", orig.Status, orig.Error)
+	}
+	if orig.BaseRef != "side" || orig.BasisHead != side {
+		t.Fatalf("dispatch base_ref/basis_head = %q/%q, want \"side\"/%q", orig.BaseRef, orig.BasisHead, side)
+	}
+
+	// Move the branch the caller named. A continuation that re-resolved "side"
+	// would now start at moved — a different commit from the one its delta is
+	// measured against. Written with commit-tree + update-ref so the parent
+	// repository's HEAD and working tree, which the continuation's fork depends
+	// on, are untouched.
+	tree := mustGitIn(t, repo, "rev-parse", side+"^{tree}")
+	moved := mustGitIn(t, repo, "commit-tree", tree, "-p", side, "-m", "side moves on")
+	mustGitIn(t, repo, "update-ref", "refs/heads/side", moved)
+	if got := revParseTest(t, repo, "side"); got != moved || moved == side {
+		t.Fatalf("side = %q, want the moved commit %q (the original basis was %q)", got, moved, side)
+	}
+
+	res2, err := ContinueRetainedRun(context.Background(), rt, orig.ProposalID, 3, "", false)
+	if err != nil {
+		t.Fatalf("ContinueRetainedRun: %v", err)
+	}
+	cont := decodeProposalEnvelope(t, res2)
+	if cont.Status != "proposal" {
+		t.Fatalf("continuation status = %q, want proposal (%s)", cont.Status, cont.Error)
+	}
+	// The continuation's world is the ORIGINAL basis commit, not the moved tip:
+	// this is the assertion the moved branch exists to give teeth to.
+	if contHead != side {
+		t.Errorf("continuation world HEAD = %q, want the original base_ref commit %q (the moved tip is %q)", contHead, side, moved)
+	}
+	// The continuation is a dispatch of its own, so its params must NOT carry a
+	// ref name a later run could resolve again; its basis comes from the seed.
+	if contParams.BaseRef != "" {
+		t.Errorf("continuation params BaseRef = %q, want empty (a ref name here would be re-resolved)", contParams.BaseRef)
+	}
+	if cont.BasisHead != side {
+		t.Fatalf("continuation basis_head = %q, want the original base_ref commit %q (a re-resolved \"side\" would be %q)", cont.BasisHead, side, moved)
+	}
+	if cont.BaseRef != "side" {
+		t.Fatalf("continuation base_ref = %q, want the caller's spelling %q carried through the seed", cont.BaseRef, "side")
+	}
+	// The live continuation proposal carries it too, so show/list/settle after
+	// the continuation report the request rather than unexplained drift.
+	live, lerr := rt.Proposals.get(cont.ProposalID)
+	if lerr != nil {
+		t.Fatalf("continuation proposal: %v", lerr)
+	}
+	if live.basisRef != "side" {
+		t.Errorf("continuation proposal basisRef = %q, want %q", live.basisRef, "side")
+	}
+	if rec := live.dispatchBasisRecord(); rec == nil || rec.Ref != "side" || rec.Head != side {
+		t.Errorf("continuation basis record = %+v, want ref %q at the original commit %q", rec, "side", side)
+	}
+	for _, want := range []string{"work.txt", "more.txt"} {
+		if !slices.Contains(cont.Files, want) {
+			t.Errorf("continuation files %v missing %q (seeded work + new work)", cont.Files, want)
+		}
+	}
+}
+
+// TestRetained_BaseRefSpellingSurvivesFailedSealContinuation covers the SECOND
+// continuation route: recovering a failed seal. That branch of
+// ContinueRetainedRun cannot call resolveThreadSeed (a failed seal has no sealed
+// output), so it reads the spelling off p.dispatchBasisRecord and copies it into
+// the seed itself — a separate statement of the same rule, and therefore
+// separately able to regress.
+//
+// The failed seal is produced the way the lane's own tests produce one: an
+// injected sealOutput returns a typed SealError carrying the artifact handle, so
+// the registry entry is built by the production rehydration path
+// (newFailedSealProposal). Only the first call fails; the continuation's own
+// seal goes to the real ScopeManager, so the recovery is a full one. The
+// handle's metadata is the seal's own bytes (SealOptions.Metadata), which is
+// where the durable spelling lives.
+func TestRetained_BaseRefSpellingSurvivesFailedSealContinuation(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	side := baseRefSideBranch(t, repo)
+	tree := mustGitIn(t, repo, "rev-parse", side+"^{tree}")
+	// The artifact's recorded state, in the shape resolveBaseRef synthesizes:
+	// a seed the continuation can actually fork from, at the base_ref commit.
+	state := kerneltrace.WorkspaceState{
+		Backend:  "git",
+		Revision: side,
+		Data:     map[string]any{workspaceStateHeadKey: side, workspaceStateTreeKey: tree},
+	}
+
+	var calls int
+	var sealCalls int
+	rt := RetainedRuntime{
+		Runner: func(ctx context.Context, _ string, params SubAgentParams) (string, error) {
+			calls++
+			writeTestFile(t, params.Workdir, "work.txt", "work\n")
+			jobs.CaptureSubAgentTranscript(ctx, []types.Message{
+				types.SystemMsg("sys"),
+				types.UserMsg("do the work"),
+			})
+			return "partial work", nil
+		},
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		SessionID:    "sess-baseref-failed-seal-continuation",
+		Proposals:    NewProposalRegistry(),
+	}
+	rt.sealOutput = func(ctx context.Context, scopeID string, opts ...goatherd.SealOptions) (*goatherd.RetainedOutput, error) {
+		sealCalls++
+		if sealCalls > 1 {
+			return fx.mgr.Seal(ctx, scopeID, opts...)
+		}
+		transcript, terr := json.Marshal([]types.Message{
+			types.SystemMsg("sys"),
+			types.UserMsg("do the work"),
+		})
+		if terr != nil {
+			t.Fatalf("marshal artifact transcript: %v", terr)
+		}
+		if len(opts) == 0 {
+			t.Fatal("seal called with no options; the artifact metadata is unavailable")
+		}
+		h := &goatherd.FailedSeal{
+			ArtifactID: "art:baseref:1",
+			OutputID:   "out:baseref:1",
+			ScopeID:    scopeID,
+			OwnerID:    strings.TrimPrefix(scopeID, "scope:"),
+			Transcript: transcript,
+			// The seal's own metadata bytes: the durable basis record (and its
+			// ref spelling) rides there, exactly as it does on a real seal.
+			Metadata:  opts[0].Metadata,
+			Workspace: state,
+			Baseline:  state,
+			Stage:     "sealed_append",
+			Reason:    "injected append failure",
+		}
+		return nil, &goatherd.SealError{
+			Stage:      "sealed_append",
+			ArtifactID: h.ArtifactID,
+			Handle:     h,
+			Err:        errors.New("injected append failure"),
+		}
+	}
+
+	res, err := StartRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "developer", BaseRef: "side"}, 10*time.Second, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	failed := decodeProposalEnvelope(t, res)
+	if failed.Status != EnvelopeStatusSealFailed {
+		t.Fatalf("status = %q, want seal_failed (%s)", failed.Status, failed.Error)
+	}
+	if failed.BaseRef != "side" || failed.BasisHead != side {
+		t.Fatalf("failed-seal envelope base_ref/basis_head = %q/%q, want \"side\"/%q", failed.BaseRef, failed.BasisHead, side)
+	}
+
+	// Move the branch, so a re-resolved name would pick a different commit.
+	moved := mustGitIn(t, repo, "commit-tree", tree, "-p", side, "-m", "side moves on")
+	mustGitIn(t, repo, "update-ref", "refs/heads/side", moved)
+	if got := revParseTest(t, repo, "side"); got != moved || moved == side {
+		t.Fatalf("side = %q, want the moved commit %q (the original basis was %q)", got, moved, side)
+	}
+
+	res2, err := ContinueRetainedRun(context.Background(), rt, failed.ProposalID, 3, "", true)
+	if err != nil {
+		t.Fatalf("ContinueRetainedRun on the failed seal: %v", err)
+	}
+	cont := decodeProposalEnvelope(t, res2)
+	if cont.Status != "proposal" {
+		t.Fatalf("recovered status = %q, want proposal (%s)", cont.Status, cont.Error)
+	}
+	if cont.BasisHead != side {
+		t.Fatalf("recovered basis_head = %q, want the original base_ref commit %q (a re-resolved \"side\" would be %q)", cont.BasisHead, side, moved)
+	}
+	if cont.BaseRef != "side" {
+		t.Fatalf("recovered base_ref = %q, want the caller's spelling %q carried through the artifact's basis record", cont.BaseRef, "side")
+	}
+	if calls != 2 {
+		t.Errorf("sub-agent runs = %d, want 2 (the failed dispatch and the recovery)", calls)
+	}
+	if !slices.Contains(cont.Files, "work.txt") {
+		t.Errorf("recovered files %v missing work.txt", cont.Files)
 	}
 }

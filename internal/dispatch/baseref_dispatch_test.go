@@ -3,7 +3,9 @@ package dispatch
 // baseref_dispatch_test.go covers the base_ref dispatch wiring (yaah-witj
 // increment B): the refusal on a resolved container world, the fact that the
 // child's world really starts at the named commit, and the settlement
-// consequence — a base_ref proposal settles with apply, never select.
+// consequence — a base_ref proposal settles with apply, not select, when the
+// ref names a commit other than the parent's HEAD (one naming HEAD keeps an
+// ordinary basis and stays selectable).
 
 import (
 	"context"
@@ -135,6 +137,59 @@ func TestRetained_BaseRefReprovisionsAtTheRef(t *testing.T) {
 		if strings.Contains(w, "differs from the worktree repository's HEAD") {
 			t.Fatalf("unexpected basis-divergence warning on a base_ref dispatch: %q", w)
 		}
+	}
+}
+
+// TestRetained_BaseRefAtHEADStaysSelectable pins the other side of the
+// settlement rule, the half the docs used to over-claim: `select` fails closed
+// against a basis that is not the parent's HEAD, so a `base_ref` that names HEAD
+// keeps an ordinary basis and selects like any default dispatch. Without this,
+// the scoped claim ("settles with apply WHEN the ref is not HEAD") would be an
+// assertion nothing verified — and the unscoped version it replaced ("a base_ref
+// proposal settles with apply, never select") would read as consistent with the
+// suite, since every other base_ref settlement test names a non-HEAD commit.
+func TestRetained_BaseRefAtHEADStaysSelectable(t *testing.T) {
+	fx, repo, rootID := newSessionFixtures(t)
+	head := revParseTest(t, repo, "HEAD")
+
+	rt := RetainedRuntime{
+		Runner: func(_ context.Context, _ string, params SubAgentParams) (string, error) {
+			writeTestFile(t, params.Workdir, "work.txt", "work\n")
+			return "done", nil
+		},
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+		SessionID:    "sess-baseref-head",
+		Proposals:    NewProposalRegistry(),
+	}
+	res, err := StartRetainedRun(context.Background(), rt, "go", SubAgentParams{Role: "developer", BaseRef: "HEAD"}, 10*time.Second, false)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	dispatched := decodeProposalEnvelope(t, res)
+	if dispatched.Status != "proposal" {
+		t.Fatalf("status = %q (%s)", dispatched.Status, dispatched.Error)
+	}
+	if dispatched.BaseRef != "HEAD" || dispatched.BasisHead != head {
+		t.Fatalf("base_ref/basis_head = %q/%q, want \"HEAD\"/%q", dispatched.BaseRef, dispatched.BasisHead, head)
+	}
+
+	// The basis IS the parent's HEAD, so the fail-closed rule does not apply.
+	settled, err := rt.Proposals.settleRetainedProposal(context.Background(), dispatched.ProposalID, "select")
+	if err != nil {
+		t.Fatalf("select on a base_ref naming HEAD: %v (the basis is the parent's HEAD, so select must not fail closed)", err)
+	}
+	env := decodeProposalEnvelope(t, settled)
+	if env.Status != "settled" || env.Action != "select" {
+		t.Fatalf("settle envelope = %+v, want settled/select", env)
+	}
+	if env.BaseRef != "HEAD" || env.BasisHead != head {
+		t.Errorf("settlement base_ref/basis_head = %q/%q, want \"HEAD\"/%q", env.BaseRef, env.BasisHead, head)
+	}
+	if _, serr := os.Stat(filepath.Join(repo, "work.txt")); serr != nil {
+		t.Fatalf("select did not land the proposal's file: %v", serr)
 	}
 }
 

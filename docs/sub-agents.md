@@ -258,10 +258,12 @@ returns a proposal the orchestrator settles.
   parent's workspace captured at dispatch; `delegate(base_ref: <ref>)` names a
   different one, seeding the world at that commit and measuring the proposal's
   delta against it. Because `select` fast-forwards onto the basis, a
-  `base_ref` proposal settles with `apply`: its basis is deliberately not the
-  parent's HEAD, so `select` fails closed by design, while `apply` lands when
-  the parent's CURRENT content on the proposal's own paths still matches the
-  stored basis. That is a content comparison against the basis, not a
+  `base_ref` proposal settles with `apply` whenever the ref names a commit
+  other than the parent's HEAD: its basis is deliberately some other commit, so
+  `select` fails closed by design, while `apply` lands when the parent's
+  CURRENT content on the proposal's own paths still matches the stored basis. A
+  `base_ref` naming HEAD keeps an ordinary basis and settles with `select` like
+  any default dispatch. That is a content comparison against the basis, not a
   commit-time one, so a basis behind HEAD — and any divergence that predates
   the dispatch — is more likely to be refused as a path overlap; that refusal
   is the correct report of a real conflict, not a defect.
@@ -328,8 +330,10 @@ returns a proposal the orchestrator settles.
   world, so an unfetched `origin/main` is refused with a message saying so; a
   ref carries no uncommitted state; the world may be a project or report
   worktree but never a container or shared one; and the proposal settles with
-  `apply`, not `select`. A base-ref dispatch records no basis/repo divergence
-  warning — the mismatch is the point.
+  `apply`, not `select`, when the ref names a commit other than the parent's
+  HEAD (a `base_ref: HEAD` dispatch has an ordinary basis and stays
+  selectable). A base-ref dispatch records no basis/repo divergence warning —
+  the mismatch is the point.
 - **Durable proposals.** A worktree proposal's conversation, result, and
   dispatch params are carried by the sealed output itself (execution snapshot +
   metadata + retained diff), and at startup the proposal registry is rebuilt
