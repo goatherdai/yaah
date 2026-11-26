@@ -259,9 +259,12 @@ returns a proposal the orchestrator settles.
   different one, seeding the world at that commit and measuring the proposal's
   delta against it. Because `select` fast-forwards onto the basis, a
   `base_ref` proposal settles with `apply`: its basis is deliberately not the
-  parent's HEAD, so `select` fails closed by design, while `apply` integrates
-  path-disjoint against the stored basis and lands cleanly as long as the
-  parent's later commits do not touch the proposal's own paths.
+  parent's HEAD, so `select` fails closed by design, while `apply` lands when
+  the parent's CURRENT content on the proposal's own paths still matches the
+  stored basis. That is a content comparison against the basis, not a
+  commit-time one, so a basis behind HEAD — and any divergence that predates
+  the dispatch — is more likely to be refused as a path overlap; that refusal
+  is the correct report of a real conflict, not a defect.
 - **Report roles.** A role whose frontmatter declares `output: report`
   decouples the output contract from the substrate (yaah-7yf): a report that
   can mutate runs in an isolated report world (worktree or container) so

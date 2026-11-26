@@ -94,16 +94,35 @@ func TestDelegate_BaseRefValidation(t *testing.T) {
 			LaneForRole: func(string) DelegateLane { return LaneShared },
 		}
 		_, err := tt.Execute(context.Background(), args(`,"base_ref":"side"`))
-		if err == nil || !strings.Contains(err.Error(), "retained lane") {
-			t.Fatalf("err = %v, want a retained-lane refusal", err)
+		if err == nil {
+			t.Fatal("base_ref on the shared lane = nil error, want a refusal")
+		}
+		// The two refusals are DISTINCT (PR #428 review finding 4): a shared
+		// lane with a retained runtime must be told about the lane, never about
+		// a missing runtime, and vice versa below. The negative assertions are
+		// what fail if the two cases are folded back into one message.
+		if !strings.Contains(err.Error(), "shared lane") {
+			t.Fatalf("err = %v, want a refusal naming the shared lane", err)
+		}
+		if strings.Contains(err.Error(), "no retained runtime") || strings.Contains(err.Error(), "has none") {
+			t.Fatalf("err = %v, want the LANE refusal — this fixture has a retained runtime", err)
 		}
 	})
 
 	t.Run("refuses base_ref without a retained runtime", func(t *testing.T) {
 		tt := &DelegateTool{RoleNames: []string{"developer"}, Runner: noop}
 		_, err := tt.Execute(context.Background(), args(`,"base_ref":"side"`))
-		if err == nil || !strings.Contains(err.Error(), "retained lane") {
-			t.Fatalf("err = %v, want a retained-lane refusal", err)
+		if err == nil {
+			t.Fatal("base_ref without a retained runtime = nil error, want a refusal")
+		}
+		if !strings.Contains(err.Error(), "needs a retained runtime") || !strings.Contains(err.Error(), "this session has none") {
+			t.Fatalf("err = %v, want a refusal naming the missing retained runtime", err)
+		}
+		// The old folded message said "needs the retained lane (proposal lane
+		// here)", which named a lane the caller already had and pointed at the
+		// wrong fix.
+		if strings.Contains(err.Error(), "shared lane") || strings.Contains(err.Error(), "lane here") {
+			t.Fatalf("err = %v, want the RUNTIME refusal — this fixture has no retained runtime, not a shared-lane role", err)
 		}
 	})
 }

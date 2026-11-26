@@ -191,14 +191,22 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 		if params.SeedMode != "" {
 			return DispatchResult{}, fmt.Errorf("delegate: base_ref %q and seed_mode %q cannot be combined; seed_mode selects what seed_from carries, and a ref carries no conversation", ref, params.SeedMode)
 		}
-		if req.Retained == nil || lane == LaneShared {
+		if req.Retained == nil {
+			// Two different failures, told apart, because they have two different
+			// fixes and one message for both sent the caller after the wrong
+			// one: this session has no retained lane at all (no per-dispatch
+			// world exists to seed), while the shared-lane case below has a
+			// retained lane and a role that routes off it.
+			return DispatchResult{}, fmt.Errorf("delegate: base_ref %q needs a retained runtime; this session has none, so a dispatch runs on the session's own tree and there is no separate world to seed at another ref", ref)
+		}
+		if lane == LaneShared {
 			// A shared dispatch runs directly on the session's tree, so there
 			// is no separate world to seed at another ref: honouring base_ref
 			// would mean rewriting the caller's own workspace. A report-lane
 			// role is NOT refused — seeding a report world at a ref (a reviewer
 			// dispatched against a branch) is genuinely useful and the
 			// worktree mechanism is identical.
-			return DispatchResult{}, fmt.Errorf("delegate: base_ref %q needs the retained lane (%s lane here), which gives the dispatch its own world to seed; a shared dispatch runs directly on the session's tree, so there is nothing to seed at another ref", ref, lane)
+			return DispatchResult{}, fmt.Errorf("delegate: base_ref %q needs a lane that owns a world to seed; this role resolves to the shared lane, which runs directly on the session's tree, so there is nothing to seed at another ref", ref)
 		}
 	}
 

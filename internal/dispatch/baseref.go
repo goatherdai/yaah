@@ -296,7 +296,7 @@ func baseRefRemoteNames(ctx context.Context, repoPath, remote string) (map[strin
 // It is pure and separate from startRetainedRun so the rule is table-testable
 // without a repository or a world: the refusal keys on the resolved world, never
 // on the requested one, because an `auto` request legitimately degrades
-// container→worktree (dispatchWeigthPreflightFailure) and refusing on the
+// container→worktree (dispatchWorldPreflightFailure) and refusing on the
 // request would punish exactly that dispatch. A container world is seeded from a
 // session snapshot or a host-repo copy-in, not from a git ref, so there is no
 // state to synthesize for it. The report lane is NOT refused: seeding a report

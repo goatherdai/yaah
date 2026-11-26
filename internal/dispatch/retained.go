@@ -238,14 +238,23 @@ type proposalEnvelope struct {
 	BasisHead    string `json:"basis_head,omitempty"`
 	BasisTree    string `json:"basis_tree,omitempty"`
 	BasisBackend string `json:"basis_backend,omitempty"`
-	// BaseRef is the caller's own spelling of the basis when this dispatch was
-	// seeded at a ref (yaah-witj increment B): `"side"`, whose commit is
-	// basis_head. Without it a reader sees a basis that differs from the
-	// repository's HEAD and has no way to know the difference was requested —
-	// the divergence warning is deliberately suppressed for a named ref, because
-	// the mismatch IS the point. Absent means the basis came from the parent's
-	// workspace or from seed_from. It is REQUEST state and is never persisted
-	// (a ref moves; the resolved commit does not).
+	// BaseRef is the caller's own spelling of the ref the basis came from,
+	// present when this dispatch was seeded at a ref it named (yaah-witj
+	// increment B): `"side"`, whose commit is basis_head. Without it a reader
+	// sees a basis that differs from the repository's HEAD and has no way to
+	// know the difference was requested — the divergence warning is
+	// deliberately suppressed for a named ref, because the mismatch IS the
+	// point. Absent means the basis came from the parent's workspace or from
+	// seed_from.
+	//
+	// It is persisted on the durable basis record
+	// (retainedProposalMeta.Basis → proposalBasisRecord.Ref) and stamped by
+	// setBasis wherever the basis is stamped — the dispatch, show, list and
+	// every settlement envelope — because a spelling that only survived as far
+	// as the dispatch response left a later reader to read a requested basis as
+	// unexplained drift (PR #428 review finding 1). It is a RECORD of the
+	// request, never a live lookup: nothing re-resolves it, so a ref that has
+	// since moved cannot change what it says.
 	BaseRef string `json:"base_ref,omitempty"`
 	// Strategy records the apply strategy used by a settlement.
 	Strategy string `json:"strategy,omitempty"`
@@ -413,6 +422,12 @@ type retainedProposal struct {
 	// It never substitutes for the state where the state is used to VERIFY
 	// anything: an unverified basis fails select closed.
 	sealBasisRecord *proposalBasisRecord
+	// basisRef is the caller's spelling of the ref this proposal's basis came
+	// from, when the dispatch named one. The live state cannot answer it (a
+	// kernel capture holds no request), and most in-session proposals have no
+	// sealBasisRecord to read it from either, so it is carried here and merged
+	// into every dispatchBasisRecord (see proposalBasisRecord.Ref).
+	basisRef string
 	// authorityPlanDigest is the compiled permission plan the world that
 	// produced this proposal enforced — the seal fact's citation, carried so
 	// settlement can record the declaration it is the commit-time monitor for.
@@ -583,6 +598,11 @@ type proposalSummary struct {
 	BasisHead    string `json:"basis_head,omitempty"`
 	BasisTree    string `json:"basis_tree,omitempty"`
 	BasisBackend string `json:"basis_backend,omitempty"`
+	// BaseRef is the caller's spelling of the ref that basis came from, on the
+	// same terms as the envelope's field of the same name: a list entry that
+	// names a basis without naming the ref it was seeded from leaves the same
+	// unexplained-drift reading as a dispatch response would.
+	BaseRef string `json:"base_ref,omitempty"`
 }
 
 // proposalListEnvelope is the JSON a `list` action answers with: the same
@@ -1076,9 +1096,6 @@ func startRetainedRun(
 	// takes (both empty when the basis and the repo agree).
 	var basisWarnings []string
 	var basisDivergenceFact map[string]any
-	// requestedBasisRef is the caller's own spelling of a named ref, carried to
-	// the envelope beside the basis it resolved to (see proposalEnvelope.BaseRef).
-	var requestedBasisRef string
 	switch {
 	case subParams.SeedFrom != "" && subParams.BaseRef != "":
 		// Unreachable through Run (api.go refuses the pair first). A caller that
@@ -1106,7 +1123,11 @@ func startRetainedRun(
 			return retainedRunResult{Stage: RetainedStageRefused}, fmt.Errorf("delegate: %w", rerr)
 		}
 		forkSeed = freshForkSeed(commit.workspaceState())
-		requestedBasisRef = commit.Ref
+		// The resolved commit and tree are the basis; the spelling the
+		// caller used rides WITH them, so every envelope that names the basis
+		// (this one, show, list, settlement) can also say the basis was
+		// requested rather than drifted (see proposalBasisRecord.Ref).
+		forkSeed.ref = commit.Ref
 		// No basis-divergence warning here on purpose: the basis is
 		// DELIBERATELY not the repository's HEAD, so the check would fire on
 		// every base_ref dispatch and tell the reader nothing. That warning
@@ -1149,8 +1170,9 @@ func startRetainedRun(
 
 	scopeID, provErr := provisionRetainedBranch(ctx, rt, id, wt, forkSeed)
 	env := proposalEnvelope{ProposalID: id, Next: proposalVerbs(), World: string(worldRes.Resolved)}
+	// One stamp for both halves of the basis — the resolved state and the
+	// caller's spelling of the ref it came from (see setBasis).
 	env.setBasis(forkSeed.resolvedBasisRecord())
-	env.BaseRef = requestedBasisRef
 	addDispatchWarnings(&env, worldRes, basisWarnings)
 	if scopeID == "" {
 		// A report that could not get a disposable worktree world still runs in
@@ -1475,6 +1497,7 @@ func startRetainedRun(
 		// worktree settle fact names the plan this world enforced rather than
 		// re-deriving it from config that may have moved since.
 		authorityPlanDigest: planDigest,
+		basisRef:            forkSeed.ref,
 	}
 	rt.Proposals.add(proposal)
 	rt.Proposals.recordSealConflictFacts(ctx, proposal)
@@ -1501,6 +1524,13 @@ type threadSeed struct {
 	seed       kerneltrace.WorkspaceState
 	baseline   kerneltrace.WorkspaceState
 	messages   []types.Message
+	// ref is the caller's own spelling of the ref this seed's basis was
+	// resolved from — set when the dispatch named one with base_ref, or
+	// inherited from a source proposal that did. It rides beside the states so
+	// the basis record every consumer of this seed stamps can name the request
+	// that produced the basis, not just the commit it resolved to (see
+	// proposalBasisRecord.Ref).
+	ref string
 }
 
 // resolveThreadSeed resolves a source proposal for retained-result threading:
@@ -1534,6 +1564,13 @@ func resolveThreadSeed(rt RetainedRuntime, sourceID, seedMode, newRole string) (
 	// every reported basis actually use (yaah-9m0c, yaah-witj increment A1).
 	if baseline := src.output.Baseline(); baseline.Backend != "" {
 		ts.baseline = baseline
+	}
+	// The basis's provenance travels with the basis: a source seeded at a named
+	// ref yields a continuation (or a seed_from dispatch) measured against that
+	// ref's commit, and an envelope naming the commit without the ref reads as
+	// drift exactly as the original's would (see proposalBasisRecord.Ref).
+	if rec := src.dispatchBasisRecord(); rec != nil {
+		ts.ref = rec.Ref
 	}
 	switch seedMode {
 	case "", jobs.SeedModeWorkspace:
@@ -1670,11 +1707,17 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	if p.failedSeal != nil {
 		// A failed seal has no output; its runtime artifact carries the same
 		// workspace, baseline and verified transcript a sealed output would.
+		// The basis's provenance comes from the artifact's record, since
+		// resolveThreadSeed (the branch below) is not on this path and the
+		// request fields on sp are cleared a few lines down.
 		seed = threadSeed{
 			failedSeal: p.failedSeal,
 			seed:       p.failedSeal.Workspace,
 			baseline:   p.failedSeal.Baseline,
 			messages:   p.transcript,
+		}
+		if rec := p.dispatchBasisRecord(); rec != nil {
+			seed.ref = rec.Ref
 		}
 		// The artifact's baseline is recorded as it stands, zero included. The
 		// fork resolves a missing one to the artifact's own workspace
@@ -1715,10 +1758,12 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 	// A continuation seeds from the original itself, not from whatever that
 	// proposal was originally threaded from; clear the thread fields so a
 	// continuation of a threaded proposal cannot re-resolve an older source.
-	// BaseRef is cleared for the same reason and by the same rule (yaah-witj
-	// increment B): its basis does not follow the ref the source was seeded
-	// from, and a continuation has no world to resolve that ref into — the
-	// seed comes from the source's sealed workspace and recorded basis.
+	// BaseRef is cleared for the same reason (yaah-witj increment B): a ref
+	// name here would be resolved AGAIN, against a repository that may have
+	// moved, and the seed would come from a different commit than the basis
+	// this continuation is measured against. The basis — and the spelling it
+	// reports — comes from the source's recorded basis (seed.ref), never from
+	// re-reading the name.
 	sp.SeedFrom = ""
 	sp.SeedMode = ""
 	sp.BaseRef = ""
@@ -1924,6 +1969,7 @@ func ContinueRetainedRun(ctx context.Context, rt RetainedRuntime, id string, ext
 		// Same citation as the seal: settlement records the declaration the
 		// continuation's world enforced.
 		authorityPlanDigest: planDigest,
+		basisRef:            seed.ref,
 	}
 	rt.Proposals.add(cont)
 	rt.Proposals.recordSealConflictFacts(ctx, cont)
