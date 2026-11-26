@@ -373,6 +373,9 @@ func runTUI(initialSpec string) error {
 		log.SetOutput(devNull)
 	}
 	defer func() {
+		// Land queued slow-render diagnostics before the alt screen is
+		// torn down and stderr is restored.
+		app.FlushSlowLog()
 		os.Stderr = origStderr
 		log.SetOutput(origStderr)
 		if devNull != nil {

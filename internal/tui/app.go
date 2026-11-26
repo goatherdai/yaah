@@ -4,6 +4,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/goatherdai/yaah/internal/control"
 	"github.com/goatherdai/yaah/internal/todo"
@@ -150,6 +151,12 @@ type App struct {
 	uiEventFallbackSat   atomic.Int64
 	lastRefreshUnixNano  atomic.Int64
 
+	// slowLog persists slow-render diagnostics; stderr is silenced while
+	// the TUI is on the alt screen (see slowlog.go). slowThreshold is the
+	// refresh duration above which a SLOW line is recorded.
+	slowLog       slowLogger
+	slowThreshold time.Duration
+
 	isStreaming   atomic.Bool
 	needsRefresh  atomic.Bool
 	refreshQueued atomic.Bool
@@ -180,7 +187,8 @@ type App struct {
 
 	// fullRenderCount counts refreshMessages passes that rebuilt the
 	// buffer via SetText instead of appending. Test-visible so render
-	// tests can prove which branch ran.
+	// tests can prove which branch ran, and exported on the tui.refresh
+	// span as full_renders.
 	fullRenderCount int
 
 	// Sticky prompt-header state (QueueUpdateDraw ONLY). promptAnchors
@@ -253,11 +261,12 @@ type promptAnchor struct {
 func New(version string) *App {
 	th := colors.DetectTheme()
 	t := &App{
-		App:         tview.NewApplication(),
-		Theme:       &th,
-		version:     version,
-		showBanner:  true,
-		fallbackSem: make(chan struct{}, uiMaxDirectFallbacks),
+		App:           tview.NewApplication(),
+		Theme:         &th,
+		version:       version,
+		showBanner:    true,
+		fallbackSem:   make(chan struct{}, uiMaxDirectFallbacks),
+		slowThreshold: 50 * time.Millisecond,
 	}
 	t.buildUI()
 	return t
@@ -267,6 +276,11 @@ func New(version string) *App {
 // background-job goroutine: it marshals every mutation onto the tview event
 // queue rather than writing to the terminal directly.
 func (t *App) AcceptsEventsBetweenRuns() bool { return true }
+
+// FlushSlowLog waits for queued slow-render diagnostics to land on disk.
+// The driver calls it on shutdown, before stderr is restored from the
+// alt-screen silencing.
+func (t *App) FlushSlowLog() { t.slowLog.flush() }
 
 func (t *App) SetProvider(name string) {
 	t.lastProvider = name
