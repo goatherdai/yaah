@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -71,6 +73,30 @@ func growSession(tb testing.TB, ui *App, turns int) {
 	}
 }
 
+// renderGateBudget scales a wall-clock budget by YAAH_TEST_RENDER_BUDGET
+// (a float multiplier, default 1). The gate measures ~5MB of wrap and
+// paint work; a loaded CI windows runner can be several times slower than
+// a laptop without any regression, so the multiplier gives such machines
+// an escape hatch without loosening the invariant assertions.
+func renderGateBudget(tb testing.TB, base time.Duration) time.Duration {
+	tb.Helper()
+	if f := os.Getenv("YAAH_TEST_RENDER_BUDGET"); f != "" {
+		if v, err := strconv.ParseFloat(f, 64); err == nil && v > 0 {
+			return time.Duration(float64(base) * v)
+		}
+	}
+	return base
+}
+
+// isolateRenderLog points YAAH_HOME at a temp directory: the gate drives
+// renders far above the 50ms SLOW threshold, and without isolation every
+// run would append diagnostic lines to the developer's real
+// tui-render.log — the artifact users are meant to attach to bug reports.
+func isolateRenderLog(tb testing.TB) {
+	tb.Helper()
+	tb.Setenv("YAAH_HOME", tb.TempDir())
+}
+
 // TestRefreshMessages_SessionScaleRenderBudget pins the per-event render
 // cost at the end of a full-scale session: one full render plus one screen
 // draw must stay inside the budget, and a tool-chunk append must stay far
@@ -79,6 +105,7 @@ func TestRefreshMessages_SessionScaleRenderBudget(t *testing.T) {
 	if testing.Short() {
 		t.Skip("full-scale render gate: skipped in -short")
 	}
+	isolateRenderLog(t)
 	ui := New("test")
 	sim := setupSim(t, ui)
 
@@ -115,8 +142,10 @@ func TestRefreshMessages_SessionScaleRenderBudget(t *testing.T) {
 		len(ui.conversationLog), build.Round(time.Millisecond),
 		fullRender.Round(time.Millisecond), appendRender.Round(time.Millisecond))
 
-	const fullBudget = 3 * time.Second
-	const appendBudget = 300 * time.Millisecond
+	const fullBase = 3 * time.Second
+	const appendBase = 300 * time.Millisecond
+	fullBudget := renderGateBudget(t, fullBase)
+	appendBudget := renderGateBudget(t, appendBase)
 	if fullRender > fullBudget {
 		t.Errorf("full render+draw at session scale took %s, budget %s — the yaah-30t6 freeze shape", fullRender, fullBudget)
 	}
@@ -135,6 +164,7 @@ func TestInputEchoDuringRenderStorm(t *testing.T) {
 	if testing.Short() {
 		t.Skip("render-storm gate: skipped in -short")
 	}
+	isolateRenderLog(t)
 	ui := New("test")
 	sim := setupSim(t, ui)
 	growSession(t, ui, 60)
@@ -153,27 +183,50 @@ func TestInputEchoDuringRenderStorm(t *testing.T) {
 	go ui.App.Run()
 	defer ui.App.Stop()
 
+	// Queue the storm the way live events do: full renders handed to the
+	// tview event queue while keystrokes arrive, so echo latency is
+	// measured against real render pressure, not an idle loop.
+	const renders = 10
+	stormDone := make(chan struct{})
+	go func() {
+		defer close(stormDone)
+		for i := 0; i < renders; i++ {
+			ui.App.QueueUpdateDraw(func() {
+				ui.needsFullRender.Store(true)
+				ui.refreshMessages()
+			})
+		}
+	}()
+
 	const keys = 5
+	injected := make(chan time.Time, keys)
 	go func() {
 		for i := 0; i < keys; i++ {
 			time.Sleep(20 * time.Millisecond)
+			injected <- time.Now()
 			sim.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
 		}
 	}()
 
 	var worst time.Duration
 	for i := 0; i < keys; i++ {
-		start := time.Now()
+		at := <-injected
 		select {
 		case <-echoed:
-			if d := time.Since(start); d > worst {
+			if d := time.Since(at); d > worst {
 				worst = d
 			}
-		case <-time.After(3 * time.Second):
-			t.Fatalf("keystroke %d not echoed within 3s during a render storm (worst echo %s)", i+1, worst)
+		case <-time.After(renderGateBudget(t, 3*time.Second)):
+			t.Fatalf("keystroke %d not echoed within budget during a render storm (worst echo %s)", i+1, worst)
 		}
 	}
-	t.Logf("echoed %d keystrokes during a render storm; worst latency %s", keys, worst.Round(time.Millisecond))
+	select {
+	case <-stormDone:
+	case <-time.After(30 * time.Second):
+		t.Fatal("render storm did not drain")
+	}
+	t.Logf("echoed %d keystrokes while %d full renders drained; worst echo latency %s",
+		keys, renders, worst.Round(time.Millisecond))
 }
 
 // BenchmarkRefreshMessages_SessionScale measures the per-event cost at
@@ -183,6 +236,7 @@ func BenchmarkRefreshMessages_SessionScale(b *testing.B) {
 	if testing.Short() {
 		b.Skip("full-scale benchmark: skipped in -short")
 	}
+	isolateRenderLog(b)
 	ui := New("test")
 	sim := setupSim(b, ui)
 	growSession(b, ui, 175)
