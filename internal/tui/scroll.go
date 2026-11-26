@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"io"
-	"log"
 	"sort"
 	"time"
 
@@ -181,6 +180,7 @@ func (t *App) refreshMessages() {
 			attribute.Int("items", n),
 			attribute.Int("msg_bytes", msgLen),
 			attribute.Bool("appended", appended),
+			attribute.Int("full_renders", t.fullRenderCount),
 			attribute.Int64("dur_total_us", totalDur.Microseconds()),
 			attribute.Int64("dur_format_us", formatDur.Microseconds()),
 			attribute.Int64("dur_settext_us", writeDur.Microseconds()),
@@ -193,7 +193,7 @@ func (t *App) refreshMessages() {
 	observability.RecordTUIRefresh(context.Background(), totalDur, cadence, queueDepth)
 
 	if totalDur > 50*time.Millisecond {
-		log.Printf("SLOW refreshMessages: %d items, %d bytes, appended=%v total=%v format=%v write=%v",
+		t.slowLog.printf("SLOW refreshMessages: %d items, %d bytes, appended=%v total=%v format=%v write=%v",
 			n, msgLen, appended, totalDur, formatDur, writeDur)
 	}
 }

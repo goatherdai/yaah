@@ -150,6 +150,10 @@ type App struct {
 	uiEventFallbackSat   atomic.Int64
 	lastRefreshUnixNano  atomic.Int64
 
+	// slowLog persists slow-render diagnostics; stderr is silenced while
+	// the TUI is on the alt screen (see slowlog.go).
+	slowLog slowLogger
+
 	isStreaming   atomic.Bool
 	needsRefresh  atomic.Bool
 	refreshQueued atomic.Bool
