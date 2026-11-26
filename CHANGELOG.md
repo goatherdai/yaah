@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.220.1](https://github.com/goatherdai/yaah/compare/v0.220.0...v0.220.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* **dispatch:** scope base_ref settlement guidance and pin the durable spelling routes (yaah-witj) ([#430](https://github.com/goatherdai/yaah/issues/430)) ([56a528f](https://github.com/goatherdai/yaah/commit/56a528fbc640e0e32b61c3aa7f1275a7b3594169))
+
 ## [0.220.0](https://github.com/goatherdai/yaah/compare/v0.219.1...v0.220.0) (2026-11-26)
 
 
