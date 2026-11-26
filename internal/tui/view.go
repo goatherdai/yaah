@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"strings"
-
 	"github.com/gdamore/tcell/v2"
 	"github.com/goatherdai/yaah/internal/tui/components/activity"
 	"github.com/goatherdai/yaah/internal/tui/components/banner"
@@ -28,7 +26,10 @@ func (t *App) buildUI() {
 		case tview.MouseScrollDown:
 			_, _, _, h := t.Messages.GetInnerRect()
 			row, _ := t.Messages.GetScrollOffset()
-			totalLines := len(strings.Split(t.Messages.GetText(true), "\n"))
+			// paintedLines is refreshed with the transcript; reading it
+			// here avoids a full-buffer GetText + split on every mouse
+			// scroll event (the scroll path runs on the UI goroutine).
+			totalLines := int(t.paintedLines.Load())
 			if row+h >= totalLines {
 				t.userScrolled = false
 			}

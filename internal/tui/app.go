@@ -150,6 +150,11 @@ type App struct {
 	uiEventFallbacks     atomic.Int64
 	uiEventFallbackSat   atomic.Int64
 	lastRefreshUnixNano  atomic.Int64
+	// renderMinDelay is the adaptive throttle (see requestRefresh);
+	// paintedLines is the painted transcript's line count for the mouse
+	// handler (both written by refreshMessages on the UI goroutine).
+	renderMinDelay atomic.Int64
+	paintedLines   atomic.Int64
 
 	// slowLog persists slow-render diagnostics; stderr is silenced while
 	// the TUI is on the alt screen (see slowlog.go). slowThreshold is the
@@ -167,7 +172,8 @@ type App struct {
 	// Atomic because it is also written from the event-forwarder goroutine.
 	needsFullRender atomic.Bool
 
-	fallbackSem chan struct{}
+	fallbackSem     chan struct{}
+	fallbackWaiters chan struct{}
 
 	availableModels []string
 	providerNames   map[string]string
@@ -261,12 +267,13 @@ type promptAnchor struct {
 func New(version string) *App {
 	th := colors.DetectTheme()
 	t := &App{
-		App:           tview.NewApplication(),
-		Theme:         &th,
-		version:       version,
-		showBanner:    true,
-		fallbackSem:   make(chan struct{}, uiMaxDirectFallbacks),
-		slowThreshold: 50 * time.Millisecond,
+		App:             tview.NewApplication(),
+		Theme:           &th,
+		version:         version,
+		showBanner:      true,
+		fallbackSem:     make(chan struct{}, uiMaxDirectFallbacks),
+		fallbackWaiters: make(chan struct{}, uiMaxDirectWaiters),
+		slowThreshold:   50 * time.Millisecond,
 	}
 	t.buildUI()
 	return t

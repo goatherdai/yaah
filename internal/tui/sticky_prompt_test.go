@@ -36,6 +36,37 @@ func TestAddPrompt_RendersInStream_DoesNotPin(t *testing.T) {
 	}
 }
 
+// TestEchoPrompt_FlushesStreamedTextFirst pins the steer/follow-up echo
+// ordering: pending streamed tokens must land in the conversation before
+// the echoed prompt, so a mid-stream steer does not render the user's
+// question ahead of the assistant text it interrupted.
+func TestEchoPrompt_FlushesStreamedTextFirst(t *testing.T) {
+	ui := New("test")
+	ui.promptAnchors = nil
+
+	// Simulate a mid-stream steer: tokens are buffered and the queued
+	// flush callback has not run yet.
+	ui.isStreaming.Store(true)
+	ui.tokenMu.Lock()
+	ui.pendingTokens.WriteString("partial answer")
+	ui.tokenMu.Unlock()
+
+	ui.EchoPrompt("steer: keep it short")
+
+	if got := len(ui.conversationLog); got != 2 {
+		t.Fatalf("conversationLog has %d items, want 2 (assistant text, prompt)", got)
+	}
+	if !ui.conversationLog[0].isMarkdown || !strings.Contains(ui.conversationLog[0].text, "partial answer") {
+		t.Fatalf("first item must be the flushed assistant text: %+v", ui.conversationLog[0])
+	}
+	if !ui.conversationLog[1].isPrompt || ui.conversationLog[1].prompt != "steer: keep it short" {
+		t.Fatalf("second item must be the echoed prompt: %+v", ui.conversationLog[1])
+	}
+	if ui.isStreaming.Load() {
+		t.Fatal("flush must clear the streaming flag")
+	}
+}
+
 // TestReconcilePromptPin_Rules drives the scroll position through the
 // full lifecycle: no pin below the seam, pin on crossing, swap to the
 // newer prompt when it crosses, reverse scroll re-pins the previous one.

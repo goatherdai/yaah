@@ -108,6 +108,16 @@ func (t *App) AddPrompt(input string) {
 	t.App.SetFocus(t.Input)
 }
 
+// EchoPrompt flushes any pending streamed tokens into the conversation
+// and then renders the submitted text as a user prompt. Steer and
+// follow-up handlers run on the UI goroutine, so flushing here lands the
+// in-flight assistant text ahead of the echo instead of letting queued
+// flush callbacks render it after the prompt.
+func (t *App) EchoPrompt(input string) {
+	t.flushPendingTokens()
+	t.AddPrompt(input)
+}
+
 // addWakePrompt records a harness wake in the conversation stream. It runs
 // from the event queue, not the input handler, so it deliberately does not
 // steal focus the way AddPrompt does.
