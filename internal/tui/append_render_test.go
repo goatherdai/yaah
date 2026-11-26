@@ -295,27 +295,6 @@ func TestAddToolEnd_ForcesFullRender(t *testing.T) {
 	}
 }
 
-// TestEnqueueUIEventDirect_SaturatesAtCap verifies that direct fallbacks
-// beyond uiMaxDirectFallbacks are dropped and counted instead of piling up
-// unbounded blocked goroutines.
-func TestEnqueueUIEventDirect_SaturatesAtCap(t *testing.T) {
-	ui := New("test")
-	ui.bgDone = make(chan struct{})
-	for i := 0; i < uiMaxDirectFallbacks; i++ {
-		ui.fallbackSem <- struct{}{}
-	}
-
-	start := time.Now()
-	ui.enqueueUIEventDirect(false, func() {})
-
-	if ui.uiEventFallbackSat.Load() != 1 {
-		t.Fatalf("expected fallback saturation counter = 1, got %d", ui.uiEventFallbackSat.Load())
-	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Fatalf("saturation path should bail after the critical wait limit, took %v", elapsed)
-	}
-}
-
 // TestEnqueueUIEventDirect_AbandonsAtShutdown verifies that in-flight
 // fallback work is abandoned once the background loops are stopped, so no
 // goroutine blocks forever on QueueUpdate of a stopped application.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/goatherdai/yaah/internal/observability"
@@ -22,6 +23,21 @@ func (t *App) markDirty() {
 	}
 }
 
+// clampRenderDelay maps a render's measured cost to the next refresh's
+// minimum spacing (see requestRefresh): ten times the cost, clamped so
+// cheap renders stay immediate and freeze-scale renders thin to one every
+// couple of seconds.
+func clampRenderDelay(totalDur time.Duration) time.Duration {
+	d := totalDur * 10
+	if d < 50*time.Millisecond {
+		d = 50 * time.Millisecond
+	}
+	if d > 2*time.Second {
+		d = 2 * time.Second
+	}
+	return d
+}
+
 // requestRefresh enqueues a single refresh callback. If refresh work is
 // already queued, this is a no-op. If new updates arrive while a refresh
 // callback is running, another callback is scheduled after it completes.
@@ -33,17 +49,36 @@ func (t *App) requestRefresh() {
 	// Refresh is critical: dropping it would leave refreshQueued set while
 	// the rendered pane stays stale forever. enqueueUIEvent falls back to
 	// a direct QueueUpdateDraw when the queue is saturated.
-	if !t.enqueueUIEvent(true, func() {
-		t.flushRefresh()
-		t.refreshQueued.Store(false)
-		if t.needsRefresh.Load() {
-			t.requestRefresh()
+	run := func() {
+		if !t.enqueueUIEvent(true, func() {
+			t.flushRefresh()
+			t.refreshQueued.Store(false)
+			if t.needsRefresh.Load() {
+				t.requestRefresh()
+			}
+		}, true) {
+			// Shutdown raced the enqueue. Clear the flag so a later caller can
+			// schedule a refresh instead of being coalesced into nothing.
+			t.refreshQueued.Store(false)
 		}
-	}, true) {
-		// Shutdown raced the enqueue. Clear the flag so a later caller can
-		// schedule a refresh instead of being coalesced into nothing.
-		t.refreshQueued.Store(false)
 	}
+
+	// Adaptive throttle (aider's min_delay): when the last render was
+	// expensive, let a burst of flushes coalesce instead of queueing one
+	// full render per flush. min_delay = clamp(last_render*10, 50ms, 2s):
+	// content latency stays invisible (≤50ms while renders are fast), and
+	// at freeze scale the render storm thins to one render per 2s.
+	delay := time.Duration(t.renderMinDelay.Load())
+	if delay <= 0 {
+		run()
+		return
+	}
+	elapsed := time.Since(time.Unix(0, t.lastRefreshUnixNano.Load()))
+	if remaining := delay - elapsed; remaining > 0 {
+		time.AfterFunc(remaining, run)
+		return
+	}
+	run()
 }
 
 // flushRefresh performs the actual render if dirty, then clears the flag.
@@ -137,6 +172,7 @@ func (t *App) refreshMessages() {
 		t.extendPromptAnchors(t.renderedItems, n, w)
 		t.renderedItems = n
 		msgLen = len(chunk)
+		t.paintedLines.Add(int64(strings.Count(chunk, "\n")))
 		appended = true
 	} else {
 		items := t.buildItems(0, n, w)
@@ -157,6 +193,7 @@ func (t *App) refreshMessages() {
 		t.renderedWidth = w
 		t.needsFullRender.Store(false)
 		msgLen = len(msg)
+		t.paintedLines.Store(int64(1 + strings.Count(msg, "\n")))
 
 		t.rebuildPromptAnchors(items, w)
 	}
@@ -168,6 +205,10 @@ func (t *App) refreshMessages() {
 	}
 
 	totalDur := time.Since(start)
+
+	// Adapt the throttle to the observed render cost (see requestRefresh).
+	t.renderMinDelay.Store(int64(clampRenderDelay(totalDur)))
+
 	now := time.Now()
 	var cadence time.Duration
 	if prev := t.lastRefreshUnixNano.Swap(now.UnixNano()); prev > 0 {

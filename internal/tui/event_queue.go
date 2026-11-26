@@ -17,6 +17,10 @@ const (
 	// them, so uncapped spawning piles up blocked goroutines whenever the UI
 	// thread stalls, and any straggler after App.Run returns blocks forever.
 	uiMaxDirectFallbacks = 8
+
+	// uiMaxDirectWaiters bounds goroutines waiting for a runner slot once
+	// uiMaxDirectFallbacks is held (see enqueueUIEventDirect).
+	uiMaxDirectWaiters = 16
 )
 
 type uiEvent struct {
@@ -204,27 +208,52 @@ func (t *App) enqueueUIEvent(draw bool, fn func(), critical bool) bool {
 
 // enqueueUIEventDirect runs an event outside the managed queue. It is the
 // critical-path fallback when the queue is saturated, or the path before
-// Run() starts the consumer. Concurrency is capped by uiMaxDirectFallbacks
-// (see the const comment) and in-flight work is abandoned at shutdown so
-// goroutines never block forever on a stopped application.
+// Run() starts the consumer.
+//
+// Runner concurrency is capped by uiMaxDirectFallbacks. When the cap is
+// held, the event still runs: a runner goroutine waits for a slot —
+// backpressure, not loss, because this path carries critical mutators
+// whose loss is the stuck-tool-block class of bug. The waiting happens on
+// the runner goroutine, never on the caller: HandleEvent runs on the
+// agent loop and must return immediately
+// (TestHandleEvent_DoesNotBlock). uiMaxDirectWaiters bounds the runner
+// pileup when the UI thread stops servicing work; beyond it events are
+// dropped and counted.
 func (t *App) enqueueUIEventDirect(draw bool, fn func()) {
 	t.bgMu.Lock()
 	done := t.bgDone
 	t.bgMu.Unlock()
 
-	timer := time.NewTimer(uiEventCriticalWaitLimit)
-	defer timer.Stop()
+	// Reserve capacity: a free runner slot if one is available, else a
+	// bounded waiter token, else drop.
+	waiting := false
 	select {
 	case t.fallbackSem <- struct{}{}:
-	case <-done:
-		return
-	case <-timer.C:
-		t.uiEventFallbackSat.Add(1)
-		observability.RecordTUIQueueEvent(context.Background(), "fallback", "saturated", -1)
-		return
+	default:
+		select {
+		case t.fallbackWaiters <- struct{}{}:
+			waiting = true
+			t.uiEventFallbackSat.Add(1)
+			observability.RecordTUIQueueEvent(context.Background(), "direct", "saturated", -1)
+		default:
+			t.uiEventDrops.Add(1)
+			observability.RecordTUIQueueEvent(context.Background(), "direct", "dropped", -1)
+			return
+		}
 	}
 
 	go func() {
+		if waiting {
+			// Upgrade the waiter token into a runner slot once one
+			// frees, aborting at shutdown.
+			select {
+			case t.fallbackSem <- struct{}{}:
+			case <-done:
+				<-t.fallbackWaiters
+				return
+			}
+			<-t.fallbackWaiters
+		}
 		defer func() { <-t.fallbackSem }()
 
 		// Best-effort shutdown check: shrinks the window in which a
