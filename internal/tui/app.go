@@ -220,6 +220,16 @@ type App struct {
 	windowWidth     int
 	windowPrePrompt string
 
+	// windowEnd is the exclusive end of the painted window; -1 means the
+	// window extends to the live tail. Only revealItem (search) installs
+	// a bounded end: a window around an old hit must not run to the
+	// tail, or an early hit would repaint an unbounded range — the
+	// freeze the window exists to prevent. Backfill slides the end with
+	// computeWindowEnd; reaching the window's bottom seam (mouse scroll
+	// down) or End/:bottom returns to the tail. Reset to -1 wherever
+	// windowStart resets.
+	windowEnd int
+
 	// promptIdxs lists the conversation indices of user-prompt items in
 	// ascending order (UI goroutine). rebuildPromptAnchors finds the
 	// last prompt above the painted window with one binary search over
@@ -297,6 +307,7 @@ func New(version string) *App {
 		fallbackWaiters: make(chan struct{}, uiMaxDirectWaiters),
 		slowThreshold:   50 * time.Millisecond,
 		windowStart:     -1,
+		windowEnd:       -1,
 	}
 	t.buildUI()
 	return t

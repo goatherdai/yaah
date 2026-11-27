@@ -93,7 +93,7 @@ func (t *App) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 		// top of the painted window.
 		t.maybeBackfillAtSeam()
 	case ActionScrollDown, ActionPageDown, ActionBottom:
-		t.userScrolled = false
+		t.returnToTail()
 	}
 	return ev
 }

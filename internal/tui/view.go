@@ -36,11 +36,11 @@ func (t *App) buildUI() {
 			// scroll event (the scroll path runs on the UI goroutine).
 			totalLines := int(t.paintedLines.Load())
 			if row+h >= totalLines {
-				t.userScrolled = false
-				// Back at the live tail: the next full render re-windows
-				// to the trailing budget instead of keeping the
-				// backfilled width.
-				t.windowStart = -1
+				// Back at the bottom of the painted buffer: return to
+				// the live tail (a reveal window's bottom seam means
+				// the tail itself still needs painting; returnToTail
+				// decides whether a repaint is needed).
+				t.returnToTail()
 			}
 		}
 		return action, event

@@ -157,10 +157,13 @@ func (t *App) buildItems(from, to, w int) []messages.Item {
 
 // canAppend reports whether the conversation view is eligible for the
 // incremental fast path: only new items at the tail, nothing mutated in
-// place, same width, no thinking-indicator line to reconcile.
+// place, same width, no thinking-indicator line to reconcile, and the
+// window extending to the live tail — a reveal window (windowEnd >= 0)
+// must not grow toward the tail one append at a time.
 func (t *App) canAppend(w, n int) bool {
 	return !t.needsFullRender.Load() &&
 		t.renderedWidth == w &&
+		t.windowEnd < 0 &&
 		n > t.renderedItems &&
 		t.renderedItems > 0
 }
@@ -203,6 +206,28 @@ func (t *App) seamRows(start, w int) int {
 	return messages.Rows(t.seamText(start), messages.Content{Width: w, Theme: t.Theme})
 }
 
+// seamBelowText renders the dim "later messages" line painted below a
+// reveal window that ends before the live tail.
+func (t *App) seamBelowText(later int) string {
+	return fmt.Sprintf("[%s]· %d later messages — scroll down for the live tail ·[-]",
+		t.Theme.Dim, later)
+}
+
+// returnToTail returns the view to the live-tail window. The plain reset
+// (userScrolled cleared, window recomputed at the next full render) is
+// enough while the painted buffer still ends at the tail; a reveal
+// window ends at its bottom seam instead, so the tail must be repainted
+// before it can be shown.
+func (t *App) returnToTail() {
+	t.userScrolled = false
+	t.windowStart = -1
+	if t.windowEnd >= 0 {
+		t.windowEnd = -1
+		t.needsFullRender.Store(true)
+		t.refreshMessages()
+	}
+}
+
 // computeWindowStart returns the first item a full render should paint:
 // the whole log when it fits the budgets, else the trailing window that
 // does. Rows are accumulated tail-first over the per-item rows cache, so
@@ -219,6 +244,24 @@ func (t *App) computeWindowStart(n, w int) int {
 		count++
 	}
 	return start
+}
+
+// computeWindowEnd returns the exclusive end of a window starting at
+// start: forward over the per-item rows cache until the item or row
+// budget binds, mirroring computeWindowStart's budgets. Always includes
+// start, so end > start for a non-empty log. Callers treat end == n as
+// the live tail.
+func (t *App) computeWindowEnd(start, n, w int) int {
+	rows, end := 0, start
+	for end < n && end-start < renderWindowItems {
+		r := t.itemRows(&t.conversationLog[end], t.buildItems(end, end+1, w)[0], w)
+		if end > start && rows+r > renderWindowRows {
+			break
+		}
+		rows += r
+		end++
+	}
+	return end
 }
 
 // maybeBackfillAtSeam backfills the painted window when the viewport sits
@@ -246,6 +289,7 @@ func (t *App) backfillWindow() {
 		return
 	}
 	w := messageWidth(t.Messages)
+	n := len(t.conversationLog)
 	newStart := oldStart - renderBackfillStep
 	if newStart < 0 {
 		newStart = 0
@@ -260,6 +304,16 @@ func (t *App) backfillWindow() {
 	oldSeam := t.seamRows(oldStart, w)
 	newSeam := t.seamRows(newStart, w)
 	t.windowStart = newStart
+	// A reveal window slides with the start so the painted range stays
+	// inside the budgets; a tail window keeps growing toward n as
+	// before.
+	if t.windowEnd >= 0 {
+		if end := t.computeWindowEnd(newStart, n, w); end < n {
+			t.windowEnd = end
+		} else {
+			t.windowEnd = -1
+		}
+	}
 	t.needsFullRender.Store(true)
 	t.refreshMessages()
 	t.Messages.ScrollTo(added+newSeam-oldSeam, 0)
@@ -305,7 +359,7 @@ func (t *App) refreshMessages() {
 		t.paintedLines.Add(int64(strings.Count(chunk, "\n")))
 		appended = true
 	} else {
-		// The full rebuild paints a trailing window of the log, not the
+		// The full rebuild paints a window of the log, not the
 		// whole transcript: windowStart pins the first painted item
 		// (backfill moves it; -1 means recompute — resize, compaction,
 		// and clear all reset it so the window tracks the budgets). At
@@ -314,14 +368,21 @@ func (t *App) refreshMessages() {
 		// budgets across a long session and reintroduce the freeze.
 		// While the user has scrolled up (backfill), the manual window
 		// is kept so the full renders a running turn forces do not
-		// yank the content out from under them.
+		// yank the content out from under them. A reveal window
+		// (windowEnd >= 0, installed by search) also ends before the
+		// tail, bounded by the same budgets.
 		start := t.windowStart
 		if !t.userScrolled || start < 0 || start > n || w != t.windowWidth {
 			start = t.computeWindowStart(n, w)
 			t.windowStart = start
 			t.windowWidth = w
+			t.windowEnd = -1
 		}
-		items := t.buildItems(start, n, w)
+		end := n
+		if e := t.windowEnd; e >= 0 && e < n {
+			end = e
+		}
+		items := t.buildItems(start, end, w)
 
 		msg := ""
 		if start > 0 {
@@ -333,13 +394,16 @@ func (t *App) refreshMessages() {
 			Theme: t.Theme,
 		})
 		formatDur = time.Since(formatStart)
+		if end < n {
+			msg += "\n" + t.seamBelowText(n-end)
+		}
 
 		writeStart := time.Now()
 		t.Messages.SetText(msg)
 		writeDur = time.Since(writeStart)
 
 		t.fullRenderCount++
-		t.renderedItems = n
+		t.renderedItems = end
 		t.renderedWidth = w
 		t.needsFullRender.Store(false)
 		msgLen = len(msg)

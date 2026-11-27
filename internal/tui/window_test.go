@@ -345,7 +345,8 @@ func TestSearchMessages_CoversCollapsedItems(t *testing.T) {
 		t.Fatalf("windowStart=%d, want 80", ui.windowStart)
 	}
 
-	// A collapsed item is found and revealed.
+	// A collapsed item is found and revealed: the reveal window is
+	// bounded — the hit and its context are painted, the tail is not.
 	ui.searchMessages("item 005")
 	if ui.windowStart > 5 {
 		t.Fatalf("search did not expand the window to the hit: windowStart=%d", ui.windowStart)
@@ -356,12 +357,113 @@ func TestSearchMessages_CoversCollapsedItems(t *testing.T) {
 	if !strings.Contains(ui.Messages.GetText(true), "item 005") {
 		t.Fatalf("hit not painted after reveal")
 	}
+	if ui.windowEnd != 120 {
+		t.Fatalf("reveal window is not bounded: windowEnd=%d, want 120 (item budget)", ui.windowEnd)
+	}
+	if strings.Contains(ui.Messages.GetText(true), "item 150") {
+		t.Fatalf("reveal painted past the window end into the tail")
+	}
+	if !strings.Contains(ui.Messages.GetText(true), "later messages") {
+		t.Fatalf("bottom seam missing from the reveal window")
+	}
 
 	// A miss reports and does not move the window.
 	before := ui.windowStart
 	ui.searchMessages("no such text anywhere")
 	if ui.windowStart != before {
 		t.Fatalf("miss moved the window: %d -> %d", before, ui.windowStart)
+	}
+}
+
+// TestReveal_BoundedWindowAtScale pins the round-3 reveal bound (F1): a
+// search hit near the top of a large session paints a bounded window
+// around it — never the whole transcript — and the tail stays collapsed
+// behind the bottom seam.
+func TestReveal_BoundedWindowAtScale(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	growSession(t, ui, 60)
+	ui.refreshMessages()
+
+	before := len(ui.Messages.GetText(true))
+	ui.searchMessages("turn 0: investigate")
+	if !strings.Contains(ui.Messages.GetText(true), "turn 0: investigate") {
+		t.Fatalf("hit not painted after reveal")
+	}
+	if strings.Contains(ui.Messages.GetText(true), "turn 59: investigate") {
+		t.Fatalf("reveal painted the tail: the window is unbounded")
+	}
+	if ui.windowEnd <= 0 || ui.windowEnd >= len(ui.conversationLog) {
+		t.Fatalf("reveal window end = %d, want inside the log", ui.windowEnd)
+	}
+	if after := len(ui.Messages.GetText(true)); after > before*3 {
+		t.Fatalf("reveal repaint blew the budget: %d -> %d bytes", before, after)
+	}
+
+	// While the reveal window is pinned, appends must not extend the
+	// paint toward the tail.
+	for i := 0; i < 5; i++ {
+		ui.appendMessage(fmt.Sprintf("tail item %d", i))
+	}
+	ui.markDirty()
+	ui.flushRefresh()
+	if strings.Contains(ui.Messages.GetText(true), "tail item 4") {
+		t.Fatalf("append grew the reveal window toward the tail")
+	}
+
+	// Returning to the tail repaints it.
+	ui.returnToTail()
+	if ui.windowEnd != -1 {
+		t.Fatalf("returnToTail left windowEnd=%d", ui.windowEnd)
+	}
+	if !strings.Contains(ui.Messages.GetText(true), "tail item 4") {
+		t.Fatalf("tail not repainted after returnToTail")
+	}
+}
+
+// TestReveal_ScrollsToHitRow pins the round-3 row math (F2): the reveal
+// repaint makes the painted buffer match the window bookkeeping, so the
+// scroll lands on the hit's actual row — including from the reset state
+// that used to trust stale bookkeeping.
+func TestReveal_ScrollsToHitRow(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	for i := 0; i < 200; i++ {
+		ui.appendMessage(fmt.Sprintf("item %03d", i))
+	}
+	ui.refreshMessages()
+
+	// The F2 trigger: backfill, return to tail without a repaint, then
+	// search — the reveal must still land on the hit's row.
+	ui.userScrolled = true
+	ui.backfillWindow()
+	ui.userScrolled = false
+	ui.windowStart = -1
+	ui.searchMessages("item 150")
+
+	// The viewport's top row must land on the hit item's row block —
+	// the buffer itself is the source of truth, not the row estimate.
+	// The reveal scrolls to the item's first row using the itemRows
+	// measure (the same one the prompt anchors use), so the content
+	// line may sit a few separator rows below the viewport top; T3's
+	// exact rows close that drift. The stale-bookkeeping bug this pins
+	// scrolled a whole window off.
+	row, _ := ui.Messages.GetScrollOffset()
+	lines := strings.Split(ui.Messages.GetText(true), "\n")
+	hit := -1
+	for i, ln := range lines {
+		if strings.TrimSpace(ln) == "item 150" {
+			hit = i
+			break
+		}
+	}
+	if hit < 0 {
+		t.Fatalf("hit not painted after reveal")
+	}
+	w := messageWidth(ui.Messages)
+	block := ui.itemRows(&ui.conversationLog[150], ui.buildItems(150, 151, w)[0], w)
+	if row > hit || hit-row >= block {
+		t.Fatalf("reveal scrolled to row %d; the hit at row %d is not at the top of its block", row, hit)
 	}
 }
 

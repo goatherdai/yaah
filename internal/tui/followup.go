@@ -46,6 +46,7 @@ func (t *App) clearConversation() {
 	// The window is stale the moment the log empties: recompute at the
 	// next full render.
 	t.windowStart = -1
+	t.windowEnd = -1
 	t.promptIdxs = nil
 	t.compactBoundary = 0
 	t.renderBackgroundJobsPane()

@@ -189,6 +189,7 @@ func (t *App) collapseCompacted() {
 	t.conversationLog = rest
 	t.needsFullRender.Store(true)
 	t.windowStart = -1
+	t.windowEnd = -1
 	t.renderedItems = 0
 	t.renderedWidth = 0
 	// The rewrite shifted every index, so the prompt index list is

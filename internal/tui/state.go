@@ -55,34 +55,35 @@ func (t *App) searchableItemText(ci *convItem) string {
 	}
 }
 
-// revealItem ensures item k is painted and scrolls the viewport to its
-// estimated first row. A collapsed item (above the window) expands the
-// window first, keeping one backfill batch of context above the hit; the
-// row estimate uses itemRows, the same measure the prompt anchors use.
+// revealItem paints a window around item k and scrolls the viewport to
+// its first row. The window keeps one backfill batch of context above
+// the hit and runs forward only to the item/row budgets — never to the
+// live tail, which would repaint an unbounded range for an early hit
+// (the freeze the window exists to prevent); a bottom seam reports the
+// collapsed later items. The repaint always runs so the painted buffer
+// provably matches the window bookkeeping the row math below uses, and
+// the view is marked scrolled so later appends do not yank the hit
+// away. The row estimate uses itemRows, the same measure the prompt
+// anchors use.
 func (t *App) revealItem(k int) {
 	w := messageWidth(t.Messages)
-	// windowStart -1 means no window is established yet (fresh session,
-	// live-tail return, compaction, clear): normalize to the natural
-	// trailing window before the paint decision. Without this, a hit
-	// inside the painted range skips the refresh and the row loop
-	// below starts at -1, indexing conversationLog[-1].
-	if t.windowStart < 0 {
-		t.windowStart = t.computeWindowStart(len(t.conversationLog), w)
-		t.windowWidth = w
+	n := len(t.conversationLog)
+
+	t.windowStart = max(0, k-renderBackfillStep)
+	t.windowWidth = w
+	if end := t.computeWindowEnd(t.windowStart, n, w); end < n {
+		t.windowEnd = end
+	} else {
+		t.windowEnd = -1
 	}
-	if k < t.windowStart || k >= t.renderedItems {
-		if k < t.windowStart {
-			t.windowStart = max(0, k-renderBackfillStep)
-			t.windowWidth = w
-		}
-		t.userScrolled = true
-		t.needsFullRender.Store(true)
-		t.refreshMessages()
-	}
+	t.userScrolled = true
+	t.needsFullRender.Store(true)
+	t.refreshMessages()
+
 	rows := t.seamRows(t.windowStart, w)
 	for i := t.windowStart; i < k; i++ {
 		rows += t.itemRows(&t.conversationLog[i], t.buildItems(i, i+1, w)[0], w)
 	}
 	t.Messages.ScrollTo(rows, 0)
-	t.SetEphemeral(fmt.Sprintf("Found in message %d of %d", k+1, len(t.conversationLog)))
+	t.SetEphemeral(fmt.Sprintf("Found in message %d of %d", k+1, n))
 }
