@@ -11,6 +11,7 @@ import (
 	"github.com/goatherdai/yaah/internal/agent"
 	"github.com/goatherdai/yaah/internal/toolfmt"
 	"github.com/goatherdai/yaah/internal/tui/components/activity"
+	"github.com/goatherdai/yaah/internal/tui/transcript"
 )
 
 func (t *App) HandleEvent(event agent.Event) {
@@ -79,7 +80,7 @@ func (t *App) HandleEvent(event agent.Event) {
 		t.queueUpdateCritical(func() {
 			t.flushPendingTokens()
 			msg := fmt.Sprintf("[%s]\u26A0 %s[-]", t.Theme.Error, e.Summary)
-			t.conversationLog = append(t.conversationLog, convItem{text: msg})
+			t.tr.Append(transcript.TextItem(msg))
 			t.markDirty()
 		})
 	case *agent.CompactionStartedEvent:
@@ -89,11 +90,11 @@ func (t *App) HandleEvent(event agent.Event) {
 			// Record the collapse boundary: if compaction completes, the
 			// view reconciles (yaah-30t6 AC 3) by replacing everything
 			// below this mark with a one-line stub.
-			t.compactBoundary = len(t.conversationLog)
+			t.compactBoundary = t.tr.Len()
 			detail := fmt.Sprintf("%.1fK\u2192%.1fK", float64(e.BeforeTokens)/1000, float64(e.TargetTokens)/1000)
 			t.setActivity(activity.Compacting, detail)
 			msg := fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, e.StartedSummary())
-			t.conversationLog = append(t.conversationLog, convItem{text: msg})
+			t.tr.Append(transcript.TextItem(msg))
 			t.markDirty()
 		})
 	case *agent.CompactionDoneEvent:
@@ -109,7 +110,7 @@ func (t *App) HandleEvent(event agent.Event) {
 			t.collapseCompacted()
 			t.compactBoundary = 0
 			msg := fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, e.DoneSummary())
-			t.conversationLog = append(t.conversationLog, convItem{text: msg})
+			t.tr.Append(transcript.TextItem(msg))
 			t.markDirty()
 		})
 	case *agent.TitleSetEvent:
@@ -124,7 +125,7 @@ func (t *App) HandleEvent(event agent.Event) {
 		t.queueUpdateCritical(func() {
 			t.flushPendingTokens()
 			msg := fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, e.Notice())
-			t.conversationLog = append(t.conversationLog, convItem{text: msg})
+			t.tr.Append(transcript.TextItem(msg))
 			t.markDirty()
 		})
 	case *agent.ModeChangedEvent:
@@ -135,7 +136,7 @@ func (t *App) HandleEvent(event agent.Event) {
 		t.queueUpdateCritical(func() {
 			t.flushPendingTokens()
 			msg := fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, e.Notice())
-			t.conversationLog = append(t.conversationLog, convItem{text: msg})
+			t.tr.Append(transcript.TextItem(msg))
 			t.markDirty()
 		})
 	case *agent.WakeEvent:
@@ -176,30 +177,9 @@ func (t *App) HandleEvent(event agent.Event) {
 
 // collapseCompacted replaces the pre-compaction conversation prefix with a
 // one-line stub (yaah-30t6 AC 3): compaction removed those messages from
-// the agent's context, so the view stops painting them too. Prompt
-// anchors rebuild on the next full render; the window resets because the
-// log shrank.
+// the agent's context, so the view stops painting them too.
 func (t *App) collapseCompacted() {
-	b := t.compactBoundary
-	if b <= 0 || b > len(t.conversationLog) {
-		return
-	}
-	stub := convItem{text: fmt.Sprintf("[%s]· %d messages compacted[-]", t.Theme.Dim, b)}
-	rest := append([]convItem{stub}, t.conversationLog[b:]...)
-	t.conversationLog = rest
-	t.needsFullRender.Store(true)
-	t.windowStart = -1
-	t.windowEnd = -1
-	t.renderedItems = 0
-	t.renderedWidth = 0
-	// The rewrite shifted every index, so the prompt index list is
-	// rebuilt in one pass; compaction is rare enough to afford it.
-	t.promptIdxs = t.promptIdxs[:0]
-	for i := range t.conversationLog {
-		if t.conversationLog[i].isPrompt {
-			t.promptIdxs = append(t.promptIdxs, i)
-		}
-	}
+	t.tr.CollapseCompacted(t.compactBoundary)
 }
 
 func (t *App) flushPendingTokens() bool {
@@ -219,7 +199,7 @@ func (t *App) flushPendingTokens() bool {
 		trace.WithAttributes(
 			attribute.Int64("tokens_rx", t.tokensRx.Load()),
 			attribute.Int64("chars_written", t.charsWritten.Load()),
-			attribute.Int64("chars_rendered", t.charsRendered.Load()),
+			attribute.Int64("chars_rendered", t.tr.CharsRendered()),
 			attribute.Int("pending_len", len(raw)),
 		))
 	span.End()

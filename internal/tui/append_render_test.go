@@ -8,44 +8,41 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
+// The append/render contract these tests pin: refreshMessages repaints
+// through the transcript model, and tail-only batches take the append
+// fast path — wrapped rows are added, nothing existing is re-wrapped
+// (proven by FullRenders not moving). In-place block mutations force
+// the full rebuild.
+
 // TestRefreshMessages_AppendsNewTailOnly verifies tail-only rendering:
-// appending items renders just the new content without disturbing what
-// is already painted, and advances the rendered cursor to the whole log.
-// Text items append too (T2: leading separator newlines commit to the
-// line index one at a time — see appendChunk), so the fast path is
-// proven by fullRenderCount not moving.
+// appending items paints just the new content without disturbing what is
+// already painted. Text items append too, so the fast path is proven by
+// FullRenders not moving.
 func TestRefreshMessages_AppendsNewTailOnly(t *testing.T) {
 	ui := New("test")
 
 	ui.appendMessage("hello there")
 	ui.refreshMessages()
-	if ui.renderedItems != 1 {
-		t.Fatalf("expected renderedItems=1 after first render, got %d", ui.renderedItems)
+	if n := ui.tr.Len(); n != 1 {
+		t.Fatalf("expected 1 transcript item after first render, got %d", n)
 	}
-	before := ui.Messages.GetText(true)
+	before := ui.tr.PaintedText()
 	if !strings.Contains(before, "hello there") {
 		t.Fatalf("first render missing user message; got %q", before)
 	}
-	fullRenders := ui.fullRenderCount
+	fullRenders := ui.tr.FullRenders()
 
 	ui.addAssistantResponse("streamed **response** tail")
-	if ui.needsFullRender.Load() {
-		t.Fatalf("appending a new item must not force a full rebuild")
-	}
-
 	ui.refreshMessages()
-	if ui.fullRenderCount != fullRenders {
-		t.Fatalf("text item took the full-render path (%d rebuilds, want %d)", ui.fullRenderCount, fullRenders)
+	if got := ui.tr.FullRenders(); got != fullRenders {
+		t.Fatalf("text item took the full-render path (%d rebuilds, want %d)", got, fullRenders)
 	}
-	after := ui.Messages.GetText(true)
+	after := ui.tr.PaintedText()
 	if !strings.HasPrefix(after, before) {
-		t.Fatalf("append path rewrote existing content:\nbefore=%q\nafter=%q", before, after)
+		t.Fatalf("append path rewrote existing rows:\nbefore=%q\nafter=%q", before, after)
 	}
 	if !strings.Contains(after, "streamed") || !strings.Contains(after, "response") {
 		t.Fatalf("append path dropped new content; got %q", after)
-	}
-	if ui.renderedItems != 2 {
-		t.Fatalf("expected renderedItems=2, got %d", ui.renderedItems)
 	}
 }
 
@@ -58,53 +55,64 @@ func msgColumn(row string) string {
 	return row
 }
 
-// TestRefreshMessages_ResponseChunkHasSeparator verifies the painted output
-// of a flushed assistant response on the APPEND path (T2): a blank line
-// must separate it from the preceding tool line, and its first row must
-// carry no stray leading space. This pins the appendChunk fix in
-// refreshMessages: uniseg mis-classifies a "\n" that is the first cluster
-// of a resumed parse (width-1 optional break instead of a mandatory
-// break), which would render the separator as a one-space indent until
-// the next full render fixed it — so leading separator newlines are
-// committed to the line index one at a time with a forced parse between
-// them.
-func TestRefreshMessages_ResponseChunkHasSeparator(t *testing.T) {
+// paintScreen draws the root onto sim and returns the visible rows,
+// right-trimmed. The shared probe for every painted-layout assertion:
+// only a simulated-screen draw proves what the user actually sees.
+func paintScreen(t *testing.T, ui *App, sim tcell.SimulationScreen, height int) []string {
+	t.Helper()
+	ui.Root.Draw(sim)
+	sim.Show()
+	cells, w, _ := sim.GetContents()
+	rows := make([]string, 0, height)
+	for y := 0; y < height; y++ {
+		var b strings.Builder
+		for x := 0; x < w; x++ {
+			i := y*w + x
+			if i >= len(cells) || len(cells[i].Runes) == 0 {
+				b.WriteRune(' ')
+				continue
+			}
+			b.WriteRune(cells[i].Runes[0])
+		}
+		rows = append(rows, strings.TrimRight(b.String(), " "))
+	}
+	return rows
+}
+
+// newPaintedUI builds an App with a simulated screen sized 120x40, lays
+// the root out once, and returns the app with a paint helper bound to
+// that screen. Tests that assert painted layout must draw through the
+// pane, not the model's row table: the pane owns the viewport.
+func newPaintedUI(t *testing.T) (*App, func() []string) {
+	t.Helper()
 	sim := tcell.NewSimulationScreen("UTF-8")
 	if err := sim.Init(); err != nil {
 		t.Fatalf("init simulation screen: %v", err)
 	}
-	defer sim.Fini()
+	t.Cleanup(sim.Fini)
 	sim.SetSize(120, 40)
-
 	ui := New("test")
 	ui.Root.SetRect(0, 0, 120, 40)
 	ui.Root.Draw(sim)
+	return ui, func() []string { return paintScreen(t, ui, sim, 40) }
+}
 
-	paint := func() []string {
-		ui.Root.Draw(sim)
-		sim.Show()
-		cells, w, _ := sim.GetContents()
-		rows := make([]string, 0, 40)
-		for y := 0; y < 40; y++ {
-			var b strings.Builder
-			for x := 0; x < w; x++ {
-				i := y*w + x
-				if i >= len(cells) || len(cells[i].Runes) == 0 {
-					b.WriteRune(' ')
-					continue
-				}
-				b.WriteRune(cells[i].Runes[0])
-			}
-			rows = append(rows, strings.TrimRight(b.String(), " "))
-		}
-		return rows
-	}
+// TestRefreshMessages_ResponseChunkHasSeparator verifies the painted
+// output of a flushed assistant response on the APPEND path: a blank
+// line must separate it from the preceding tool line, and its first row
+// must carry no stray leading space. The TextView path needed the
+// appendChunk dance to keep uniseg's resumed parse from collapsing the
+// separator into a one-space indent; the pane wraps each item
+// independently, so the assertions pin that the new construction holds
+// the same painted shape.
+func TestRefreshMessages_ResponseChunkHasSeparator(t *testing.T) {
+	ui, paint := newPaintedUI(t)
 
 	ui.appendMessage("comment on the bead please")
 	ui.AddToolStart("1", "bash", "bd comment yaah-95ri.7")
 	ui.AddToolEnd("1", "bash · bd comment", "ok")
 	ui.refreshMessages()
-	fullRenders := ui.fullRenderCount
+	fullRenders := ui.tr.FullRenders()
 
 	ui.tokenMu.Lock()
 	ui.pendingTokens.WriteString("Posted to the bead. Here's the complete picture — what the fix looks like and your stopgap.")
@@ -114,8 +122,8 @@ func TestRefreshMessages_ResponseChunkHasSeparator(t *testing.T) {
 		t.Fatalf("flush did not render the streamed response")
 	}
 	ui.refreshMessages()
-	if ui.fullRenderCount != fullRenders {
-		t.Fatalf("flushed text took the full-render path (%d rebuilds, want %d)", ui.fullRenderCount, fullRenders)
+	if got := ui.tr.FullRenders(); got != fullRenders {
+		t.Fatalf("flushed text took the full-render path (%d rebuilds, want %d)", got, fullRenders)
 	}
 	rows := paint()
 
@@ -162,65 +170,43 @@ func TestRefreshMessages_ResponseChunkHasSeparator(t *testing.T) {
 
 // TestRefreshMessages_ToolChunkAppends verifies the tool-line fast path:
 // a batch whose first new item is a tool block is appended onto the
-// existing buffer — the append branch is proven by fullRenderCount not
-// moving (a SetText rebuild would satisfy a prefix assertion anyway,
-// since Format reproduces items 0..renderedItems verbatim).
+// existing row table — the append branch is proven by FullRenders not
+// moving.
 func TestRefreshMessages_ToolChunkAppends(t *testing.T) {
 	ui := New("test")
 
 	ui.appendMessage("run something")
 	ui.AddToolStart("1", "bash", "ls")
 	ui.refreshMessages()
-	before := ui.Messages.GetText(true)
-	fullRenders := ui.fullRenderCount
+	before := ui.tr.PaintedText()
+	fullRenders := ui.tr.FullRenders()
 
 	ui.AddToolStart("2", "grep", "pattern")
-	if ui.needsFullRender.Load() {
-		t.Fatalf("adding a new tool block must not force a full rebuild")
-	}
 	ui.refreshMessages()
 
-	if ui.fullRenderCount != fullRenders {
-		t.Fatalf("tool chunk took the full-render path (%d rebuilds, want %d)", ui.fullRenderCount, fullRenders)
+	if got := ui.tr.FullRenders(); got != fullRenders {
+		t.Fatalf("tool chunk took the full-render path (%d rebuilds, want %d)", got, fullRenders)
 	}
-	after := ui.Messages.GetText(true)
+	after := ui.tr.PaintedText()
 	if !strings.HasPrefix(after, before) {
-		t.Fatalf("append path rewrote existing content:\nbefore=%q\nafter=%q", before, after)
+		t.Fatalf("append path rewrote existing rows:\nbefore=%q\nafter=%q", before, after)
 	}
 	if !strings.Contains(after, "grep") {
 		t.Fatalf("append path dropped new tool chunk; got %q", after)
-	}
-	if ui.renderedItems != len(ui.conversationLog) {
-		t.Fatalf("expected renderedItems to cover the whole log, got %d of %d",
-			ui.renderedItems, len(ui.conversationLog))
 	}
 }
 
 // TestRefreshMessages_MixedBatchAppendsToolChunk verifies a batch that
 // starts with a tool block but contains a later text item (e.g. a tool
-// start coalesced with a flush). The painted-rows assertions are the
-// real check: the raw buffer cannot see paint-time reindexing, so only
-// a simulated-screen draw proves the text item's separator survived the
-// tview resumed parse.
+// start coalesced with a flush). The painted-rows assertions are the real
+// check: the row table cannot see paint-time behavior, so only a
+// simulated-screen draw proves the text item's separator survived.
 func TestRefreshMessages_MixedBatchAppendsToolChunk(t *testing.T) {
-	sim := tcell.NewSimulationScreen("UTF-8")
-	if err := sim.Init(); err != nil {
-		t.Fatalf("init simulation screen: %v", err)
-	}
-	defer sim.Fini()
-	sim.SetSize(120, 40)
-
-	ui := New("test")
-	ui.Root.SetRect(0, 0, 120, 40)
-	// Warm the layout before any render, so the first full render runs at
-	// the pane's real width and the drawing below does not trigger tview's
-	// width-change reindex (which would fresh-parse instead of continuing).
-	ui.Root.Draw(sim)
+	ui, paint := newPaintedUI(t)
 
 	ui.appendMessage("run something")
 	ui.refreshMessages()
-	ui.Root.Draw(sim)
-	fullRenders := ui.fullRenderCount
+	fullRenders := ui.tr.FullRenders()
 
 	// Tool added first, then a streamed response flushed, with no
 	// refresh in between — one mixed tail batch.
@@ -232,34 +218,15 @@ func TestRefreshMessages_MixedBatchAppendsToolChunk(t *testing.T) {
 	if !ui.flushPendingTokens() {
 		t.Fatalf("flush did not consume pending tokens")
 	}
-	if ui.needsFullRender.Load() {
-		t.Fatalf("mixed batch must not force a full rebuild")
-	}
 	ui.refreshMessages()
-	if ui.fullRenderCount != fullRenders {
-		t.Fatalf("mixed batch took the full-render path (%d rebuilds, want %d)", ui.fullRenderCount, fullRenders)
+	if got := ui.tr.FullRenders(); got != fullRenders {
+		t.Fatalf("mixed batch took the full-render path (%d rebuilds, want %d)", got, fullRenders)
 	}
 
-	// Paint through the continuation parse and assert the text item's
-	// blank-line separator survived: no leading space on its first row,
-	// blank row between it and the tool line above.
-	ui.Root.Draw(sim)
-	sim.Show()
-	cells, w, _ := sim.GetContents()
-	rows := make([]string, 0, 40)
-	for y := 0; y < 40; y++ {
-		var b strings.Builder
-		for x := 0; x < w; x++ {
-			i := y*w + x
-			if i >= len(cells) || len(cells[i].Runes) == 0 {
-				b.WriteRune(' ')
-				continue
-			}
-			b.WriteRune(cells[i].Runes[0])
-		}
-		rows = append(rows, strings.TrimRight(b.String(), " "))
-	}
-
+	// Paint through the pane and assert the text item's blank-line
+	// separator survived: no leading space on its first row, blank row
+	// between it and the tool line above.
+	rows := paint()
 	answer := -1
 	for i, r := range rows {
 		if strings.Contains(r, "the streamed answer") {
@@ -271,7 +238,7 @@ func TestRefreshMessages_MixedBatchAppendsToolChunk(t *testing.T) {
 		t.Fatalf("streamed answer row not painted: %v", rows)
 	}
 	if strings.HasPrefix(msgColumn(rows[answer]), " ") {
-		t.Errorf("mixed batch re-collapsed the separator: %q", rows[answer])
+		t.Errorf("mixed batch collapsed the separator: %q", rows[answer])
 	}
 	if strings.TrimSpace(msgColumn(rows[answer-1])) != "" {
 		t.Errorf("no blank row between tool line and appended text: %q / %q", rows[answer-2], rows[answer-1])
@@ -280,9 +247,8 @@ func TestRefreshMessages_MixedBatchAppendsToolChunk(t *testing.T) {
 		t.Errorf("expected tool line above the separator: %q", rows[answer-2])
 	}
 
-	// Buffer-level: append preserved prior content.
-	after := ui.Messages.GetText(true)
-	if !strings.Contains(after, "run something") {
+	// Row-table level: append preserved prior content.
+	if after := ui.tr.PaintedText(); !strings.Contains(after, "run something") {
 		t.Fatalf("append path dropped existing content: %q", after)
 	}
 }
@@ -297,13 +263,49 @@ func TestAddToolEnd_ForcesFullRender(t *testing.T) {
 
 	ui.AddToolStart("42", "bash", "ls")
 	ui.refreshMessages()
-	if ui.needsFullRender.Load() {
-		t.Fatalf("adding a NEW tool block must not force a full rebuild")
-	}
+	fullRenders := ui.tr.FullRenders()
 
 	ui.AddToolEnd("42", "bash", "file output")
-	if !ui.needsFullRender.Load() {
-		t.Fatalf("completing an EXISTING tool block must force a full rebuild")
+	ui.refreshMessages()
+	if got := ui.tr.FullRenders(); got != fullRenders+1 {
+		t.Fatalf("completing an EXISTING tool block must force a full rebuild (full renders %d, want %d)", got, fullRenders+1)
+	}
+}
+
+// TestRepaint_ResizesRewrapRows pins the resize seam: the pane paints
+// pre-wrapped rows, so a width change must re-wrap them before the frame
+// that would show stale-width content. BeforeDraw performs the repaint;
+// after it, every painted row fits the new width.
+func TestRepaint_ResizesRewrapRows(t *testing.T) {
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatalf("init simulation screen: %v", err)
+	}
+	defer sim.Fini()
+	sim.SetSize(120, 40)
+
+	ui := New("test")
+	ui.Root.SetRect(0, 0, 120, 40)
+	ui.Root.Draw(sim)
+
+	ui.appendMessage(strings.Repeat("word ", 60)) // 300 chars: wraps at 120, more rows at 60
+	ui.refreshMessages()
+	rowsAt120 := len(ui.tr.Rows())
+	if rowsAt120 == 0 {
+		t.Fatalf("nothing painted")
+	}
+
+	// Halve the pane's width and lay out again, the way a resize does.
+	// The AfterDraw hook's body runs after the layout has cascaded.
+	sim.SetSize(60, 40)
+	ui.Root.SetRect(0, 0, 60, 40)
+	ui.Root.Draw(sim)
+	ui.repaintOnResize(sim)
+	if w := ui.tr.PaintedWidth(); w > 60 {
+		t.Fatalf("rows still wrapped at stale width %d after resize", w)
+	}
+	if got := len(ui.tr.Rows()); got <= rowsAt120 {
+		t.Fatalf("narrower pane must wrap into more rows: %d at width 60, %d at width 120", got, rowsAt120)
 	}
 }
 

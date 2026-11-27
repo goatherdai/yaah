@@ -26,42 +26,42 @@ func TestRestoreHistoryRendersVisibleRowsInOrder(t *testing.T) {
 
 	ui.restoreHistory()
 
-	if len(ui.conversationLog) != 7 {
-		t.Fatalf("conversationLog has %d items, want 7: %+v", len(ui.conversationLog), ui.conversationLog)
+	if ui.tr.Len() != 7 {
+		t.Fatalf("transcript has %d items, want 7", ui.tr.Len())
 	}
-	if !ui.conversationLog[0].isPrompt || ui.conversationLog[0].prompt != "fix the flaky test" {
-		t.Errorf("item 0 = %+v, want the historical user prompt with sticky-pin metadata", ui.conversationLog[0])
+	if !ui.tr.ItemAt(0).IsPrompt || ui.tr.ItemAt(0).Prompt != "fix the flaky test" {
+		t.Errorf("item 0 = %+v, want the historical user prompt with sticky-pin metadata", ui.tr.ItemAt(0))
 	}
-	if ui.conversationLog[1].reasoningBlock == nil {
+	if ui.tr.ItemAt(1).ReasBlock == nil {
 		t.Error("item 1 should be the reasoning block")
 	}
-	if !ui.conversationLog[2].isMarkdown || ui.conversationLog[2].text != "on it" {
-		t.Errorf("item 2 = %+v, want assistant markdown", ui.conversationLog[2])
+	if !ui.tr.ItemAt(2).Markdown || ui.tr.ItemAt(2).Text != "on it" {
+		t.Errorf("item 2 = %+v, want assistant markdown", ui.tr.ItemAt(2))
 	}
 
-	firstTool := ui.conversationLog[3].toolBlock
+	firstTool := ui.tr.ItemAt(3).ToolBlock
 	if firstTool == nil || firstTool.S() != toolblock.Done {
-		t.Errorf("item 3 = %+v, want the completed tool block", ui.conversationLog[3])
+		t.Errorf("item 3 = %+v, want the completed tool block", ui.tr.ItemAt(3))
 	}
 	// The provider called this tool "1", the same value a live event would
 	// use. It must not collide with the next live ToolEndEvent{ID: 1}.
 	if strings.HasPrefix(firstTool.ID(), "1") {
 		t.Errorf("restored tool id %q can collide with a live numeric id", firstTool.ID())
 	}
-	secondTool := ui.conversationLog[4].toolBlock
+	secondTool := ui.tr.ItemAt(4).ToolBlock
 	if secondTool == nil || secondTool.S() != toolblock.Error {
-		t.Errorf("item 4 = %+v, want the failed tool block", ui.conversationLog[4])
+		t.Errorf("item 4 = %+v, want the failed tool block", ui.tr.ItemAt(4))
 	}
-	thirdTool := ui.conversationLog[5].toolBlock
+	thirdTool := ui.tr.ItemAt(5).ToolBlock
 	if thirdTool == nil || thirdTool.S() != toolblock.Done {
-		t.Errorf("item 5 = %+v, want the completed tool block", ui.conversationLog[5])
+		t.Errorf("item 5 = %+v, want the completed tool block", ui.tr.ItemAt(5))
 	}
-	if !ui.conversationLog[6].isPrompt || ui.conversationLog[6].prompt != "thanks" {
-		t.Errorf("item 6 = %+v, want the last user prompt", ui.conversationLog[6])
+	if !ui.tr.ItemAt(6).IsPrompt || ui.tr.ItemAt(6).Prompt != "thanks" {
+		t.Errorf("item 6 = %+v, want the last user prompt", ui.tr.ItemAt(6))
 	}
-	if !ui.needsFullRender.Load() {
-		t.Error("bulk-seeded history must force a full render")
-	}
+	// RequestFull is model-internal; the observable is that the first
+	// repaint takes the full-rebuild branch (no empty painted window to
+	// append onto), covered by TestRestoreHistoryThenLiveAppend below.
 }
 
 // TestRestoreHistoryLabelsMatchLive pins the collapsed text a resumed user
@@ -79,7 +79,7 @@ func TestRestoreHistoryLabelsMatchLive(t *testing.T) {
 	}})
 	ui.restoreHistory()
 	ui.refreshMessages()
-	text := ui.Messages.GetText(true)
+	text := ui.tr.PaintedText()
 	for _, want := range []string{"1 test passed", "bash ❌", "result not retained"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("rendered transcript missing %q: %q", want, text)
@@ -93,9 +93,11 @@ func TestRestoreHistoryLabelsMatchLive(t *testing.T) {
 	}
 
 	// The error body only appears when the failed block is expanded.
-	ui.conversationLog[1].toolBlock.Toggle()
+	// The toggle must go through the model mutator: it bumps the item's
+	// generation so the wrapped-row cache re-renders the expanded body.
+	ui.ToggleBlockByIndex(1)
 	ui.refreshMessages()
-	expanded := ui.Messages.GetText(true)
+	expanded := ui.tr.PaintedText()
 	if !strings.Contains(expanded, "error: exit status 1") || !strings.Contains(expanded, "Duration: —") {
 		t.Errorf("expanded error block lost its body or duration: %q", expanded)
 	}
@@ -113,14 +115,14 @@ func TestRestoreHistoryThenLiveAppend(t *testing.T) {
 
 	ui.restoreHistory()
 	ui.refreshMessages()
-	before := ui.Messages.GetText(true)
+	before := ui.tr.PaintedText()
 	if !strings.Contains(before, "earlier question") || !strings.Contains(before, "earlier answer") {
 		t.Fatalf("first render missing restored history: %q", before)
 	}
 
 	ui.addAssistantResponse("new live answer")
 	ui.refreshMessages()
-	after := ui.Messages.GetText(true)
+	after := ui.tr.PaintedText()
 	if !strings.Contains(after, "earlier question") || !strings.Contains(after, "new live answer") {
 		t.Fatalf("live append lost restored history: %q", after)
 	}
@@ -144,8 +146,8 @@ func TestBootstrapHistory(t *testing.T) {
 	if len(ui.history) != 0 {
 		t.Errorf("history was not consumed: %+v", ui.history)
 	}
-	if len(ui.conversationLog) != 1 || ui.conversationLog[0].prompt != "resumed prompt" {
-		t.Fatalf("conversationLog = %+v, want the restored prompt", ui.conversationLog)
+	if ui.tr.Len() != 1 || ui.tr.ItemAt(0).Prompt != "resumed prompt" {
+		t.Fatalf("transcript = %+v, want the restored prompt", ui.tr.ItemAt(0))
 	}
 	if !ui.needsRefresh.Load() {
 		t.Error("bootstrapHistory must schedule a redraw")
@@ -156,8 +158,8 @@ func TestBootstrapHistory(t *testing.T) {
 
 	// Calling it again is a no-op; a second Run must not duplicate rows.
 	ui.bootstrapHistory()
-	if len(ui.conversationLog) != 1 {
-		t.Errorf("second bootstrap duplicated history: %+v", ui.conversationLog)
+	if ui.tr.Len() != 1 {
+		t.Errorf("second bootstrap duplicated history: %d items", ui.tr.Len())
 	}
 }
 
@@ -165,7 +167,7 @@ func TestRestoreHistoryEmpty(t *testing.T) {
 	ui := New("test")
 	ui.SetHistory(nil)
 	ui.restoreHistory()
-	if len(ui.conversationLog) != 0 {
-		t.Errorf("conversationLog = %+v, want empty", ui.conversationLog)
+	if ui.tr.Len() != 0 {
+		t.Errorf("transcript has %d items, want empty", ui.tr.Len())
 	}
 }

@@ -14,8 +14,8 @@ import (
 func TestGlobalInputCapture_SendDuringActiveRunQueuesFollowUp(t *testing.T) {
 	ui := newColonUI(t)
 	var submitted, followed string
-	ui.OnSubmit = func(s string) { submitted = s }
-	ui.OnFollowUp = func(s string) { followed = s }
+	ui.Hooks.OnSubmit = func(s string) { submitted = s }
+	ui.Hooks.OnFollowUp = func(s string) { followed = s }
 
 	ui.agentActive = true
 	ui.activityBusy.Store(true)
@@ -41,8 +41,8 @@ func TestGlobalInputCapture_SendDuringActiveRunQueuesFollowUp(t *testing.T) {
 func TestGlobalInputCapture_SendWhileIdleStartsPrompt(t *testing.T) {
 	ui := newColonUI(t)
 	var submitted, followed string
-	ui.OnSubmit = func(s string) { submitted = s }
-	ui.OnFollowUp = func(s string) { followed = s }
+	ui.Hooks.OnSubmit = func(s string) { submitted = s }
+	ui.Hooks.OnFollowUp = func(s string) { followed = s }
 
 	ui.agentActive = false
 	ui.activityBusy.Store(false)

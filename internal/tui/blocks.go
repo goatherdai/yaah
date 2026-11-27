@@ -4,70 +4,51 @@ import (
 	"github.com/goatherdai/yaah/internal/tui/components/reasoning"
 	"github.com/goatherdai/yaah/internal/tui/components/subagent"
 	"github.com/goatherdai/yaah/internal/tui/components/toolblock"
+	"github.com/goatherdai/yaah/internal/tui/transcript"
 )
 
-// blocks.go — block operations (reasoning, tool, sub-agent).
-// All blocks are now stored inline in conversationLog via convItem.
+// blocks.go — block operations (reasoning, tool, sub-agent). Reasoning
+// and tool blocks are transcript items; their in-place mutations go
+// through the model's mutators, which bump the item's generation and
+// mark the model for a full repaint. Sub-agents are not transcript
+// items; they render in their own pane.
 
-// AddReasoningBlock creates a reasoning block and adds it to conversationLog.
+// AddReasoningBlock creates a reasoning block and appends it to the
+// transcript.
 func (t *App) AddReasoningBlock(id, content string) {
 	rb := reasoning.New(id, content, 0, t.Theme)
-	t.conversationLog = append(t.conversationLog, convItem{
-		reasoningBlock: rb,
-	})
+	t.tr.Append(transcript.ReasoningItem(rb))
 	t.markDirty()
 }
 
-// invalidateRows clears the cached display-row count of an item whose
-// block just mutated in place, so prompt-anchor bookkeeping remeasures.
-func invalidateRows(ci *convItem) {
-	ci.rowsCache = 0
-	ci.rowsWidth = 0
-}
-
-// AddToolError finds a tool block in conversationLog by ID and transitions it to Error.
+// AddToolError finds a tool block in the transcript by ID and
+// transitions it to Error.
 func (t *App) AddToolError(id, summary, err string) {
-	for i := range t.conversationLog {
-		ci := &t.conversationLog[i]
-		if ci.toolBlock != nil && ci.toolBlock.ID() == id {
-			ci.toolBlock.Fail(summary, err)
-			invalidateRows(ci)
-			t.needsFullRender.Store(true)
-			t.markDirty()
-			return
-		}
+	if t.tr.FailTool(id, summary, err) {
+		t.markDirty()
 	}
 }
 
-// AddToolStart adds a tool block to conversationLog.
+// AddToolStart adds a tool block to the transcript.
 // Note: flushes any pending streaming tokens first.
 func (t *App) AddToolStart(id, name, args string) {
 	t.flushPendingTokens()
 	tb := toolblock.New(id, name, args, t.Theme)
-	t.conversationLog = append(t.conversationLog, convItem{
-		toolBlock: tb,
-	})
+	t.tr.Append(transcript.ToolItem(tb))
 	t.markDirty()
 }
 
-// AddToolEnd updates a tool block in conversationLog with result.
+// AddToolEnd updates a tool block in the transcript with its result.
 // The caller (proxy.go) is responsible for routing errors via AddToolError.
 // Tools may legitimately return empty results (e.g., successful delete with no output).
 func (t *App) AddToolEnd(id, summary, result string) {
-	for i := range t.conversationLog {
-		ci := &t.conversationLog[i]
-		if ci.toolBlock != nil && ci.toolBlock.ID() == id {
-			ci.toolBlock.Complete(summary, result)
-			invalidateRows(ci)
-			t.needsFullRender.Store(true)
-			t.markDirty()
-			return
-		}
+	if t.tr.CompleteTool(id, summary, result) {
+		t.markDirty()
 	}
 }
 
 // AddSubAgentStart adds a sub-agent to the dedicated Subagents pane.
-// Sub-agents are not part of the conversation log; the pane is their only
+// Sub-agents are not part of the transcript; the pane is their only
 // display surface.
 func (t *App) AddSubAgentStart(id, role, task, world string) {
 	sb := subagent.New(id, role, task)
@@ -146,73 +127,25 @@ func (t *App) advanceSubAgentSpinners() {
 	}
 }
 
-// ToggleBlockByIndex finds the nth block (of any type) and toggles it.
+// ToggleBlockByIndex toggles the nth toggleable block (reasoning or tool).
 func (t *App) ToggleBlockByIndex(n int) {
-	toggleable := []*convItem{}
-	for i := range t.conversationLog {
-		ci := &t.conversationLog[i]
-		if ci.reasoningBlock != nil || ci.toolBlock != nil {
-			toggleable = append(toggleable, ci)
-		}
-	}
-
-	if n >= 0 && n < len(toggleable) {
-		toggleOne(toggleable[n])
-		t.needsFullRender.Store(true)
+	if t.tr.ToggleBlockByIndex(n) {
 		t.refreshMessages()
 	}
 }
 
-func toggleOne(ci *convItem) {
-	if ci.reasoningBlock != nil {
-		ci.reasoningBlock.Toggle()
-	} else if ci.toolBlock != nil {
-		ci.toolBlock.Toggle()
-	}
-	invalidateRows(ci)
-}
-
 // CollapseAll collapses all expandable blocks.
 func (t *App) CollapseAll() {
-	t.needsFullRender.Store(true)
-	for i := range t.conversationLog {
-		ci := &t.conversationLog[i]
-		if ci.reasoningBlock != nil {
-			for ci.reasoningBlock.IsExpanded() {
-				ci.reasoningBlock.Toggle()
-			}
-			invalidateRows(ci)
-		}
-		if ci.toolBlock != nil {
-			for ci.toolBlock.IsExpanded() {
-				ci.toolBlock.Toggle()
-			}
-			invalidateRows(ci)
-		}
-	}
+	t.tr.CollapseAll()
 	t.refreshMessages()
 }
 
 func (t *App) toggleAllReasoning() {
-	t.needsFullRender.Store(true)
-	for i := range t.conversationLog {
-		ci := &t.conversationLog[i]
-		if ci.reasoningBlock != nil {
-			ci.reasoningBlock.Toggle()
-			invalidateRows(ci)
-		}
-	}
+	t.tr.ToggleAllReasoning()
 	t.refreshMessages()
 }
 
 func (t *App) toggleAllTools() {
-	t.needsFullRender.Store(true)
-	for i := range t.conversationLog {
-		ci := &t.conversationLog[i]
-		if ci.toolBlock != nil {
-			ci.toolBlock.Toggle()
-			invalidateRows(ci)
-		}
-	}
+	t.tr.ToggleAllTools()
 	t.refreshMessages()
 }

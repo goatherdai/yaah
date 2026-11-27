@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v2"
-	"github.com/goatherdai/yaah/internal/tui/components/messages"
+	"github.com/goatherdai/yaah/internal/tui/transcript"
 )
 
 // TestAddPrompt_RendersInStream_DoesNotPin verifies the submit-path
@@ -15,7 +15,6 @@ import (
 // derived.
 func TestAddPrompt_RendersInStream_DoesNotPin(t *testing.T) {
 	ui := New("test")
-	ui.promptAnchors = nil
 
 	ui.AddPrompt("what about the swap path?")
 	if ui.pinnedPrompt != "" {
@@ -23,7 +22,7 @@ func TestAddPrompt_RendersInStream_DoesNotPin(t *testing.T) {
 	}
 	ui.refreshMessages()
 
-	buf := ui.Messages.GetText(true)
+	buf := ui.tr.PaintedText()
 	if !strings.Contains(buf, "🍖") || !strings.Contains(buf, "what about the swap path?") {
 		t.Fatalf("prompt missing from conversation stream: %q", buf)
 	}
@@ -31,8 +30,9 @@ func TestAddPrompt_RendersInStream_DoesNotPin(t *testing.T) {
 		t.Fatalf("prompt pinned before crossing the seam: pin=%q echo=%q",
 			ui.pinnedPrompt, ui.promptEcho.GetText(true))
 	}
-	if len(ui.promptAnchors) != 1 || ui.promptAnchors[0].input != "what about the swap path?" {
-		t.Fatalf("anchor table wrong: %+v", ui.promptAnchors)
+	anchors := ui.tr.Anchors()
+	if len(anchors) != 1 || anchors[0].Text != "what about the swap path?" {
+		t.Fatalf("anchor table wrong: %+v", anchors)
 	}
 }
 
@@ -42,7 +42,6 @@ func TestAddPrompt_RendersInStream_DoesNotPin(t *testing.T) {
 // question ahead of the assistant text it interrupted.
 func TestEchoPrompt_FlushesStreamedTextFirst(t *testing.T) {
 	ui := New("test")
-	ui.promptAnchors = nil
 
 	// Simulate a mid-stream steer: tokens are buffered and the queued
 	// flush callback has not run yet.
@@ -53,14 +52,15 @@ func TestEchoPrompt_FlushesStreamedTextFirst(t *testing.T) {
 
 	ui.EchoPrompt("steer: keep it short")
 
-	if got := len(ui.conversationLog); got != 2 {
-		t.Fatalf("conversationLog has %d items, want 2 (assistant text, prompt)", got)
+	if got := ui.tr.Len(); got != 2 {
+		t.Fatalf("transcript has %d items, want 2 (assistant text, prompt)", got)
 	}
-	if !ui.conversationLog[0].isMarkdown || !strings.Contains(ui.conversationLog[0].text, "partial answer") {
-		t.Fatalf("first item must be the flushed assistant text: %+v", ui.conversationLog[0])
+	first, second := ui.tr.ItemAt(0), ui.tr.ItemAt(1)
+	if !first.Markdown || !strings.Contains(first.Text, "partial answer") {
+		t.Fatalf("first item must be the flushed assistant text: %+v", first)
 	}
-	if !ui.conversationLog[1].isPrompt || ui.conversationLog[1].prompt != "steer: keep it short" {
-		t.Fatalf("second item must be the echoed prompt: %+v", ui.conversationLog[1])
+	if !second.IsPrompt || second.Prompt != "steer: keep it short" {
+		t.Fatalf("second item must be the echoed prompt: %+v", second)
 	}
 	if ui.isStreaming.Load() {
 		t.Fatal("flush must clear the streaming flag")
@@ -68,7 +68,10 @@ func TestEchoPrompt_FlushesStreamedTextFirst(t *testing.T) {
 }
 
 // TestReconcilePromptPin_Rules drives the scroll position through the
-// full lifecycle: no pin below the seam, pin on crossing, swap to the
+// full lifecycle: no pin at the transcript top, pin once a prompt's
+// first row has scrolled PAST the viewport top (yaah-983 hysteresis: at
+// the exact boundary row the in-stream copy is visible, so the pin
+// shows the previous prompt instead of double-rendering), swap to the
 // newer prompt when it crosses, reverse scroll re-pins the previous one.
 func TestReconcilePromptPin_Rules(t *testing.T) {
 	sim := tcell.NewSimulationScreen("UTF-8")
@@ -82,22 +85,35 @@ func TestReconcilePromptPin_Rules(t *testing.T) {
 	ui.Root.Draw(sim)
 
 	ui.AddPrompt("question one")
+	// Taller than the viewport, so the scroll positions below exist:
+	// the pane clamps the offset to the row table (a real viewport cannot
+	// scroll into nothing), unlike the TextView it replaces.
+	ui.appendMessage(strings.Repeat("filler line\n", 40))
 	ui.refreshMessages()
-	if len(ui.promptAnchors) != 1 {
-		t.Fatalf("expected one anchor, got %+v", ui.promptAnchors)
+	if len(ui.tr.Anchors()) != 1 {
+		t.Fatalf("expected one anchor, got %+v", ui.tr.Anchors())
 	}
-	q1Line := ui.promptAnchors[0].startLine
+	q1Row := ui.tr.Anchors()[0].Row
 
-	// Below the seam: unpinned.
-	ui.Messages.ScrollTo(0, 0)
+	// At the transcript top: unpinned.
+	ui.pane.ScrollTo(0)
 	ui.reconcilePromptPin()
 	if ui.pinnedPrompt != "" {
-		t.Fatalf("prompt pinned while below the seam: %q", ui.pinnedPrompt)
+		t.Fatalf("prompt pinned at the top: %q", ui.pinnedPrompt)
 	}
 
-	// Crossing the seam: pinned. The echo shows the question text and
-	// the stream still holds its own copy.
-	ui.Messages.ScrollTo(q1Line, 0)
+	// The prompt's first row exactly at the viewport top: the in-stream
+	// copy is on screen, so the pin stays empty (hysteresis, yaah-983).
+	ui.pane.ScrollTo(q1Row)
+	ui.reconcilePromptPin()
+	if ui.pinnedPrompt != "" {
+		t.Fatalf("prompt pinned while its in-stream copy is at the top row: %q", ui.pinnedPrompt)
+	}
+
+	// One row past it: the in-stream copy has scrolled off, the pin
+	// takes over. The echo shows the question text and the stream still
+	// holds its own copy.
+	ui.pane.ScrollTo(q1Row + 1)
 	ui.reconcilePromptPin()
 	if ui.pinnedPrompt != "question one" {
 		t.Fatalf("seam crossing did not pin; got %q", ui.pinnedPrompt)
@@ -105,42 +121,56 @@ func TestReconcilePromptPin_Rules(t *testing.T) {
 	if !strings.Contains(ui.promptEcho.GetText(true), "question one") {
 		t.Fatalf("echo missing pinned prompt: %q", ui.promptEcho.GetText(true))
 	}
-	if !strings.Contains(ui.Messages.GetText(true), "question one") {
-		t.Fatalf("in-stream copy lost: %q", ui.Messages.GetText(true))
+	if !strings.Contains(ui.tr.PaintedText(), "question one") {
+		t.Fatalf("in-stream copy lost: %q", ui.tr.PaintedText())
 	}
 
-	// A second question, still far below the seam: the pin holds q1.
+	// A second question, still below the seam: the pin holds q1. The
+	// trailing filler keeps q2's boundary inside the scrollable range
+	// (the pane clamps the offset a viewport short of the end).
 	ui.AddPrompt("question two")
-	ui.AddToolStart("1", "bash", "ls") // grows the buffer via the fast path
+	ui.AddToolStart("1", "bash", "ls") // grows the row table via the fast path
+	ui.appendMessage(strings.Repeat("filler line\n", 40))
 	ui.refreshMessages()
-	if len(ui.promptAnchors) != 2 {
-		t.Fatalf("expected two anchors, got %+v", ui.promptAnchors)
+	anchors := ui.tr.Anchors()
+	if len(anchors) != 2 {
+		t.Fatalf("expected two anchors, got %+v", anchors)
 	}
-	q2 := ui.promptAnchors[1]
-	if q2.startLine <= q1Line {
-		t.Fatalf("q2 anchor not below q1: %+v", ui.promptAnchors)
+	q2 := anchors[1]
+	if q2.Row <= q1Row {
+		t.Fatalf("q2 anchor not below q1: %+v", anchors)
 	}
-	ui.reconcilePromptPin() // scroll is still near q1
+
+	// Scroll still near q1: the pin holds q1.
+	ui.pane.ScrollTo(q1Row + 1)
+	ui.reconcilePromptPin()
 	if ui.pinnedPrompt != "question one" {
 		t.Fatalf("second question took the pin before crossing the seam: %q", ui.pinnedPrompt)
 	}
 
-	// q2 crosses the seam: swap.
-	ui.Messages.ScrollTo(q2.startLine, 0)
+	// q2's first row at the viewport top: still showing q1 (hysteresis).
+	ui.pane.ScrollTo(q2.Row)
+	ui.reconcilePromptPin()
+	if ui.pinnedPrompt != "question one" {
+		t.Fatalf("q2 took the pin while its in-stream copy is at the top row: %q", ui.pinnedPrompt)
+	}
+
+	// One row past q2: swap.
+	ui.pane.ScrollTo(q2.Row + 1)
 	ui.reconcilePromptPin()
 	if ui.pinnedPrompt != "question two" {
 		t.Fatalf("q2 did not take over the pin: %q", ui.pinnedPrompt)
 	}
 
-	// Reverse scroll above q2: q2 detaches, q1 re-pins.
-	ui.Messages.ScrollTo(q1Line+1, 0)
+	// Reverse scroll above q2's boundary: q2 detaches, q1 re-pins.
+	ui.pane.ScrollTo(q1Row + 1)
 	ui.reconcilePromptPin()
 	if ui.pinnedPrompt != "question one" {
 		t.Fatalf("reverse scroll did not re-pin q1: %q", ui.pinnedPrompt)
 	}
 
-	// And above q1: everything detaches; the echo hides.
-	ui.Messages.ScrollTo(0, 0)
+	// And at the top: everything detaches; the echo hides.
+	ui.pane.ScrollTo(0)
 	ui.reconcilePromptPin()
 	if ui.pinnedPrompt != "" || ui.promptEcho.GetText(true) != "" {
 		t.Fatalf("echo did not hide above every prompt: pin=%q echo=%q",
@@ -152,70 +182,55 @@ func TestReconcilePromptPin_Rules(t *testing.T) {
 // the incremental paths with no full rebuild sneaking into the captured
 // state: after the baseline render, a stretch of pure-append refreshes
 // (tool lines plus a mixed [tool, prompt] batch — the only way
-// extendPromptAnchors delta-adds a prompt anchor) must produce the same
-// table an explicit full recompute of that state produces.
+// appendRows delta-adds a prompt anchor) must produce the same table
+// an explicit full recompute of that state produces.
 func TestPromptAnchors_AppendMatchesFull(t *testing.T) {
 	ui := New("test")
 	ui.AddPrompt("a reasonably long question that might wrap on narrower panes")
 	ui.refreshMessages()
-	if ui.fullRenderCount != 1 {
-		t.Fatalf("baseline should be exactly one full render, got %d", ui.fullRenderCount)
+	if ui.tr.FullRenders() != 1 {
+		t.Fatalf("baseline should be exactly one full render, got %d", ui.tr.FullRenders())
 	}
 
 	// Mixed batch with no refresh in between: the first new item is a
 	// tool block (append path) and the batch also carries a prompt, so
-	// extendPromptAnchors must delta-add its anchor.
+	// appendRows must delta-add its anchor.
 	ui.AddToolStart("1", "bash", "ls")
 	ui.AddPrompt("second question in one mixed batch")
 	ui.refreshMessages()
-	if ui.fullRenderCount != 1 {
-		t.Fatalf("mixed batch took the full-render path (%d rebuilds)", ui.fullRenderCount)
+	if ui.tr.FullRenders() != 1 {
+		t.Fatalf("mixed batch took the full-render path (%d rebuilds)", ui.tr.FullRenders())
 	}
-	if len(ui.promptAnchors) != 2 {
-		t.Fatalf("expected a delta-added second anchor, got %+v", ui.promptAnchors)
+	if len(ui.tr.Anchors()) != 2 {
+		t.Fatalf("expected a delta-added second anchor, got %+v", ui.tr.Anchors())
 	}
 
-	// Pure-delta table, captured before any full-render trigger.
-	appended := append([]promptAnchor(nil), ui.promptAnchors...)
+	// Pure-delta tables, captured before any full-repaint trigger.
+	appendedAnchors := append([]transcript.Anchor(nil), ui.tr.Anchors()...)
+	appendedRows := append([]string(nil), ui.tr.Rows()...)
 
-	// Force the full recompute in this exact state and diff.
-	ui.needsFullRender.Store(true)
+	// Force the full recompute in this exact state and diff both tables.
+	ui.tr.RequestFull()
 	ui.refreshMessages()
-	full := ui.promptAnchors
+	fullAnchors := ui.tr.Anchors()
+	fullRows := ui.tr.Rows()
 
-	if len(appended) != len(full) {
-		t.Fatalf("anchor counts differ: %d vs %d", len(appended), len(full))
+	if len(appendedAnchors) != len(fullAnchors) {
+		t.Fatalf("anchor counts differ: %d vs %d", len(appendedAnchors), len(fullAnchors))
 	}
-	for i := range full {
-		if appended[i] != full[i] {
+	for i := range fullAnchors {
+		if appendedAnchors[i] != fullAnchors[i] {
 			t.Fatalf("anchor %d drifted between delta and full: %+v vs %+v",
-				i, appended[i], full[i])
+				i, appendedAnchors[i], fullAnchors[i])
 		}
 	}
-
-	// Cache invariant after an in-place block mutation: AddToolEnd
-	// changes the block's row count and must invalidate the cache; the
-	// next render's cached counts must equal a fresh measure at the
-	// cache's own key width (whose pre-layout default is not a real
-	// pane width — deliberately not hardcoded here).
-	ui.AddToolEnd("1", "bash · ls", strings.Repeat("line\n", 8))
-	ui.refreshMessages()
-	for i := range ui.conversationLog {
-		ci := &ui.conversationLog[i]
-		if ci.rowsWidth == 0 {
-			t.Fatalf("item %d left uncached after a full render", i)
-		}
-		if ci.rowsCache != messages.ItemRows(ui.buildItems(i, i+1, ci.rowsWidth)[0], messages.Content{Width: ci.rowsWidth, Theme: ui.Theme}) {
-			t.Fatalf("item %d cached a stale row count (%d at width %d)", i, ci.rowsCache, ci.rowsWidth)
-		}
+	if len(appendedRows) != len(fullRows) {
+		t.Fatalf("row counts differ: %d vs %d", len(appendedRows), len(fullRows))
 	}
-
-	// Expand toggle: same invariant after the row count changes in place.
-	ui.ToggleBlockByIndex(0)
-	for i := range ui.conversationLog {
-		ci := &ui.conversationLog[i]
-		if ci.rowsCache != messages.ItemRows(ui.buildItems(i, i+1, ci.rowsWidth)[0], messages.Content{Width: ci.rowsWidth, Theme: ui.Theme}) {
-			t.Fatalf("item %d cached a stale row count after toggle (%d at width %d)", i, ci.rowsCache, ci.rowsWidth)
+	for i := range fullRows {
+		if appendedRows[i] != fullRows[i] {
+			t.Fatalf("row %d drifted between delta and full: %q vs %q",
+				i, appendedRows[i], fullRows[i])
 		}
 	}
 }
@@ -238,8 +253,8 @@ func TestReconcilePromptPin_DeadlockSafety(t *testing.T) {
 
 	ui.AddPrompt("question one")
 	ui.refreshMessages()
-	if len(ui.promptAnchors) != 1 {
-		t.Fatalf("expected one anchor, got %+v", ui.promptAnchors)
+	if len(ui.tr.Anchors()) != 1 {
+		t.Fatalf("expected one anchor, got %+v", ui.tr.Anchors())
 	}
 
 	// Content taller than the pane: the refresh's auto-scroll carries the
@@ -271,16 +286,32 @@ func TestReconcilePromptPin_DeadlockSafety(t *testing.T) {
 	}
 
 	// Painted-row validation: a second question past the wrapped response
-	// gives an anchor whose startLine depends on the wrap estimate; it
-	// must match the row tview actually painted (offset math: painted =
-	// innerTop + startLine - scrollOffset).
+	// gives an anchor whose Row comes from the prefix table; it must match
+	// the row the pane actually painted (painted = innerTop + Row - offset).
 	ui.AddPrompt("question two")
 	ui.refreshMessages()
 	ui.App.ForceDraw()
 
-	ro, _ := ui.Messages.GetScrollOffset()
-	_, innerTop, _, innerH := ui.Messages.GetInnerRect()
-	expected := innerTop + ui.promptAnchors[1].startLine - ro
+	ro := ui.pane.Offset()
+	_, innerTop, _, innerH := ui.pane.GetInnerRect()
+	// The second prompt's content row, located in the painted table —
+	// the prefix table's anchor points at the item's first row (its
+	// separator), so the content itself sits within the block.
+	content := -1
+	for i, ln := range ui.tr.Rows() {
+		if strings.Contains(ln, "question two") {
+			content = i
+			break
+		}
+	}
+	if content < 0 {
+		t.Fatalf("second prompt not painted")
+	}
+	anchor := ui.tr.Anchors()[1]
+	if content < anchor.Row || content > anchor.Row+2 {
+		t.Fatalf("content row %d not inside the anchor block at %d", content, anchor.Row)
+	}
+	expected := innerTop + content - ro
 	if expected < innerTop || expected >= innerTop+innerH {
 		t.Fatalf("anchored row outside viewport: expected=%d innerTop=%d innerH=%d offset=%d",
 			expected, innerTop, innerH, ro)
@@ -297,7 +328,7 @@ func TestReconcilePromptPin_DeadlockSafety(t *testing.T) {
 		b.WriteRune(cells[i].Runes[0])
 	}
 	if !strings.Contains(strings.TrimRight(b.String(), " "), "question two") {
-		t.Fatalf("anchor startLine %d does not match the painted row %d (%q)",
-			ui.promptAnchors[1].startLine, expected, b.String())
+		t.Fatalf("anchor Row %d does not match the painted row %d (%q)",
+			ui.tr.Anchors()[1].Row, expected, b.String())
 	}
 }

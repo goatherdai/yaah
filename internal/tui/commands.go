@@ -34,18 +34,18 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 		t.ShowHelp()
 		return true
 	case command.CmdCompact:
-		if t.OnCompact != nil {
-			t.OnCompact()
+		if t.Hooks.OnCompact != nil {
+			t.Hooks.OnCompact()
 			return true
 		}
 		return false
 	case command.CmdStop:
-		if t.OnStop != nil {
-			t.OnStop()
+		if t.Hooks.OnStop != nil {
+			t.Hooks.OnStop()
 			return true
 		}
-		if t.OnAbort != nil {
-			t.OnAbort()
+		if t.Hooks.OnAbort != nil {
+			t.Hooks.OnAbort()
 			return true
 		}
 		return false
@@ -62,11 +62,11 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 			t.SetEphemeral("no turn is running — nothing to steer")
 			return false
 		}
-		if t.OnSteer == nil {
+		if t.Hooks.OnSteer == nil {
 			t.SetEphemeral("steering is unavailable in this session")
 			return false
 		}
-		t.OnSteer(arg)
+		t.Hooks.OnSteer(arg)
 		return true
 	case command.CmdFollowUp:
 		if arg == "" {
@@ -77,19 +77,19 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 		// would otherwise leak into a later turn's follow-up drain. Sending it
 		// as a prompt is what the user means.
 		if !t.agentActive {
-			if t.OnSubmit == nil {
+			if t.Hooks.OnSubmit == nil {
 				t.SetEphemeral("no turn is running and there is nowhere to send this")
 				return false
 			}
 			t.SetEphemeral("no turn is running — sent as a message")
-			t.OnSubmit(arg)
+			t.Hooks.OnSubmit(arg)
 			return true
 		}
-		if t.OnFollowUp == nil {
+		if t.Hooks.OnFollowUp == nil {
 			t.SetEphemeral("follow-ups are unavailable in this session")
 			return false
 		}
-		t.OnFollowUp(arg)
+		t.Hooks.OnFollowUp(arg)
 		return true
 	case command.CmdVerbose:
 		t.verbose = !t.verbose
@@ -102,26 +102,24 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 		// paths, the backfill is unconditional: ":top" is an explicit
 		// jump and the viewport may be anywhere, so the seam-row gate
 		// would leave it landing on the seam line itself.
-		t.userScrolled = true
-		if t.windowStart > 0 {
-			t.backfillWindow()
-		}
-		t.Messages.ScrollTo(0, 0)
+		t.tr.SetScrolled(true)
+		t.backfill()
+		t.pane.ScrollToBeginning()
 		return true
 	case command.CmdBottom:
 		// Back at the end: return to the live tail — the reset re-windows
 		// to the trailing budget, and a reveal window is repainted since
 		// its bottom seam hides the tail.
 		t.returnToTail()
-		t.Messages.ScrollToEnd()
+		t.pane.ScrollToEnd()
 		return true
 	case command.CmdBanner:
 		t.toggleBanner()
 		return true
 	case command.CmdModel:
 		t.ShowModelPicker(t.availableModels, t.providerNames, func(model string) {
-			if t.OnModelSelect != nil {
-				t.OnModelSelect(model)
+			if t.Hooks.OnModelSelect != nil {
+				t.Hooks.OnModelSelect(model)
 			}
 		})
 		return true
@@ -129,12 +127,12 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 		// The picker is the argument surface: a typed ":agent name" opens
 		// the same list (the CmdModel precedent). Picking hands the name
 		// to the driver, which sets the next-session override.
-		if t.OnAgentSelect == nil {
+		if t.Hooks.OnAgentSelect == nil {
 			t.SetEphemeral("agent selection is unavailable in this session")
 			return false
 		}
 		t.ShowAgentPicker(t.agentNames, t.agentDescs, func(name string) {
-			t.OnAgentSelect(name)
+			t.Hooks.OnAgentSelect(name)
 		})
 		return true
 	case command.CmdMode:
@@ -144,12 +142,12 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 		// receives is already validated vocabulary — the picker cannot
 		// emit anything else — so the typed arg (if any) is ignored, like
 		// :agent.
-		if t.OnModeSelect == nil {
+		if t.Hooks.OnModeSelect == nil {
 			t.SetEphemeral("mode switching is unavailable in this session")
 			return false
 		}
 		t.ShowAgentPicker(modePickerNames, modePickerDescriptions, func(word string) {
-			t.OnModeSelect(word)
+			t.Hooks.OnModeSelect(word)
 		})
 		return true
 	case command.CmdSearch:
@@ -173,7 +171,7 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 			t.SetEphemeral("usage: " + command.Usage(command.CmdWorkflow))
 			return false
 		case "list":
-			if t.OnWorkflowList == nil {
+			if t.Hooks.OnWorkflowList == nil {
 				t.SetEphemeral("workflow not available in this session")
 				return false
 			}
@@ -181,24 +179,24 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 				t.SetEphemeral("usage: :workflow list")
 				return false
 			}
-			t.OnWorkflowList()
+			t.Hooks.OnWorkflowList()
 			return true
 		case "run":
-			if t.OnWorkflowRun == nil {
+			if t.Hooks.OnWorkflowRun == nil {
 				t.SetEphemeral("workflow not available in this session")
 				return false
 			}
 			if rest == "" {
 				// No spec: open the selector, falling back to usage when the
 				// picker is unavailable.
-				if t.OnWorkflowPicker == nil {
+				if t.Hooks.OnWorkflowPicker == nil {
 					t.SetEphemeral("usage: :workflow run <spec.yaml|spec.json>")
 					return false
 				}
-				t.OnWorkflowPicker()
+				t.Hooks.OnWorkflowPicker()
 				return true
 			}
-			t.OnWorkflowRun(rest)
+			t.Hooks.OnWorkflowRun(rest)
 			return true
 		default:
 			t.SetEphemeral("usage: " + command.Usage(command.CmdWorkflow))

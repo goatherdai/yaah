@@ -23,8 +23,8 @@ func (t *App) Run() error {
 		prompt := t.initialPrompt
 		t.initialPrompt = ""
 		t.queueUpdateDraw(func() {
-			if t.OnSubmit != nil {
-				t.OnSubmit(prompt)
+			if t.Hooks.OnSubmit != nil {
+				t.Hooks.OnSubmit(prompt)
 			}
 		})
 	}
@@ -67,7 +67,7 @@ func (t *App) startControlLoop(done <-chan struct{}) {
 			select {
 			case <-done:
 				return
-			case msg, ok := <-t.ControlCh:
+			case msg, ok := <-t.Hooks.ControlCh:
 				if !ok {
 					return
 				}

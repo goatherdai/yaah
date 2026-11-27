@@ -13,6 +13,7 @@ import (
 	"github.com/goatherdai/yaah/internal/tui/components/question"
 	subagent "github.com/goatherdai/yaah/internal/tui/components/subagent"
 	todoview "github.com/goatherdai/yaah/internal/tui/components/todo"
+	"github.com/goatherdai/yaah/internal/tui/transcript"
 )
 
 func (t *App) handleControlMsg(msg control.Msg) {
@@ -91,14 +92,11 @@ func (t *App) handleControlMsg(msg control.Msg) {
 		if m.Summary == "" {
 			header += " — no summary produced"
 		}
-		t.conversationLog = append(t.conversationLog, convItem{text: header})
+		t.tr.Append(transcript.TextItem(header))
 		if m.Summary != "" {
 			// The markdown renderer emits its own color tags; wrapping
 			// this item in tview tags would render them literally.
-			t.conversationLog = append(t.conversationLog, convItem{
-				text:       m.Summary,
-				isMarkdown: true,
-			})
+			t.tr.Append(transcript.MarkdownItem(m.Summary))
 		}
 		t.markDirty()
 
@@ -115,16 +113,11 @@ func (t *App) handleControlMsg(msg control.Msg) {
 		if !m.OK {
 			status = "failed"
 		}
-		t.conversationLog = append(t.conversationLog, convItem{
-			text: fmt.Sprintf("[%s]workflow %s: %s[-]", theme, tview.Escape(m.Path), status),
-		})
+		t.tr.Append(transcript.TextItem(fmt.Sprintf("[%s]workflow %s: %s[-]", theme, tview.Escape(m.Path), status)))
 		if m.Report != "" {
 			// The markdown renderer emits its own color tags; wrapping
 			// this item in tview tags would render them literally.
-			t.conversationLog = append(t.conversationLog, convItem{
-				text:       m.Report,
-				isMarkdown: true,
-			})
+			t.tr.Append(transcript.MarkdownItem(m.Report))
 		}
 		t.markDirty()
 
@@ -143,9 +136,7 @@ func (t *App) handleControlMsg(msg control.Msg) {
 		if m.State == "failed" {
 			theme = t.Theme.Error
 		}
-		t.conversationLog = append(t.conversationLog, convItem{
-			text: fmt.Sprintf("[%s]workflow: %s[-]", theme, line),
-		})
+		t.tr.Append(transcript.TextItem(fmt.Sprintf("[%s]workflow: %s[-]", theme, line)))
 		t.markDirty()
 
 	case *control.WorkflowList:
@@ -163,7 +154,7 @@ func (t *App) handleControlMsg(msg control.Msg) {
 				fmt.Fprintf(&b, "[%s]%s  %s[-]", t.Theme.Dim, tview.Escape(s.Name), tview.Escape(s.Path))
 			}
 		}
-		t.conversationLog = append(t.conversationLog, convItem{text: b.String()})
+		t.tr.Append(transcript.TextItem(b.String()))
 		t.markDirty()
 
 	case *control.Error:
@@ -174,9 +165,7 @@ func (t *App) handleControlMsg(msg control.Msg) {
 		t.flushPendingTokens()
 		t.pendingTool = ""
 		t.setActivity(activity.Idle, "")
-		t.conversationLog = append(t.conversationLog, convItem{
-			text: fmt.Sprintf("[%s]error: %s[-]", t.Theme.Error, errText),
-		})
+		t.tr.Append(transcript.TextItem(fmt.Sprintf("[%s]error: %s[-]", t.Theme.Error, errText)))
 		t.markDirty()
 		t.showErrorDialog("Error", errText)
 	}

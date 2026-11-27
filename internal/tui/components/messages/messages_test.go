@@ -10,82 +10,74 @@ import (
 	"github.com/goatherdai/yaah/internal/tui/lolcat"
 )
 
-func TestFormat_Empty(t *testing.T) {
+func TestRender_Empty(t *testing.T) {
 	th := colors.NewDarkTheme()
-	out := Format(nil, Content{Width: 80, Theme: &th})
-	if out != "" {
-		t.Errorf("empty items should produce empty string, got %q", out)
+	if out := Render(Item{}, colors.RenderCtx{Width: 80, Theme: &th}); out != "" {
+		t.Errorf("an empty item should emit nothing, got %q", out)
 	}
 }
 
-func TestFormat_TextOnly(t *testing.T) {
+func TestRender_TextOnly(t *testing.T) {
 	th := colors.NewDarkTheme()
-	items := []Item{
-		{Text: "Hello, world"},
-		{Text: "Second message"},
-	}
-	out := Format(items, Content{Width: 80, Theme: &th})
+	rctx := colors.RenderCtx{Width: 80, Theme: &th}
+	out := Render(Item{Text: "Hello, world"}, rctx)
 	if !strings.Contains(out, "Hello, world") {
-		t.Errorf("should contain first text, got %q", out)
+		t.Errorf("should contain text, got %q", out)
 	}
-	if !strings.Contains(out, "Second message") {
-		t.Errorf("should contain second text, got %q", out)
+	if !strings.HasPrefix(out, "\n") || !strings.HasSuffix(out, "\n\n") {
+		t.Errorf("text emission must open with a separator and close with a blank hand-off, got %q", out)
 	}
 }
 
-func TestFormat_ToolBlock(t *testing.T) {
+func TestRender_ToolBlock(t *testing.T) {
 	th := colors.NewDarkTheme()
 	tb := toolblock.New("t1", "bash", `{"command":"ls"}`, &th)
 	tb.Complete("done", "output")
-	items := []Item{{ToolBlock: tb}}
-	out := Format(items, Content{Width: 80, Theme: &th})
+	out := Render(Item{ToolBlock: tb}, colors.RenderCtx{Width: 80, Theme: &th})
 	if !strings.Contains(out, "bash") {
 		t.Errorf("should contain tool name, got %q", out)
 	}
+	if !strings.HasSuffix(out, "\n") {
+		t.Errorf("tool emission must end with a newline, got %q", out)
+	}
 }
 
-func TestFormat_ReasoningBlock(t *testing.T) {
+func TestRender_ReasoningBlock(t *testing.T) {
 	th := colors.NewDarkTheme()
 	rb := reasoning.New("r1", "model thoughts", 0, &th)
-	items := []Item{{ReasBlock: rb}}
-	out := Format(items, Content{Width: 80, Theme: &th})
+	out := Render(Item{ReasBlock: rb}, colors.RenderCtx{Width: 80, Theme: &th})
 	plain := lolcat.StripTags(out)
 	if !strings.Contains(plain, "Reasoning") {
 		t.Errorf("should contain reasoning label, got %q", plain)
 	}
 }
 
-func TestFormat_MixedBlocks(t *testing.T) {
+func TestRender_MixedBlocks(t *testing.T) {
 	th := colors.NewDarkTheme()
 	tb := toolblock.New("t1", "read", `{"path":"/foo"}`, &th)
 	tb.Complete("done", "content")
 	rb := reasoning.New("r1", "thoughts", 0, &th)
+	rctx := colors.RenderCtx{Width: 80, Theme: &th}
 
-	items := []Item{
-		{Text: "User: do something"},
-		{ToolBlock: tb},
-		{ReasBlock: rb},
-	}
-	out := Format(items, Content{Width: 80, Theme: &th})
-	plain := lolcat.StripTags(out)
+	out := Render(Item{Text: "User: do something"}, rctx)
 	if !strings.Contains(out, "User: do something") {
 		t.Error("should contain user text")
 	}
-	if !strings.Contains(out, "read") {
+	if !strings.Contains(Render(Item{ToolBlock: tb}, rctx), "read") {
 		t.Error("should contain tool")
 	}
-	if !strings.Contains(plain, "Reasoning") {
+	if plain := lolcat.StripTags(Render(Item{ReasBlock: rb}, rctx)); !strings.Contains(plain, "Reasoning") {
 		t.Error("should contain reasoning")
 	}
 }
 
-func TestFormat_WidthPropagation(t *testing.T) {
+func TestRender_WidthPropagation(t *testing.T) {
 	th := colors.NewDarkTheme()
 	tb := toolblock.New("t1", "bash", `{"command":"ls"}`, &th)
 	tb.Complete("done", "out")
 	tb.Toggle()
-	wide := Format([]Item{{ToolBlock: tb}}, Content{Width: 120, Theme: &th})
-	narrow := Format([]Item{{ToolBlock: tb}}, Content{Width: 40, Theme: &th})
+	wide := Render(Item{ToolBlock: tb}, colors.RenderCtx{Width: 120, Theme: &th})
+	narrow := Render(Item{ToolBlock: tb}, colors.RenderCtx{Width: 40, Theme: &th})
 	if len(wide) <= len(narrow) {
 		t.Error("wider context should produce longer output")
 	}

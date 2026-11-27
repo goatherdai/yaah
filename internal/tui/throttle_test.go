@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
@@ -199,16 +198,16 @@ func TestPaintedLinesTracksTranscript(t *testing.T) {
 
 	ui.appendMessage("line one")
 	ui.refreshMessages()
-	want := int64(1 + strings.Count(ui.Messages.GetText(true), "\n"))
-	if got := ui.paintedLines.Load(); got != want {
+	want := int64(len(ui.tr.Rows()))
+	if got := ui.tr.PaintedLines(); got != want {
 		t.Fatalf("paintedLines = %d, want %d", got, want)
 	}
 
-	// A second refresh re-derives the count from the new buffer.
+	// A second refresh re-derives the count from the new row table.
 	ui.appendMessage("line two")
 	ui.refreshMessages()
-	want = int64(1 + strings.Count(ui.Messages.GetText(true), "\n"))
-	if got := ui.paintedLines.Load(); got != want {
+	want = int64(len(ui.tr.Rows()))
+	if got := ui.tr.PaintedLines(); got != want {
 		t.Fatalf("paintedLines = %d, want %d", got, want)
 	}
 }

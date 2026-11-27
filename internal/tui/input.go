@@ -78,16 +78,16 @@ func (t *App) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 		if t.dismissSuggestions() {
 			return nil
 		}
-		if t.OnStop != nil {
-			t.OnStop()
+		if t.Hooks.OnStop != nil {
+			t.Hooks.OnStop()
 			return nil
 		}
-		if t.OnAbort != nil {
-			t.OnAbort()
+		if t.Hooks.OnAbort != nil {
+			t.Hooks.OnAbort()
 		}
 		return nil
 	case ActionScrollUp, ActionPageUp, ActionTop:
-		t.userScrolled = true
+		t.tr.SetScrolled(true)
 		// Keyboard scroll paths hit the seam like the mouse wheel does:
 		// backfill the collapsed older items when the viewport is at the
 		// top of the painted window.

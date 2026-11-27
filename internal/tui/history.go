@@ -5,6 +5,8 @@ import (
 
 	"github.com/goatherdai/yaah/internal/tui/components/reasoning"
 	"github.com/goatherdai/yaah/internal/tui/components/toolblock"
+	"github.com/goatherdai/yaah/internal/tui/transcript"
+	"github.com/rivo/tview"
 )
 
 // HistoryKind identifies the visible role of a restored conversation row.
@@ -47,33 +49,31 @@ func (t *App) SetHistory(items []HistoryItem) {
 	t.history = items
 }
 
-// restoreHistory appends the pre-loaded conversation to conversationLog.
-// It runs on the setup goroutine (before App.Run), so direct mutation is
-// safe; callers schedule the resulting redraw with markDirty once the UI
-// event loops are running.
+// restoreHistory appends the pre-loaded conversation to the transcript
+// model. It runs on the setup goroutine (before App.Run), so direct
+// mutation is safe; callers schedule the resulting redraw with markDirty
+// once the UI event loops are running.
 func (t *App) restoreHistory() {
 	for i, item := range t.history {
 		switch item.Kind {
 		case HistoryUser:
-			t.appendPromptItem(item.Text)
+			t.tr.Append(transcript.PromptItem(
+				t.Theme.Tag(t.Theme.User, tview.Escape(promptDisplay(item.Text))),
+				item.Text,
+			))
 		case HistoryAssistant:
 			if item.Reasoning != "" {
 				id := "history-reason-" + strconv.Itoa(i)
-				t.conversationLog = append(t.conversationLog, convItem{
-					reasoningBlock: reasoning.New(id, item.Reasoning, 0, t.Theme),
-				})
+				t.tr.Append(transcript.ReasoningItem(reasoning.New(id, item.Reasoning, 0, t.Theme)))
 			}
 			if item.Text != "" {
-				t.conversationLog = append(t.conversationLog, convItem{
-					text:       item.Text,
-					isMarkdown: true,
-				})
+				t.tr.Append(transcript.MarkdownItem(item.Text))
 			}
 			for j, call := range item.ToolCalls {
 				// Always namespace restored IDs. Live tool events use bare
 				// per-run counters ("1", "2", ...); a provider call id can
-				// look identical, and AddToolEnd scans from the front of the
-				// log, so an unprefixed restored id would capture a live
+				// look identical, and CompleteTool scans from the front of
+				// the log, so an unprefixed restored id would capture a live
 				// tool's result and leave the live block stuck as Running.
 				id := "history-tool-" + strconv.Itoa(i) + "-" + strconv.Itoa(j)
 				tb := toolblock.New(id, call.Name, call.Args, t.Theme)
@@ -93,18 +93,18 @@ func (t *App) restoreHistory() {
 				}
 				// A restored row has no timing data; do not claim 0ms.
 				tb.SetDurationLabel("\u2014")
-				t.conversationLog = append(t.conversationLog, convItem{toolBlock: tb})
+				t.tr.Append(transcript.ToolItem(tb))
 			}
 		}
 	}
-	// The log was seeded in bulk; the incremental append fast path must not
-	// try to diff it against an empty rendered buffer.
-	t.needsFullRender.Store(true)
+	// The log was seeded in bulk; the incremental append fast path must
+	// not try to diff it against an empty painted window.
+	t.tr.RequestFull()
 }
 
 // bootstrapHistory seeds the transcript and schedules its first redraw.
 // Run calls it after the UI event loops exist but before App.Run drains
-// them, so restored rows are already in conversationLog when the first
+// them, so restored rows are already in the transcript when the first
 // live event callback runs. markDirty sees a live queue and enqueues one
 // refresh instead of falling back to a goroutine blocked on tview.
 func (t *App) bootstrapHistory() {
