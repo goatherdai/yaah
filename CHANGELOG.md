@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.225.0](https://github.com/goatherdai/yaah/compare/v0.224.1...v0.225.0) (2026-11-27)
+
+
+### Features
+
+* **acpclient:** drive external ACP agents as subagent/workflow backends ([#453](https://github.com/goatherdai/yaah/issues/453)) ([0e9ac14](https://github.com/goatherdai/yaah/commit/0e9ac144ef132748869c3af340bbac44308f1e31))
+
 ## [0.224.1](https://github.com/goatherdai/yaah/compare/v0.224.0...v0.224.1) (2026-11-27)
 
 
