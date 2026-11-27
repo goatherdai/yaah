@@ -10,6 +10,11 @@ deliberately out of scope (Tier 3).
 - Spec: <https://agentclientprotocol.com> (this server speaks v1)
 - Implementation: `internal/acp` (protocol + server), `cmd/yaah/acp_cmd.go`
   (composition), `internal/acp/view.go` (event → update translation)
+- Client lane (yaah driving *other* ACP agents): `internal/acpclient`,
+  configured via `agents.subagent.acp_agents` and a role's `backend: acp`.
+  It is a separate, stdio-only client used by `delegate` and workflow nodes;
+  this server implementation is unchanged. See
+  [workflows.md](./workflows.md#node-kinds).
 
 ## Overview
 

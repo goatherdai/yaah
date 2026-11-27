@@ -126,6 +126,7 @@ func newStandaloneWorkflowRunner(workdir string, diag io.Writer) (jobs.TaskRunne
 		PathValidator:         standalonePathValidator(ws),
 		ToolSpillDir:          toolSpillDir(),
 		ResolveProviderByName: resolveProviderByName,
+		ResolveTaskRunner:     buildACPTaskRunnerResolver(cfg),
 	})
 	if rerr != nil {
 		if db != nil {

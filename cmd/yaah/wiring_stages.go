@@ -1374,6 +1374,7 @@ func buildDelegateTool(st *loopInfraStage, cfg *config.Config, lc *sessionConfig
 		GuardCheck:            supervisorSvcGuardCheck(st.supervisorSvc),
 		ShellGuardDenyRec:     supervisorSvcShellAllowlistRec(st.supervisorSvc),
 		ResolveProviderByName: resolveProviderByName,
+		ResolveTaskRunner:     buildACPTaskRunnerResolver(cfg),
 
 		// Retained lane (Plan 7 Phase 2): default on in local mode, where a
 		// sub-agent's work comes back as a proposal. A container session builds

@@ -48,6 +48,7 @@ yaah/
 │   └── ...                      # config, doctor, skill, mcp, memory, trace, update
 ├── internal/
 │   ├── acp/                     # ACP JSON-RPC server
+│   ├── acpclient/               # ACP client: drive external agents as TaskRunner backends
 │   ├── agent/                   # agent loop, events, pipeline, tools, context
 │   │   ├── budget/              #   pure sub-agent budget resolution
 │   │   ├── context/             #   pure context helpers (tokens, split, prune)

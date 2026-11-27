@@ -227,6 +227,16 @@ yaah can also be driven by another agent:
 This is useful for benchmark harnesses, editor integrations, and
 agent-to-agent coordination.
 
+The reverse direction is also supported: yaah can **drive** an external ACP
+agent (for example Mistral Vibe's `vibe-acp`) as the backend of a `delegate`
+subagent or a workflow `delegate` node. Configure the agent under
+`agents.subagent.acp_agents` and select it on a role with `backend: acp` /
+`acp_agent: <name>`. The external agent runs in its own process, keeps its own
+credentials and configuration, and delivers its final text as a normal report;
+it cannot use yaah's worktree/settlement lanes or permission middleware. See
+[workflows.md](./workflows.md#node-kinds) and
+[configuration.md](./configuration.md#agent-reference).
+
 ## Skills
 
 Skills are `SKILL.md` files with YAML frontmatter and a markdown body. yaah

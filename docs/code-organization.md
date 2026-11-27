@@ -21,6 +21,7 @@ yaah/
 │
 ├── internal/
 │   ├── acp/                    # ACP JSON-RPC server
+│   ├── acpclient/              # ACP client for external agents (TaskRunner backend)
 │   ├── agent/                  # agent loop and its subpackages
 │   │   ├── budget/             # iteration/turn budget resolution
 │   │   ├── context/            # pure context helpers (tokens, prune, truncation)

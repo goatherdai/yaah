@@ -168,6 +168,10 @@ type taskRunnerOpts struct {
 	// the planner's provider.
 	resolveProviderByName func(pmap map[string]config.Provider, name string) agent.Provider
 
+	// resolveTaskRunner resolves a configured backend/agent name to a
+	// sub-agent runner. Nil means only the in-process loop is available.
+	resolveTaskRunner func(backend, agent string) tools.TaskRunner
+
 	// now mints dispatch timestamps for the sub-agent trace ID. Nil means
 	// time.Now; tests pin it to force two dispatches into the same clock
 	// tick and prove the per-dispatch sequence keeps their scope keys
@@ -248,6 +252,10 @@ type dispatchRoute struct {
 	provider     agent.Provider
 	providerName string
 	model        string
+	// backend is "loop" (the in-process agent loop) or "acp"; agent names
+	// the external ACP agent in the registry for the latter.
+	backend string
+	agent   string
 }
 
 // resolveDispatchRoute applies the parity-W1 routing chain:
@@ -286,6 +294,17 @@ func resolveDispatchRoute(opts taskRunnerOpts, role subagent.SubAgentRole, param
 	// The config role entry is config-authoritative: it sits above the
 	// role file, and an unresolvable entry falls through to it.
 	rc, hasRC := opts.subCfg.Roles[string(role)]
+
+	// Backend routing is config-authoritative and independent of provider
+	// resolution: an ACP role hands the whole turn to an external agent.
+	backend, acpAgent := "loop", ""
+	if hasRC {
+		if b := strings.TrimSpace(rc.Backend); b != "" {
+			backend = strings.ToLower(b)
+		}
+		acpAgent = rc.ACPAgent
+	}
+	route.backend, route.agent = backend, acpAgent
 
 	// providerDecided tracks whether an explicit source picked the
 	// provider; the parent/global defaults only fill what nobody named.
@@ -634,6 +653,20 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		subProvider := route.provider
 		subProviderName := route.providerName
 		subModel := route.model
+
+		// An ACP-backed role hands the entire turn to the external agent.
+		// The runner owns model/start/usage/transcript reporting, so none of
+		// the in-process loop, scope, or settlement machinery applies here.
+		if route.backend == "acp" {
+			if opts.resolveTaskRunner == nil {
+				return "", fmt.Errorf("sub-agent %s: backend acp is not wired", role)
+			}
+			runner := opts.resolveTaskRunner("acp", route.agent)
+			if runner == nil {
+				return "", fmt.Errorf("sub-agent %s: no ACP agent %q configured", role, route.agent)
+			}
+			return runner(ctx, prompt, params)
+		}
 
 		// Announce the resolved model before the loop runs so the parent
 		// emits its sub-agent start event with the role/model pairing,

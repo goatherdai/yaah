@@ -207,6 +207,40 @@ func Validate(cfg *Config) error {
 				"agents.subagent.roles.%s.world %q is not one of: auto, worktree, container",
 				role, rc.World))
 		}
+		backend := strings.ToLower(strings.TrimSpace(rc.Backend))
+		switch backend {
+		case "", "loop", "acp":
+		default:
+			errs = append(errs, fmt.Sprintf(
+				"agents.subagent.roles.%s.backend %q is not one of: loop, acp",
+				role, rc.Backend))
+		}
+		if backend == "acp" {
+			if strings.TrimSpace(rc.ACPAgent) == "" {
+				errs = append(errs, fmt.Sprintf(
+					"agents.subagent.roles.%s: backend acp requires acp_agent", role))
+			} else if _, ok := cfg.Agent.SubAgent.ACPAgents[rc.ACPAgent]; !ok {
+				errs = append(errs, fmt.Sprintf(
+					"agents.subagent.roles.%s.acp_agent %q is not declared in agents.subagent.acp_agents",
+					role, rc.ACPAgent))
+			}
+			switch strings.ToLower(strings.TrimSpace(rc.World)) {
+			case "worktree", "container":
+				errs = append(errs, fmt.Sprintf(
+					"agents.subagent.roles.%s: an acp backend cannot use world %q (no isolated workspace or proposal lane)",
+					role, rc.World))
+			}
+		}
+	}
+	for name, agentCfg := range cfg.Agent.SubAgent.ACPAgents {
+		if strings.TrimSpace(agentCfg.Command) == "" {
+			errs = append(errs, fmt.Sprintf(
+				"agents.subagent.acp_agents.%s.command is required", name))
+		}
+		if agentCfg.Cwd != "" && !filepath.IsAbs(agentCfg.Cwd) {
+			errs = append(errs, fmt.Sprintf(
+				"agents.subagent.acp_agents.%s.cwd must be absolute", name))
+		}
 	}
 
 	// Sub-agent budget floors must be sane: non-negative, not above the

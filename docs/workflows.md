@@ -104,6 +104,18 @@ Notes worth knowing per kind:
   the value is the report text; a report that carries a JSON object exposes
   its fields as `steps.<id>.output.<field>` (prose-tolerant: prose around the
   object is fine).
+- **External ACP agents.** A `delegate` role configured with
+  `backend: acp` and `acp_agent: <name>` runs its turn in an external ACP
+  agent instead of yaah's in-process loop; no new node kind is involved.
+  The agent is launched as a child process and driven over stdio, and its
+  final text is delivered as the node's report exactly like an in-process
+  delegate. Such roles are **report-lane only**: an external agent cannot
+  honour a sealed worktree, world grants, goatherd scopes, or proposal
+  settlement, so config validation rejects `world: worktree|container`
+  for them and a `lane: proposal` delegate must not name one. Usage, model,
+  transcript, and stop facts reported over ACP flow into the same node
+  envelope; tool calls inside the external agent are not visible to yaah's
+  permission middleware.
 - **`fanout`/`loop`** bodies are node lists; each item/iteration mints body
   instances (`steps.<id>.items[2].body[0]`, `steps.<id>.iters[1].body[0]`).
   The `collect` accumulates one entry per succeeded item/iteration — the

@@ -122,6 +122,10 @@ type DelegateToolOpts struct {
 	// construction (makeProvider) belongs with the rest of the CLI wiring.
 	ResolveProviderByName func(map[string]config.Provider, string) agent.Provider
 
+	// ResolveTaskRunner resolves a backend/agent name to a sub-agent runner.
+	// Injected from the composition root; nil leaves only the in-process loop.
+	ResolveTaskRunner func(backend, agent string) tools.TaskRunner
+
 	// Retain enables the retained-run lane for delegate (Plan 7 Phase 2):
 	// each dispatch runs in an isolated worktree and returns a sealed proposal
 	// the orchestrator settles. RetainedRepoPath / RetainedWorktreeRoot /
@@ -204,6 +208,7 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 		guardCheck:            opts.GuardCheck,
 		guardDenyRec:          opts.ShellGuardDenyRec,
 		resolveProviderByName: opts.ResolveProviderByName,
+		resolveTaskRunner:     opts.ResolveTaskRunner,
 		requireReversible:     opts.RequireReversible,
 		superviseRun:          opts.SuperviseRun,
 	}, depth)
