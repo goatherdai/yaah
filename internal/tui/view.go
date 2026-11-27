@@ -14,37 +14,14 @@ import (
 func (t *App) buildUI() {
 	var bannerLines int
 	bannerLines, t.Banner = banner.Build(t.Theme.Dim)
-	t.Messages = tview.NewTextView().
-		SetDynamicColors(true).
-		SetScrollable(true).
-		SetWrap(true).
-		SetWordWrap(true)
-	t.Messages.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
-		switch action {
-		case tview.MouseScrollUp:
-			t.userScrolled = true
-			// Scrolling up at the top of the painted window means the
-			// user reached the "earlier messages" seam: lazily prepend
-			// older items (backfillWindow) in the same event cycle, so
-			// the wheel that asked for them also paints them.
-			t.maybeBackfillAtSeam()
-		case tview.MouseScrollDown:
-			_, _, _, h := t.Messages.GetInnerRect()
-			row, _ := t.Messages.GetScrollOffset()
-			// paintedLines is refreshed with the transcript; reading it
-			// here avoids a full-buffer GetText + split on every mouse
-			// scroll event (the scroll path runs on the UI goroutine).
-			totalLines := int(t.paintedLines.Load())
-			if row+h >= totalLines {
-				// Back at the bottom of the painted buffer: return to
-				// the live tail (a reveal window's bottom seam means
-				// the tail itself still needs painting; returnToTail
-				// decides whether a repaint is needed).
-				t.returnToTail()
-			}
-		}
-		return action, event
-	})
+	// The transcript pane replaces a TextView: the model's wrapped-row
+	// table is painted per visible row (transcript.Pane.Draw), so the
+	// paint cost is O(viewport) instead of O(buffer) per frame. The
+	// mouse capture (scroll.go paneMouseCapture) rides the pane's Box
+	// seam; tview forwards wheel actions to every child's handler, so
+	// it fires wherever the wheel spins — the same exposure the
+	// TextView path had.
+	t.pane.SetMouseCapture(t.paneMouseCapture)
 
 	// Prompt input: bordered TextArea with pink border. Grows up to
 	// promptMaxContentLines content rows as the user types, then the
@@ -100,13 +77,13 @@ func (t *App) buildUI() {
 	t.Header.AddItem(t.Banner, 0, 0, headerRows, 1, 0, 0, false)
 
 	// One blank row between the sticky prompt echo and the conversation
-	// buffer, so agent content never butts up against the question line
+	// pane, so agent content never butts up against the question line
 	// as it scrolls beneath it.
 	messagesCol := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(t.promptEcho, 1, 0, false).
 		AddItem(tview.NewBox(), 1, 0, false).
-		AddItem(t.Messages, 0, 1, false)
+		AddItem(t.pane, 0, 1, false)
 	t.messagesCol = messagesCol
 
 	rightPane := tview.NewFlex().
@@ -137,6 +114,13 @@ func (t *App) buildUI() {
 
 	// The sticky prompt header is scroll-derived: re-evaluate it after
 	// every draw so pin swaps track both auto-scroll and manual scrolling.
+	// The resize seam rides the same hook: the transcript's rows are
+	// wrapped once at the painted width, not re-wrapped by every draw the
+	// way a TextView is, so after a resize (which lays out inside
+	// root.Draw, below) the pane's width and the model's painted width
+	// diverge — re-wrap and queue one more frame. The correction is
+	// one frame late by construction: BeforeDraw cannot see the new
+	// layout, and the rows cannot be wrapped before it exists.
 	t.App.SetAfterDrawFunc(func(screen tcell.Screen) {
 		// Track the real screen height so the typeahead can bound its
 		// rendered window on short terminals. Zero until the first draw
@@ -144,6 +128,7 @@ func (t *App) buildUI() {
 		if _, h := screen.Size(); h > 0 {
 			t.screenHeight = h
 		}
+		t.repaintOnResize(screen)
 		t.reconcilePromptPin()
 	})
 

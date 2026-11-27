@@ -12,10 +12,10 @@ func (t *App) submitInput() {
 	if t.handleColonInput(text) {
 		return
 	}
-	if t.OnSubmit != nil {
+	if t.Hooks.OnSubmit != nil {
 		t.flushRefresh()
 		t.Input.SetText("", false)
-		t.OnSubmit(text)
+		t.Hooks.OnSubmit(text)
 	}
 }
 
@@ -30,24 +30,18 @@ func (t *App) submitFollowUp() {
 	if t.handleColonInput(text) {
 		return
 	}
-	if t.OnFollowUp != nil {
+	if t.Hooks.OnFollowUp != nil {
 		t.flushRefresh()
 		t.Input.SetText("", false)
-		t.OnFollowUp(text)
+		t.Hooks.OnFollowUp(text)
 	}
 }
 
 // clearConversation resets all conversation state and re-renders the view.
 func (t *App) clearConversation() {
-	t.conversationLog = nil
+	t.tr.Clear()
 	t.subAgents = nil
 	t.subAgentsBusy.Store(false)
-	t.userScrolled = false
-	// The window is stale the moment the log empties: recompute at the
-	// next full render.
-	t.windowStart = -1
-	t.windowEnd = -1
-	t.promptIdxs = nil
 	t.compactBoundary = 0
 	t.renderBackgroundJobsPane()
 	t.refreshMessages()
@@ -55,8 +49,8 @@ func (t *App) clearConversation() {
 
 // doClear clears the conversation and invokes the OnClear callback, if set.
 func (t *App) doClear() {
-	if t.OnClear != nil {
-		t.OnClear()
+	if t.Hooks.OnClear != nil {
+		t.Hooks.OnClear()
 	}
 	t.clearConversation()
 }

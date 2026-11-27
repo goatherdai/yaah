@@ -78,22 +78,71 @@ func (t *App) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 		if t.dismissSuggestions() {
 			return nil
 		}
-		if t.OnStop != nil {
-			t.OnStop()
+		if t.Hooks.OnStop != nil {
+			t.Hooks.OnStop()
 			return nil
 		}
-		if t.OnAbort != nil {
-			t.OnAbort()
+		if t.Hooks.OnAbort != nil {
+			t.Hooks.OnAbort()
 		}
 		return nil
-	case ActionScrollUp, ActionPageUp, ActionTop:
-		t.userScrolled = true
+	case ActionScrollUp:
+		// The composer owns the arrows while it holds text to edit; an
+		// empty composer has nothing to move, so its Up/Down scroll
+		// the transcript. PgUp/PgDn/Home/End scroll either way.
+		if t.focus != focusNormal || t.composerOwnsArrows() {
+			return ev
+		}
+		t.tr.SetScrolled(true)
+		t.pane.ScrollBy(-1)
 		// Keyboard scroll paths hit the seam like the mouse wheel does:
 		// backfill the collapsed older items when the viewport is at the
 		// top of the painted window.
 		t.maybeBackfillAtSeam()
-	case ActionScrollDown, ActionPageDown, ActionBottom:
+		return nil
+	case ActionScrollDown:
+		if t.focus != focusNormal || t.composerOwnsArrows() {
+			return ev
+		}
+		t.scrollPaneDown(1)
+		return nil
+	case ActionPageUp:
+		if t.focus != focusNormal {
+			return ev
+		}
+		t.tr.SetScrolled(true)
+		t.pane.PageUp()
+		t.maybeBackfillAtSeam()
+		return nil
+	case ActionPageDown:
+		if t.focus != focusNormal {
+			return ev
+		}
+		t.pane.PageDown()
+		t.returnToTailAtBottom()
+		return nil
+	case ActionTop:
+		if t.focus != focusNormal {
+			return ev
+		}
+		t.tr.SetScrolled(true)
+		t.pane.ScrollToBeginning()
+		t.maybeBackfillAtSeam()
+		return nil
+	case ActionBottom:
+		if t.focus != focusNormal {
+			return ev
+		}
+		t.pane.ScrollToEnd()
 		t.returnToTail()
+		return nil
 	}
 	return ev
+}
+
+// composerOwnsArrows reports whether the composer holds text the arrow
+// keys would edit. An empty composer has no cursor to move, so its
+// Up/Down scroll the transcript; with text the arrows edit it.
+func (t *App) composerOwnsArrows() bool {
+	return t.Input.GetText() != ""
 }

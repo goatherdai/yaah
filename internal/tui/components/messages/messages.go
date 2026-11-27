@@ -1,4 +1,7 @@
-// Package messages builds and renders the conversation message area.
+// Package messages defines the conversation item type and emits its
+// rendered tagged form. The transcript painter wraps these emissions
+// into screen rows; emission is the single source shared by painting,
+// row counting, and text extraction.
 package messages
 
 import (
@@ -7,7 +10,6 @@ import (
 	"github.com/goatherdai/yaah/internal/tui/colors"
 	"github.com/goatherdai/yaah/internal/tui/components/reasoning"
 	"github.com/goatherdai/yaah/internal/tui/components/toolblock"
-	"github.com/rivo/tview"
 )
 
 // Item is a single entry in the chronological conversation log.
@@ -26,9 +28,11 @@ type Content struct {
 	Theme *colors.Theme
 }
 
-// emitItem appends the rendered form of a single item to b. Format and
-// itemRows share it, so rendered rows and displayed rows cannot drift.
-func emitItem(b *strings.Builder, item *Item, rctx colors.RenderCtx) {
+// EmitItem appends the rendered form of a single item to b. One item's
+// emission is a self-contained tagged string: text items open with a
+// separator newline and close with the blank line that hands the next
+// item its own leading row, and block items carry their own layout.
+func EmitItem(b *strings.Builder, item *Item, rctx colors.RenderCtx) {
 	switch {
 	case item.Text != "":
 		b.WriteString("\n")
@@ -44,48 +48,9 @@ func emitItem(b *strings.Builder, item *Item, rctx colors.RenderCtx) {
 	}
 }
 
-// Format renders a list of conversation items into the messages pane
-// buffer. The thinking indicator is no longer embedded here — it lives
-// in the dedicated activity line widget.
-func Format(items []Item, ctx Content) string {
+// Render returns item's emitted tagged form as a string.
+func Render(item Item, rctx colors.RenderCtx) string {
 	var b strings.Builder
-	rctx := colors.RenderCtx{Width: ctx.Width, Theme: ctx.Theme}
-
-	for i := range items {
-		emitItem(&b, &items[i], rctx)
-	}
-
+	EmitItem(&b, &item, rctx)
 	return b.String()
-}
-
-// ItemRows reports how many screen rows the emitted text for item
-// occupies when wrapped to ctx.Width. Style tags are counted as zero
-// width (tview's WordWrap parses them), matching draw-time wrapping.
-// The trailing row a newline hands the next item is pending, not
-// painted, and is not counted.
-func ItemRows(item Item, ctx Content) int {
-	var b strings.Builder
-	emitItem(&b, &item, colors.RenderCtx{Width: ctx.Width, Theme: ctx.Theme})
-	return rowsOf(b.String(), ctx.Width)
-}
-
-// Rows reports how many screen rows a tagged text occupies when wrapped
-// to ctx.Width — the same counting emissions are checked against, for
-// callers painting standalone text (the window seam) that must stay in
-// the row accounting.
-func Rows(tagged string, ctx Content) int {
-	return rowsOf(tagged, ctx.Width)
-}
-
-// rowsOf counts painted rows for a chunk: tview's word wrap over the
-// tagged text, minus the one pending row a trailing newline creates.
-func rowsOf(tagged string, width int) int {
-	if width <= 0 {
-		width = 80
-	}
-	lines := tview.WordWrap(tagged, width)
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-	return len(lines)
 }

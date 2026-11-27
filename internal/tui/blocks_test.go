@@ -8,21 +8,21 @@ func TestAddReasoningBlock(t *testing.T) {
 	ui := New("test")
 
 	// Initially no reasoning blocks
-	if len(ui.conversationLog) != 0 {
-		t.Errorf("Expected empty conversationLog, got %d items", len(ui.conversationLog))
+	if ui.tr.Len() != 0 {
+		t.Errorf("Expected empty conversationLog, got %d items", ui.tr.Len())
 	}
 
 	// Add a reasoning block
 	ui.AddReasoningBlock("reason-1", "Thinking about the problem...")
 
-	if len(ui.conversationLog) != 1 {
-		t.Errorf("Expected 1 item in conversationLog, got %d", len(ui.conversationLog))
+	if ui.tr.Len() != 1 {
+		t.Errorf("Expected 1 item in conversationLog, got %d", ui.tr.Len())
 	}
-	if ui.conversationLog[0].reasoningBlock == nil {
+	if ui.tr.ItemAt(0).ReasBlock == nil {
 		t.Error("Expected reasoningBlock to be set")
 	}
-	if ui.conversationLog[0].reasoningBlock.ID() != "reason-1" {
-		t.Errorf("Expected reasoningBlock ID to be 'reason-1', got %q", ui.conversationLog[0].reasoningBlock.ID())
+	if ui.tr.ItemAt(0).ReasBlock.ID() != "reason-1" {
+		t.Errorf("Expected reasoningBlock ID to be 'reason-1', got %q", ui.tr.ItemAt(0).ReasBlock.ID())
 	}
 }
 
@@ -32,25 +32,25 @@ func TestAddToolStartAndEnd(t *testing.T) {
 	// Add a tool start
 	ui.AddToolStart("1", "read", "file.txt")
 
-	if len(ui.conversationLog) != 1 {
-		t.Errorf("Expected 1 item in conversationLog, got %d", len(ui.conversationLog))
+	if ui.tr.Len() != 1 {
+		t.Errorf("Expected 1 item in conversationLog, got %d", ui.tr.Len())
 	}
-	if ui.conversationLog[0].toolBlock == nil {
+	if ui.tr.ItemAt(0).ToolBlock == nil {
 		t.Error("Expected toolBlock to be set")
 	}
-	if ui.conversationLog[0].toolBlock.ID() != "1" {
-		t.Errorf("Expected toolBlock ID to be '1', got %q", ui.conversationLog[0].toolBlock.ID())
+	if ui.tr.ItemAt(0).ToolBlock.ID() != "1" {
+		t.Errorf("Expected toolBlock ID to be '1', got %q", ui.tr.ItemAt(0).ToolBlock.ID())
 	}
 
 	// End the tool
 	ui.AddToolEnd("1", "read", "file contents")
 
 	// The tool block should be updated (completed)
-	if len(ui.conversationLog) != 1 {
-		t.Errorf("Expected 1 item in conversationLog, got %d", len(ui.conversationLog))
+	if ui.tr.Len() != 1 {
+		t.Errorf("Expected 1 item in conversationLog, got %d", ui.tr.Len())
 	}
 	// The block should still exist but be in completed state
-	if ui.conversationLog[0].toolBlock == nil {
+	if ui.tr.ItemAt(0).ToolBlock == nil {
 		t.Error("Expected toolBlock to still exist")
 	}
 }
@@ -64,10 +64,10 @@ func TestAddToolError(t *testing.T) {
 	// Add an error
 	ui.AddToolError("1", "read failed", "file not found")
 
-	if len(ui.conversationLog) != 1 {
-		t.Errorf("Expected 1 item in conversationLog, got %d", len(ui.conversationLog))
+	if ui.tr.Len() != 1 {
+		t.Errorf("Expected 1 item in conversationLog, got %d", ui.tr.Len())
 	}
-	if ui.conversationLog[0].toolBlock == nil {
+	if ui.tr.ItemAt(0).ToolBlock == nil {
 		t.Error("Expected toolBlock to exist")
 	}
 	// The tool block should be in failed state
@@ -82,11 +82,11 @@ func TestAddToolEnd_EmptyResult(t *testing.T) {
 	// End with empty result (should complete, not fail)
 	ui.AddToolEnd("1", "delete", "")
 
-	if len(ui.conversationLog) != 1 {
-		t.Errorf("Expected 1 item in conversationLog, got %d", len(ui.conversationLog))
+	if ui.tr.Len() != 1 {
+		t.Errorf("Expected 1 item in conversationLog, got %d", ui.tr.Len())
 	}
 	// The tool should be completed, not failed
-	if ui.conversationLog[0].toolBlock == nil {
+	if ui.tr.ItemAt(0).ToolBlock == nil {
 		t.Error("Expected toolBlock to exist")
 	}
 	// If the tool block's state indicates failure, that's the bug we fixed
@@ -99,8 +99,8 @@ func TestAddSubAgentStartAndEnd(t *testing.T) {
 	// Sub-agents belong to the dedicated pane, not the conversation log.
 	ui.AddSubAgentStart("sub-1", "analyst", "Analyze the code", "")
 
-	if len(ui.conversationLog) != 0 {
-		t.Errorf("sub-agent must not add a conversation item, got %d", len(ui.conversationLog))
+	if ui.tr.Len() != 0 {
+		t.Errorf("sub-agent must not add a conversation item, got %d", ui.tr.Len())
 	}
 	if len(ui.subAgents) != 1 {
 		t.Fatalf("Expected 1 sub-agent, got %d", len(ui.subAgents))
@@ -170,8 +170,8 @@ func TestToggleBlockByIndex(t *testing.T) {
 	ui.AddToolStart("1", "read", "file.txt")
 	ui.AddReasoningBlock("reason-2", "More thinking...")
 
-	if len(ui.conversationLog) != 3 {
-		t.Errorf("Expected 3 items in conversationLog, got %d", len(ui.conversationLog))
+	if ui.tr.Len() != 3 {
+		t.Errorf("Expected 3 items in conversationLog, got %d", ui.tr.Len())
 	}
 
 	// Toggle the first block (index 0)
@@ -195,8 +195,8 @@ func TestCollapseAll(t *testing.T) {
 	ui.CollapseAll()
 
 	// Verify conversationLog still has the blocks
-	if len(ui.conversationLog) != 2 {
-		t.Errorf("Expected 2 items in conversationLog after CollapseAll, got %d", len(ui.conversationLog))
+	if ui.tr.Len() != 2 {
+		t.Errorf("Expected 2 items in conversationLog after CollapseAll, got %d", ui.tr.Len())
 	}
 }
 
@@ -210,8 +210,8 @@ func TestToggleAllReasoning(t *testing.T) {
 	// Toggle all reasoning blocks
 	ui.toggleAllReasoning()
 
-	if len(ui.conversationLog) != 2 {
-		t.Errorf("Expected 2 items in conversationLog, got %d", len(ui.conversationLog))
+	if ui.tr.Len() != 2 {
+		t.Errorf("Expected 2 items in conversationLog, got %d", ui.tr.Len())
 	}
 }
 
@@ -225,8 +225,8 @@ func TestToggleAllTools(t *testing.T) {
 	// Toggle all tools
 	ui.toggleAllTools()
 
-	if len(ui.conversationLog) != 2 {
-		t.Errorf("Expected 2 items in conversationLog, got %d", len(ui.conversationLog))
+	if ui.tr.Len() != 2 {
+		t.Errorf("Expected 2 items in conversationLog, got %d", ui.tr.Len())
 	}
 }
 

@@ -96,7 +96,7 @@ func TestPromptEchoSeamSpacer(t *testing.T) {
 	ui.Root.Draw(sim)
 
 	_, ey, _, eh := ui.promptEcho.GetRect()
-	_, my, _, _ := ui.Messages.GetInnerRect()
+	_, my, _, _ := ui.pane.GetInnerRect()
 	if gap := my - (ey + eh); gap != 1 {
 		t.Errorf("expected exactly 1 spacer row between prompt echo and messages pane, got %d", gap)
 	}

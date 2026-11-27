@@ -41,8 +41,8 @@ All references are against the current tree (`github.com/goatherdai/yaah`).
 | Runner seam | `cmd/yaah/workflow_run.go`, `var workflowRunRunner = newStandaloneWorkflowRunner` | Tests already inject a deterministic runner here — that is how the golden end-to-end runs with no model calls, and it is how Scope A is tested. |
 | Nil-context safety | `cmd/yaah/workflow_run.go`, `runWorkflowRun` | `ctx := cmd.Context(); if ctx == nil { ctx = context.Background() }` — a synthetic command without a context still runs. |
 | TUI command table | `internal/tui/components/command/command.go` (`Cmd` enum, `commandNames`, `takesArg`, `Split`) | Add one enum value, one name entry, and one arg-taking flag. |
-| TUI dispatch | `internal/tui/commands.go` `HandleCommand(cmd command.Cmd, arg string)` | The existing `if t.OnX == nil { t.SetEphemeral(...) }` pattern to copy. |
-| Callback surface | `internal/tui/app.go` `On*` fields | Add `OnWorkflowRun func(string)`. |
+| TUI dispatch | `internal/tui/commands.go` `HandleCommand(cmd command.Cmd, arg string)` | The existing `if t.Hooks.OnX == nil { t.SetEphemeral(...) }` pattern to copy. |
+| Callback surface | `internal/tui/app.go` `DriverHooks` (`App.Hooks`) | Add `OnWorkflowRun func(string)`. |
 | Driver wiring | `cmd/yaah/tui.go` `runTUI()` | Wires the callback; already holds `sess` and `controlCh`. |
 | Control channel | `internal/control/control.go` `Msg` interface (`marker()`); TUI pump in `internal/tui/run.go` → `handleControlMsg` (`internal/tui/control.go`) | One new `Msg` type plus one `case`. |
 | **Precedent** | `control.CompactionSummary` → `case *control.CompactionSummary:` in `internal/tui/control.go` | The exact shape needed: durable, render-only, `isMarkdown: true`, `flushPendingTokens()` first, never persisted as chat. |
@@ -101,7 +101,7 @@ to idle. When `!m.OK`, tag the header with `Theme.Error`.
 
 ```go
 case command.CmdWorkflow:
-    if t.OnWorkflowRun == nil {
+    if t.Hooks.OnWorkflowRun == nil {
         t.SetEphemeral("workflow not available in this session")
         return
     }
@@ -110,7 +110,7 @@ case command.CmdWorkflow:
         t.SetEphemeral("usage: :workflow run <spec.yaml|spec.json>")
         return
     }
-    t.OnWorkflowRun(strings.TrimSpace(rest))
+    t.Hooks.OnWorkflowRun(strings.TrimSpace(rest))
 ```
 
 The `run` verb matches the CLI (`yaah workflow run`) and leaves
@@ -119,6 +119,7 @@ The `run` verb matches the CLI (`yaah workflow run`) and leaves
 ### 3.5 `internal/tui/app.go` — callback field
 
 ```go
+// In the DriverHooks struct (app.Hooks):
 // OnWorkflowRun receives a spec file path the user typed at :workflow run.
 OnWorkflowRun func(specPath string)
 ```
@@ -126,7 +127,7 @@ OnWorkflowRun func(specPath string)
 ### 3.6 `cmd/yaah/tui.go` — wire it (the only substantive logic)
 
 ```go
-app.OnWorkflowRun = func(specPath string) {
+app.Hooks.OnWorkflowRun = func(specPath string) {
     // Read-only guard before we spend anything.
     if st, err := os.Stat(specPath); err != nil || st.IsDir() {
         sendCtrlMsg(controlCh, nil, &control.WorkflowRunReport{
@@ -197,7 +198,7 @@ plus `err` capture everything with zero refactoring of the run path.
 - `internal/tui/components/command/command_test.go`:
   `Split("workflow run a.yaml")` → `CmdWorkflow` with the `run a.yaml` arg;
   `Name(CmdWorkflow) == "workflow"`.
-- `internal/tui/commands_test.go`: nil `OnWorkflowRun` → ephemeral
+- `internal/tui/commands_test.go`: nil `Hooks.OnWorkflowRun` → ephemeral
   "not available"; missing/bad arg → usage line.
 - `internal/tui/control.go` test: `WorkflowRunReport` appends a durable
   markdown entry and does not reach the chat-persist path.

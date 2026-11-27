@@ -101,7 +101,7 @@ func TestHandleControlMsg_Continue(t *testing.T) {
 // status), with the trim fallback visible as "no summary produced".
 func TestHandleControlMsg_CompactionSummary(t *testing.T) {
 	ui := New("test")
-	before := len(ui.conversationLog)
+	before := ui.tr.Len()
 
 	ui.handleControlMsg(&control.CompactionSummary{
 		Summary: "## Goal\n- address review comments\n\n## Done\n- landed the replay knob",
@@ -111,12 +111,12 @@ func TestHandleControlMsg_CompactionSummary(t *testing.T) {
 		Window:  200000,
 	})
 
-	if len(ui.conversationLog) <= before {
-		t.Fatal("compaction summary was not added to the conversation log")
+	if ui.tr.Len() <= before {
+		t.Fatal("compaction summary was not added to the transcript")
 	}
 	joined := ""
-	for _, item := range ui.conversationLog[before:] {
-		joined += item.text + "\n"
+	for i := before; i < ui.tr.Len(); i++ {
+		joined += ui.tr.ItemAt(i).Text + "\n"
 	}
 	if !strings.Contains(joined, "context compacted (single): 90000 → 6000 tokens") {
 		t.Errorf("header missing from rendered entry: %q", joined)
@@ -128,8 +128,8 @@ func TestHandleControlMsg_CompactionSummary(t *testing.T) {
 	// Trim fallback: an empty summary renders the honest "no summary
 	// produced" line instead of nothing.
 	ui.handleControlMsg(&control.CompactionSummary{Method: "trim", Before: 6000, After: 5000, Window: 200000})
-	last := ui.conversationLog[len(ui.conversationLog)-1]
-	if !strings.Contains(last.text, "no summary produced") {
-		t.Errorf("trim fallback rendered %q, want the no-summary notice", last.text)
+	last := ui.tr.ItemAt(ui.tr.Len() - 1)
+	if !strings.Contains(last.Text, "no summary produced") {
+		t.Errorf("trim fallback rendered %q, want the no-summary notice", last.Text)
 	}
 }
