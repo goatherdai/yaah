@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.224.0](https://github.com/goatherdai/yaah/compare/v0.223.0...v0.224.0) (2026-11-27)
+
+
+### Features
+
+* **tui:** distinct icons and colors for every built-in tool (yaah-ubkc) ([#447](https://github.com/goatherdai/yaah/issues/447)) ([3e74254](https://github.com/goatherdai/yaah/commit/3e7425430f2fcbd273a9dba94f6fe2d43e7a744d))
+
 ## [0.223.0](https://github.com/goatherdai/yaah/compare/v0.222.2...v0.223.0) (2026-11-27)
 
 
