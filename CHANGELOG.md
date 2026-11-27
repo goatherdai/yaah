@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.222.2](https://github.com/goatherdai/yaah/compare/v0.222.1...v0.222.2) (2026-11-27)
+
+
+### Code Refactoring
+
+* **tui:** differential transcript painter (yaah-1bxl T3) ([#446](https://github.com/goatherdai/yaah/issues/446)) ([a39ed45](https://github.com/goatherdai/yaah/commit/a39ed4541327839eeb55236a3d04428f7970ca35))
+
 ## [0.222.1](https://github.com/goatherdai/yaah/compare/v0.222.0...v0.222.1) (2026-11-27)
 
 
