@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.221.1](https://github.com/goatherdai/yaah/compare/v0.221.0...v0.221.1) (2026-11-27)
+
+
+### Documentation
+
+* **agents:** record the review-fix protocol ([#440](https://github.com/goatherdai/yaah/issues/440)) ([789a524](https://github.com/goatherdai/yaah/commit/789a524853d8291b64becdd30ee14cffc6ac8207))
+
 ## [0.221.0](https://github.com/goatherdai/yaah/compare/v0.220.3...v0.221.0) (2026-11-26)
 
 
