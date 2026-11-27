@@ -7,6 +7,7 @@ package substrate
 import (
 	"slices"
 	"strings"
+	"sync"
 )
 
 // Belt is the set of tools a session may call.
@@ -25,6 +26,14 @@ type Belt struct {
 	allowed  map[string]bool
 	refused  []string
 	known    map[string]bool
+
+	// mu guards the three mutation surfaces above. The belt was born a
+	// construction-time object, but the lazy toolbelt made Admit a
+	// runtime operation: the agent loop executes a batch's tool calls
+	// concurrently, so two mounts in one batch write the belt from two
+	// goroutines — and an unsynchronized map write is a fatal, not a
+	// data race. Every method takes the lock; none of them re-enters.
+	mu sync.Mutex
 }
 
 // NewBelt builds a belt from the configured allowlist. An empty list
@@ -55,6 +64,8 @@ func (b *Belt) Allows(name string) bool {
 	if b == nil || b.allowAll {
 		return true
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.allowed[name]
 }
 
@@ -71,6 +82,8 @@ func (b *Belt) Admit(names ...string) {
 	if b == nil || b.allowAll {
 		return
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.allowed == nil {
 		b.allowed = make(map[string]bool, len(names))
 	}
@@ -97,7 +110,14 @@ func (b *Belt) Admit(names ...string) {
 	// not read as a typo in Unknown() — it is a real tool this session
 	// expected and did not get. Know the trimmed name — the same one
 	// allowed — or a padded caller would allow "tool" and know " tool".
-	b.Know(trimmed...)
+	// Inlined (b.known writes) rather than calling Know, which would
+	// re-take the lock this method holds.
+	if b.known == nil {
+		b.known = make(map[string]bool, len(trimmed))
+	}
+	for _, n := range trimmed {
+		b.known[n] = true
+	}
 }
 
 // Know records a tool name the session knows about, whether or not it was
@@ -108,8 +128,16 @@ func (b *Belt) Know(names ...string) {
 	if b == nil || b.allowAll {
 		return
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.knowLocked(names...)
+}
+
+// knowLocked is Know with the lock already held (Admit inlines it via its
+// own map writes; Refuse calls it under its own lock section).
+func (b *Belt) knowLocked(names ...string) {
 	if b.known == nil {
-		b.known = make(map[string]bool)
+		b.known = make(map[string]bool, len(names))
 	}
 	for _, name := range names {
 		b.known[name] = true
@@ -125,6 +153,8 @@ func (b *Belt) Knows(name string) bool {
 	if b == nil {
 		return false
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.known[name]
 }
 
@@ -136,12 +166,14 @@ func (b *Belt) Refuse(name string) {
 	if b == nil || b.allowAll {
 		return
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if !slices.Contains(b.refused, name) {
 		b.refused = append(b.refused, name)
 	}
 	// A refused tool still exists — it is known, so an allowlist that
 	// names it is not a typo.
-	b.Know(name)
+	b.knowLocked(name)
 }
 
 // Refused returns the tool names the belt turned away, sorted.
@@ -149,6 +181,8 @@ func (b *Belt) Refused() []string {
 	if b == nil {
 		return nil
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	out := slices.Clone(b.refused)
 	slices.Sort(out)
 	return out
@@ -163,6 +197,8 @@ func (b *Belt) Unknown() []string {
 	if b == nil || b.allowAll {
 		return nil
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	var unknown []string
 	for name := range b.allowed {
 		if !b.known[name] {
@@ -178,6 +214,8 @@ func (b *Belt) Allowed() []string {
 	if b == nil || b.allowAll {
 		return nil
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	out := make([]string, 0, len(b.allowed))
 	for name := range b.allowed {
 		out = append(out, name)
