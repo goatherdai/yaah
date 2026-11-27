@@ -86,6 +86,10 @@ func (t *App) HandleEvent(event agent.Event) {
 		t.queueUpdateCritical(func() {
 			t.flushPendingTokens()
 			t.compacting = true
+			// Record the collapse boundary: if compaction completes, the
+			// view reconciles (yaah-30t6 AC 3) by replacing everything
+			// below this mark with a one-line stub.
+			t.compactBoundary = len(t.conversationLog)
 			detail := fmt.Sprintf("%.1fK\u2192%.1fK", float64(e.BeforeTokens)/1000, float64(e.TargetTokens)/1000)
 			t.setActivity(activity.Compacting, detail)
 			msg := fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, e.StartedSummary())
@@ -97,6 +101,13 @@ func (t *App) HandleEvent(event agent.Event) {
 			t.flushPendingTokens()
 			t.compacting = false
 			t.restoreActivity()
+			// The compacted-away messages no longer exist upstream;
+			// collapse them to a stub so the painted transcript
+			// matches the agent's context instead of keeping the full
+			// pre-compaction scrollback. The buffer head changes, so the
+			// next refresh is a full render (and re-windows).
+			t.collapseCompacted()
+			t.compactBoundary = 0
 			msg := fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, e.DoneSummary())
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.markDirty()
@@ -160,6 +171,34 @@ func (t *App) HandleEvent(event agent.Event) {
 			}
 			t.renderInfoPane()
 		})
+	}
+}
+
+// collapseCompacted replaces the pre-compaction conversation prefix with a
+// one-line stub (yaah-30t6 AC 3): compaction removed those messages from
+// the agent's context, so the view stops painting them too. Prompt
+// anchors rebuild on the next full render; the window resets because the
+// log shrank.
+func (t *App) collapseCompacted() {
+	b := t.compactBoundary
+	if b <= 0 || b > len(t.conversationLog) {
+		return
+	}
+	stub := convItem{text: fmt.Sprintf("[%s]· %d messages compacted[-]", t.Theme.Dim, b)}
+	rest := append([]convItem{stub}, t.conversationLog[b:]...)
+	t.conversationLog = rest
+	t.needsFullRender.Store(true)
+	t.windowStart = -1
+	t.windowEnd = -1
+	t.renderedItems = 0
+	t.renderedWidth = 0
+	// The rewrite shifted every index, so the prompt index list is
+	// rebuilt in one pass; compaction is rare enough to afford it.
+	t.promptIdxs = t.promptIdxs[:0]
+	for i := range t.conversationLog {
+		if t.conversationLog[i].isPrompt {
+			t.promptIdxs = append(t.promptIdxs, i)
+		}
 	}
 }
 

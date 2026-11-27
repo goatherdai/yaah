@@ -101,6 +101,11 @@ func (b *Block) S() State         { return b.state }
 func (b *Block) IsExpanded() bool { return b.expanded }
 func (b *Block) Toggle()          { b.expanded = !b.expanded }
 
+// SearchText returns the block's searchable content: the tool name, its
+// args, and its result. Search runs over this instead of the rendered
+// form so it stays cheap and independent of the paint width.
+func (b *Block) SearchText() string { return b.name + " " + b.args + "\n" + b.result }
+
 // SetDurationLabel replaces the computed duration with a fixed label.
 // Restored transcript rows use it because their timing was not persisted;
 // showing "0ms" would imply a real measurement.

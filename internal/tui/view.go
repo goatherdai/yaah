@@ -23,6 +23,11 @@ func (t *App) buildUI() {
 		switch action {
 		case tview.MouseScrollUp:
 			t.userScrolled = true
+			// Scrolling up at the top of the painted window means the
+			// user reached the "earlier messages" seam: lazily prepend
+			// older items (backfillWindow) in the same event cycle, so
+			// the wheel that asked for them also paints them.
+			t.maybeBackfillAtSeam()
 		case tview.MouseScrollDown:
 			_, _, _, h := t.Messages.GetInnerRect()
 			row, _ := t.Messages.GetScrollOffset()
@@ -31,7 +36,11 @@ func (t *App) buildUI() {
 			// scroll event (the scroll path runs on the UI goroutine).
 			totalLines := int(t.paintedLines.Load())
 			if row+h >= totalLines {
-				t.userScrolled = false
+				// Back at the bottom of the painted buffer: return to
+				// the live tail (a reveal window's bottom seam means
+				// the tail itself still needs painting; returnToTail
+				// decides whether a repaint is needed).
+				t.returnToTail()
 			}
 		}
 		return action, event

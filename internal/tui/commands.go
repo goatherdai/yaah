@@ -96,9 +96,23 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 		t.refreshMessages()
 		return true
 	case command.CmdTop:
+		// Jump to the top of the painted window; when older items are
+		// collapsed behind the seam, load the next backfill batch first
+		// so "top" always lands on readable content. Unlike the scroll
+		// paths, the backfill is unconditional: ":top" is an explicit
+		// jump and the viewport may be anywhere, so the seam-row gate
+		// would leave it landing on the seam line itself.
+		t.userScrolled = true
+		if t.windowStart > 0 {
+			t.backfillWindow()
+		}
 		t.Messages.ScrollTo(0, 0)
 		return true
 	case command.CmdBottom:
+		// Back at the end: return to the live tail — the reset re-windows
+		// to the trailing budget, and a reveal window is repainted since
+		// its bottom seam hides the tail.
+		t.returnToTail()
 		t.Messages.ScrollToEnd()
 		return true
 	case command.CmdBanner:

@@ -88,8 +88,12 @@ func (t *App) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 		return nil
 	case ActionScrollUp, ActionPageUp, ActionTop:
 		t.userScrolled = true
+		// Keyboard scroll paths hit the seam like the mouse wheel does:
+		// backfill the collapsed older items when the viewport is at the
+		// top of the painted window.
+		t.maybeBackfillAtSeam()
 	case ActionScrollDown, ActionPageDown, ActionBottom:
-		t.userScrolled = false
+		t.returnToTail()
 	}
 	return ev
 }

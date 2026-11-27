@@ -19,7 +19,8 @@ import (
 // baseline measured on the same machine, and keystrokes are echoed while
 // heavy renders are queued on the tview event loop. The gate exists to
 // catch the pathological O(transcript)-per-event scaling, not to measure
-// hardware. Tighten them when the T2 windowed painter lands.
+// hardware. The budgets are tightened post-T2: the windowed painter holds
+// the session-scale rebuild at ~1x the baseline.
 
 // TestMain isolates the whole package from the developer's real yaah
 // home: any test whose refresh crosses the SLOW threshold would otherwise
@@ -184,11 +185,19 @@ func TestRefreshMessages_SessionScaleRenderBudget(t *testing.T) {
 	warm := measureBest(ui, sim, 3)
 
 	// Same-goroutine read: every mutation and refresh so far ran on this
-	// goroutine, so there is no race with the TextView buffer.
+	// goroutine, so there is no race with the TextView buffer. T2's
+	// windowed painter: the late turns must be painted, the early ones
+	// must be collapsed behind the seam, and the buffer must be bounded
+	// by the window budget instead of the transcript size.
 	rendered := ui.Messages.GetText(true)
-	if !strings.Contains(rendered, "turn 0: investigate") ||
-		!strings.Contains(rendered, "turn 174: investigate") {
-		t.Fatalf("painted transcript lost early or late turns (%d bytes)", len(rendered))
+	if !strings.Contains(rendered, "turn 174: investigate") {
+		t.Fatalf("painted transcript lost the late turns (%d bytes)", len(rendered))
+	}
+	if strings.Contains(rendered, "turn 0: investigate") {
+		t.Fatalf("early turns painted at session scale: the window did not engage (%d bytes)", len(rendered))
+	}
+	if !strings.Contains(rendered, "earlier messages") {
+		t.Fatalf("window seam missing at session scale (%d bytes)", len(rendered))
 	}
 
 	// The incremental path: one new tool chunk, no in-place mutation.
@@ -210,13 +219,13 @@ func TestRefreshMessages_SessionScaleRenderBudget(t *testing.T) {
 		float64(cold)/float64(baseCold),
 		appendRender.Round(time.Millisecond))
 
-	// The ratio budget is generous: today's linear full render measures
-	// ~9-10x (bytes scale ~10x), and the T2 windowed painter collapses it
-	// toward 1. A superlinear regression trips it; runner jitter, which
-	// moves both measurements together, does not. The floor keeps a
-	// millisecond-scale baseline's noise from tripping the ratio — the
-	// gate must measure scaling, not scheduler luck.
-	ratio := 20.0 * renderGateFactor(t)
+	// The ratio budget is tight now: the T2 windowed painter bounds the
+	// full render by the window budget (renderWindowItems/Rows), so the
+	// 175-turn session rebuild measures ~1.0x the 18-turn baseline
+	// (windowed warm and cold). A superlinear regression — the window
+	// budget failing to bind — trips 4x with room for runner jitter,
+	// which moves both measurements together.
+	ratio := 4.0 * renderGateFactor(t)
 	gate := func(base time.Duration) time.Duration {
 		d := time.Duration(float64(base) * ratio)
 		if floor := renderGateBudget(t, 250*time.Millisecond); floor > d {

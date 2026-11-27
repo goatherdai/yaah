@@ -43,6 +43,12 @@ func (t *App) clearConversation() {
 	t.subAgents = nil
 	t.subAgentsBusy.Store(false)
 	t.userScrolled = false
+	// The window is stale the moment the log empties: recompute at the
+	// next full render.
+	t.windowStart = -1
+	t.windowEnd = -1
+	t.promptIdxs = nil
+	t.compactBoundary = 0
 	t.renderBackgroundJobsPane()
 	t.refreshMessages()
 }

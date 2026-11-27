@@ -11,9 +11,9 @@ import (
 // TestRefreshMessages_AppendsNewTailOnly verifies tail-only rendering:
 // appending items renders just the new content without disturbing what
 // is already painted, and advances the rendered cursor to the whole log.
-// A text item's chunk begins with "\n" so it takes the full-render path
-// (see refreshMessages); the incremental append branch is covered by
-// TestRefreshMessages_ToolChunkAppends and MixedBatch below.
+// Text items append too (T2: leading separator newlines commit to the
+// line index one at a time — see appendChunk), so the fast path is
+// proven by fullRenderCount not moving.
 func TestRefreshMessages_AppendsNewTailOnly(t *testing.T) {
 	ui := New("test")
 
@@ -26,6 +26,7 @@ func TestRefreshMessages_AppendsNewTailOnly(t *testing.T) {
 	if !strings.Contains(before, "hello there") {
 		t.Fatalf("first render missing user message; got %q", before)
 	}
+	fullRenders := ui.fullRenderCount
 
 	ui.addAssistantResponse("streamed **response** tail")
 	if ui.needsFullRender.Load() {
@@ -33,6 +34,9 @@ func TestRefreshMessages_AppendsNewTailOnly(t *testing.T) {
 	}
 
 	ui.refreshMessages()
+	if ui.fullRenderCount != fullRenders {
+		t.Fatalf("text item took the full-render path (%d rebuilds, want %d)", ui.fullRenderCount, fullRenders)
+	}
 	after := ui.Messages.GetText(true)
 	if !strings.HasPrefix(after, before) {
 		t.Fatalf("append path rewrote existing content:\nbefore=%q\nafter=%q", before, after)
@@ -55,11 +59,15 @@ func msgColumn(row string) string {
 }
 
 // TestRefreshMessages_ResponseChunkHasSeparator verifies the painted output
-// of a flushed assistant response: a blank line must separate it from the
-// preceding tool line, and its first row must carry no stray leading space.
-// This pins the tview incremental-reindex workaround in refreshMessages:
-// writing a chunk that begins with "\n" onto the TextView mis-renders the
-// separator as a one-space indent until the next full render fixes it.
+// of a flushed assistant response on the APPEND path (T2): a blank line
+// must separate it from the preceding tool line, and its first row must
+// carry no stray leading space. This pins the appendChunk fix in
+// refreshMessages: uniseg mis-classifies a "\n" that is the first cluster
+// of a resumed parse (width-1 optional break instead of a mandatory
+// break), which would render the separator as a one-space indent until
+// the next full render fixed it — so leading separator newlines are
+// committed to the line index one at a time with a forced parse between
+// them.
 func TestRefreshMessages_ResponseChunkHasSeparator(t *testing.T) {
 	sim := tcell.NewSimulationScreen("UTF-8")
 	if err := sim.Init(); err != nil {
@@ -96,6 +104,7 @@ func TestRefreshMessages_ResponseChunkHasSeparator(t *testing.T) {
 	ui.AddToolStart("1", "bash", "bd comment yaah-95ri.7")
 	ui.AddToolEnd("1", "bash · bd comment", "ok")
 	ui.refreshMessages()
+	fullRenders := ui.fullRenderCount
 
 	ui.tokenMu.Lock()
 	ui.pendingTokens.WriteString("Posted to the bead. Here's the complete picture — what the fix looks like and your stopgap.")
@@ -105,6 +114,9 @@ func TestRefreshMessages_ResponseChunkHasSeparator(t *testing.T) {
 		t.Fatalf("flush did not render the streamed response")
 	}
 	ui.refreshMessages()
+	if ui.fullRenderCount != fullRenders {
+		t.Fatalf("flushed text took the full-render path (%d rebuilds, want %d)", ui.fullRenderCount, fullRenders)
+	}
 	rows := paint()
 
 	posted := -1
