@@ -14,6 +14,7 @@ import (
 	"github.com/goatherdai/yaah/internal/tui/components/input"
 	"github.com/goatherdai/yaah/internal/tui/components/mcpinfo"
 	"github.com/goatherdai/yaah/internal/tui/components/reasoning"
+	"github.com/goatherdai/yaah/internal/tui/components/rule"
 	"github.com/goatherdai/yaah/internal/tui/components/subagent"
 	"github.com/goatherdai/yaah/internal/tui/components/toolblock"
 	"github.com/goatherdai/yaah/internal/worldinfo"
@@ -37,7 +38,16 @@ type App struct {
 	Messages   *tview.TextView
 	Input      *tview.TextArea
 	promptEcho *tview.TextView
+	// promptRule is the separator line under the sticky prompt pin; it
+	// shows only while the pin does (see SetCurrentPrompt and
+	// reconcilePromptPin).
+	promptRule *rule.Rule
 	prompt     *input.Prompt
+
+	// bannerLines is the banner TextView's fixed line count (figlet art
+	// plus tagline); headerHeight derives the header's grid size from
+	// it, padding row included.
+	bannerLines int
 
 	// Typeahead: suggestionsView is a strip above the composer that appears
 	// while a colon command name is being typed. suggestionIdx highlights the

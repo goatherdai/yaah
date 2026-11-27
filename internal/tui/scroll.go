@@ -562,7 +562,7 @@ func (t *App) reconcilePromptPin() {
 	t.pinnedPrompt = want
 	if want == "" {
 		t.promptEcho.SetText("")
-		t.messagesCol.ResizeItem(t.promptEcho, 0, 0)
+		t.hidePromptEcho()
 		return
 	}
 	t.SetCurrentPrompt(want)

@@ -60,8 +60,7 @@ func (t *App) ActivityState() activity.State {
 // plain data writes and become visible on the next frame.
 func (t *App) SetCurrentPrompt(text string) {
 	if strings.TrimSpace(text) == "" {
-		t.promptEcho.SetText("")
-		t.messagesCol.ResizeItem(t.promptEcho, 0, 0)
+		t.hidePromptEcho()
 		return
 	}
 	full := promptDisplay(text)
