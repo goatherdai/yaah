@@ -30,8 +30,8 @@ func TestSubmitInput_RoutesColonSteerToTheStepper(t *testing.T) {
 	ui := newColonUI(t)
 	ui.agentActive = true // steering only applies to a turn in flight
 	var steered, submitted string
-	ui.OnSteer = func(s string) { steered = s }
-	ui.OnSubmit = func(s string) { submitted = s }
+	ui.Hooks.OnSteer = func(s string) { steered = s }
+	ui.Hooks.OnSubmit = func(s string) { submitted = s }
 
 	ui.Input.SetText(":steer keep it short", true)
 	ui.submitInput()
@@ -51,8 +51,8 @@ func TestSubmitFollowUp_RoutesColonFollowUp(t *testing.T) {
 	ui := newColonUI(t)
 	ui.agentActive = true // a follow-up is queued behind a running turn
 	var followed, submitted string
-	ui.OnFollowUp = func(s string) { followed = s }
-	ui.OnSubmit = func(s string) { submitted = s }
+	ui.Hooks.OnFollowUp = func(s string) { followed = s }
+	ui.Hooks.OnSubmit = func(s string) { submitted = s }
 
 	ui.Input.SetText(":followup and then?", true)
 	ui.submitFollowUp()
@@ -68,7 +68,7 @@ func TestSubmitFollowUp_RoutesColonFollowUp(t *testing.T) {
 func TestSubmitInput_BareArgCommandReportsUsage(t *testing.T) {
 	ui := newColonUI(t)
 	called := false
-	ui.OnSteer = func(string) { called = true }
+	ui.Hooks.OnSteer = func(string) { called = true }
 
 	ui.Input.SetText(":steer", true)
 	ui.submitInput()
@@ -87,7 +87,7 @@ func TestSubmitInput_BareArgCommandReportsUsage(t *testing.T) {
 func TestSubmitInput_UnknownCommandIsLoud(t *testing.T) {
 	ui := newColonUI(t)
 	var submitted string
-	ui.OnSubmit = func(s string) { submitted = s }
+	ui.Hooks.OnSubmit = func(s string) { submitted = s }
 
 	ui.Input.SetText(":seach typo", true)
 	ui.submitInput()
@@ -108,7 +108,7 @@ func TestSubmitInput_NonCommandColonTextIsSentAsPrompt(t *testing.T) {
 		t.Run(text, func(t *testing.T) {
 			ui := newColonUI(t)
 			var submitted string
-			ui.OnSubmit = func(s string) { submitted = s }
+			ui.Hooks.OnSubmit = func(s string) { submitted = s }
 
 			ui.Input.SetText(text, true)
 			ui.submitInput()
@@ -125,8 +125,8 @@ func TestSubmitInput_NonCommandColonTextIsSentAsPrompt(t *testing.T) {
 func TestGlobalInputCapture_EscapeStopsFromAnyNormalFocus(t *testing.T) {
 	ui := newColonUI(t)
 	stopped := false
-	ui.OnStop = func() { stopped = true }
-	ui.OnAbort = func() { t.Fatal("Esc fell back to OnAbort") }
+	ui.Hooks.OnStop = func() { stopped = true }
+	ui.Hooks.OnAbort = func() { t.Fatal("Esc fell back to OnAbort") }
 	ui.focus = focusNormal
 
 	ev := tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)
@@ -144,7 +144,7 @@ func TestGlobalInputCapture_EscapeLeavesLayeredViewsAlone(t *testing.T) {
 	for _, focus := range []focusState{focusCommandPalette, focusModal} {
 		ui := newColonUI(t)
 		stopped := false
-		ui.OnStop = func() { stopped = true }
+		ui.Hooks.OnStop = func() { stopped = true }
 		ui.focus = focus
 
 		ev := tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)
@@ -162,7 +162,7 @@ func TestGlobalInputCapture_EscapeLeavesLayeredViewsAlone(t *testing.T) {
 func TestHandleCommand_SteerRefusedWhenNoTurnIsRunning(t *testing.T) {
 	ui := newColonUI(t)
 	var steered string
-	ui.OnSteer = func(s string) { steered = s }
+	ui.Hooks.OnSteer = func(s string) { steered = s }
 	ui.agentActive = false
 
 	ui.Input.SetText(":steer keep it short", true)
@@ -179,7 +179,7 @@ func TestHandleCommand_SteerRefusedWhenNoTurnIsRunning(t *testing.T) {
 func TestHandleCommand_SteerWorksDuringTurn(t *testing.T) {
 	ui := newColonUI(t)
 	var steered string
-	ui.OnSteer = func(s string) { steered = s }
+	ui.Hooks.OnSteer = func(s string) { steered = s }
 	ui.agentActive = true
 
 	ui.Input.SetText(":steer keep it short", true)
@@ -195,8 +195,8 @@ func TestHandleCommand_SteerWorksDuringTurn(t *testing.T) {
 func TestHandleCommand_FollowUpSendsAsPromptWhenIdle(t *testing.T) {
 	ui := newColonUI(t)
 	var submitted, followed string
-	ui.OnSubmit = func(s string) { submitted = s }
-	ui.OnFollowUp = func(s string) { followed = s }
+	ui.Hooks.OnSubmit = func(s string) { submitted = s }
+	ui.Hooks.OnFollowUp = func(s string) { followed = s }
 	ui.agentActive = false
 
 	ui.Input.SetText(":followup and then?", true)
@@ -213,8 +213,8 @@ func TestHandleCommand_FollowUpSendsAsPromptWhenIdle(t *testing.T) {
 func TestHandleCommand_FollowUpQueuedDuringTurn(t *testing.T) {
 	ui := newColonUI(t)
 	var submitted, followed string
-	ui.OnSubmit = func(s string) { submitted = s }
-	ui.OnFollowUp = func(s string) { followed = s }
+	ui.Hooks.OnSubmit = func(s string) { submitted = s }
+	ui.Hooks.OnFollowUp = func(s string) { followed = s }
 	ui.agentActive = true
 
 	ui.Input.SetText(":followup and then?", true)
@@ -265,7 +265,7 @@ func TestModals_ClaimAndReleaseFocus(t *testing.T) {
 			}
 			// Esc must reach the layer, not stop the turn.
 			stopped := false
-			ui.OnStop = func() { stopped = true }
+			ui.Hooks.OnStop = func() { stopped = true }
 			esc := tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)
 			if ret := ui.globalInputCapture(esc); ret == nil {
 				t.Fatalf("%s: Esc consumed by the app instead of the layer", name)
@@ -289,7 +289,7 @@ func TestGlobalInputCapture_TypeaheadYieldsToOtherPanes(t *testing.T) {
 	if !ui.hasSuggestions() {
 		t.Fatal("precondition: strip should be visible")
 	}
-	ui.App.SetFocus(ui.Messages) // focus moved away from the composer
+	ui.App.SetFocus(ui.pane) // focus moved away from the composer
 
 	tab := tcell.NewEventKey(tcell.KeyTab, 0, tcell.ModNone)
 	if ret := ui.globalInputCapture(tab); ret == nil {
@@ -339,7 +339,7 @@ func TestHandleCommand_WorkflowRefusedWhenUnwired(t *testing.T) {
 func TestHandleCommand_WorkflowBadArgReportsUsage(t *testing.T) {
 	ui := newColonUI(t)
 	var called string
-	ui.OnWorkflowRun = func(spec string) { called = spec }
+	ui.Hooks.OnWorkflowRun = func(spec string) { called = spec }
 
 	for _, arg := range []string{"", "explain a.yaml", "   "} {
 		if ui.HandleCommand(command.CmdWorkflow, arg) {
@@ -354,7 +354,7 @@ func TestHandleCommand_WorkflowBadArgReportsUsage(t *testing.T) {
 func TestHandleCommand_WorkflowRunCallsCallback(t *testing.T) {
 	ui := newColonUI(t)
 	var called string
-	ui.OnWorkflowRun = func(spec string) { called = spec }
+	ui.Hooks.OnWorkflowRun = func(spec string) { called = spec }
 
 	if !ui.HandleCommand(command.CmdWorkflow, "run specs/demo.yaml") {
 		t.Fatal(":workflow run <spec> should be consumed")
@@ -367,7 +367,7 @@ func TestHandleCommand_WorkflowRunCallsCallback(t *testing.T) {
 func TestHandleCommand_WorkflowAcceptsTabSeparator(t *testing.T) {
 	ui := newColonUI(t)
 	var called string
-	ui.OnWorkflowRun = func(spec string) { called = spec }
+	ui.Hooks.OnWorkflowRun = func(spec string) { called = spec }
 
 	if !ui.HandleCommand(command.CmdWorkflow, "run\tspecs/demo.yaml") {
 		t.Fatal(":workflow run<TAB><spec> should be consumed, not refused")
@@ -380,7 +380,7 @@ func TestHandleCommand_WorkflowAcceptsTabSeparator(t *testing.T) {
 func TestHandleCommand_WorkflowListCallsCallback(t *testing.T) {
 	ui := newColonUI(t)
 	var listed bool
-	ui.OnWorkflowList = func() { listed = true }
+	ui.Hooks.OnWorkflowList = func() { listed = true }
 
 	if !ui.HandleCommand(command.CmdWorkflow, "list") {
 		t.Fatal(":workflow list should be consumed")
@@ -393,7 +393,7 @@ func TestHandleCommand_WorkflowListCallsCallback(t *testing.T) {
 func TestHandleCommand_WorkflowListRefusesArg(t *testing.T) {
 	ui := newColonUI(t)
 	var listed bool
-	ui.OnWorkflowList = func() { listed = true }
+	ui.Hooks.OnWorkflowList = func() { listed = true }
 
 	if ui.HandleCommand(command.CmdWorkflow, "list extra") {
 		t.Fatal(":workflow list <extra> should be refused, not consumed")
@@ -406,8 +406,8 @@ func TestHandleCommand_WorkflowListRefusesArg(t *testing.T) {
 func TestHandleCommand_WorkflowRunNoSpecOpensPicker(t *testing.T) {
 	ui := newColonUI(t)
 	var picked bool
-	ui.OnWorkflowRun = func(string) {}
-	ui.OnWorkflowPicker = func() { picked = true }
+	ui.Hooks.OnWorkflowRun = func(string) {}
+	ui.Hooks.OnWorkflowPicker = func() { picked = true }
 
 	if !ui.HandleCommand(command.CmdWorkflow, "run") {
 		t.Fatal(":workflow run with no spec should open the picker, not be refused")
@@ -420,7 +420,7 @@ func TestHandleCommand_WorkflowRunNoSpecOpensPicker(t *testing.T) {
 func TestHandleCommand_WorkflowBareReportsUsage(t *testing.T) {
 	ui := newColonUI(t)
 	var picked bool
-	ui.OnWorkflowPicker = func() { picked = true }
+	ui.Hooks.OnWorkflowPicker = func() { picked = true }
 
 	if ui.HandleCommand(command.CmdWorkflow, "") {
 		t.Fatal("bare :workflow should be refused (usage), not consumed")

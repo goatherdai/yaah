@@ -13,13 +13,54 @@ import (
 	"github.com/goatherdai/yaah/internal/tui/components/command"
 	"github.com/goatherdai/yaah/internal/tui/components/input"
 	"github.com/goatherdai/yaah/internal/tui/components/mcpinfo"
-	"github.com/goatherdai/yaah/internal/tui/components/reasoning"
 	"github.com/goatherdai/yaah/internal/tui/components/rule"
 	"github.com/goatherdai/yaah/internal/tui/components/subagent"
-	"github.com/goatherdai/yaah/internal/tui/components/toolblock"
+	"github.com/goatherdai/yaah/internal/tui/transcript"
 	"github.com/goatherdai/yaah/internal/worldinfo"
 	"github.com/rivo/tview"
 )
+
+// DriverHooks groups everything the driver (cmd/yaah/tui.go) injects
+// into the TUI: submit/steer/follow-up/stop seams, the workflow
+// launcher, the model/agent/mode pickers' selection sinks, and the
+// control-plane channel. They are one struct because they are one
+// contract — none of them is state the TUI derives; they all hand a
+// user intent to the session driver. Nil callbacks mean the driver did
+// not wire that surface; every call site treats that as "unavailable
+// in this session", never as a crash.
+type DriverHooks struct {
+	OnSubmit   func(prompt string)
+	OnAbort    func()
+	OnCompact  func()
+	OnClear    func()
+	OnSteer    func(text string)
+	OnFollowUp func(text string)
+	OnStop     func()
+
+	// OnWorkflowRun receives a spec file path the user typed at
+	// :workflow run; OnWorkflowList is invoked at :workflow list; and
+	// OnWorkflowPicker when :workflow run is given no spec, where the
+	// driver discovers the specs and opens the selector modal
+	// (ShowWorkflowPicker). Bare :workflow prints usage (RequiresArg).
+	OnWorkflowRun    func(specPath string)
+	OnWorkflowList   func()
+	OnWorkflowPicker func()
+
+	OnModelSelect func(model string)
+	// OnAgentSelect receives the persona the user picked in the :agent
+	// palette. The driver validates it and switches the current
+	// session to it (SetPersona).
+	OnAgentSelect func(name string)
+	// OnModeSelect receives the mode word the user picked in the :mode
+	// picker (read-only or full). The driver switches this session's
+	// mode axis, effective at the next run.
+	OnModeSelect func(word string)
+
+	// ControlCh is the typed control-plane message channel (todos,
+	// questions, approvals, usage); the driver creates it and consumes
+	// its view side.
+	ControlCh <-chan control.Msg
+}
 
 // App is the tview-based terminal UI prototype.
 //
@@ -34,8 +75,18 @@ type App struct {
 
 	Theme *colors.Theme
 
+	// Hooks is the driver contract; see DriverHooks.
+	Hooks DriverHooks
+
+	// Transcript: tr owns the conversation log and every derived
+	// painting table (window, rows, anchors); pane paints tr's rows
+	// into its rect and owns the viewport offset. Both are
+	// QueueUpdateDraw-only state, with the documented pre-Run seeding
+	// exception (see transcript.Model).
+	tr   *transcript.Model
+	pane *transcript.Pane
+
 	Banner     *tview.TextView
-	Messages   *tview.TextView
 	Input      *tview.TextArea
 	promptEcho *tview.TextView
 	// promptRule is the separator line under the sticky prompt pin; it
@@ -68,13 +119,13 @@ type App struct {
 
 	// --- QueueUpdateDraw ONLY fields below ---
 	//
-	// Exception: bootstrapHistory mutates conversationLog directly on the
-	// setup goroutine before App.Run starts. No queued callback executes
-	// until App.Run drains them, so the seed cannot race with a live event.
+	// Exception: the history seed mutates the transcript model
+	// directly on the setup goroutine before App.Run starts. No queued
+	// callback executes until App.Run drains them, so the seed cannot
+	// race with a live event.
 
-	conversationLog []convItem
-	activityLine    *activity.Row
-	focus           focusState
+	activityLine *activity.Row
+	focus        focusState
 	// modalDepth counts open layered views so nested overlays release focus in
 	// order; it is paired with focus and touched only from the UI goroutine.
 	modalDepth int
@@ -91,28 +142,9 @@ type App struct {
 	tokenMu       sync.Mutex
 	pendingTokens strings.Builder
 
-	OnSubmit   func(prompt string)
-	OnAbort    func()
-	OnCompact  func()
-	OnClear    func()
-	OnSteer    func(text string)
-	OnFollowUp func(text string)
-	OnStop     func()
-
-	// OnWorkflowRun receives a spec file path the user typed at :workflow run.
-	OnWorkflowRun func(specPath string)
-	// OnWorkflowList is invoked at :workflow list; it discovers the specs and
-	// renders them (typically via a control.WorkflowList message).
-	OnWorkflowList func()
-	// OnWorkflowPicker is invoked at bare :workflow; the driver discovers the
-	// specs and opens the selector modal (ShowWorkflowPicker).
-	OnWorkflowPicker func()
-
 	// ShowApprovalFn overrides the approval modal for testing.
 	// If nil (default), the tview-based approval.Show modal is used.
 	ShowApprovalFn func(name, args string, onAnswer func(bool))
-
-	ControlCh <-chan control.Msg
 
 	bgMu      sync.Mutex
 	bgDone    chan struct{}
@@ -155,17 +187,13 @@ type App struct {
 	activityBusy         atomic.Bool
 	tokensRx             atomic.Int64
 	charsWritten         atomic.Int64
-	charsRendered        atomic.Int64
-	userScrolled         bool
 	uiEventDrops         atomic.Int64
 	uiEventFallbacks     atomic.Int64
 	uiEventFallbackSat   atomic.Int64
 	lastRefreshUnixNano  atomic.Int64
-	// renderMinDelay is the adaptive throttle (see requestRefresh);
-	// paintedLines is the painted transcript's line count for the mouse
-	// handler (both written by refreshMessages on the UI goroutine).
+	// renderMinDelay is the adaptive throttle (see requestRefresh),
+	// written by refreshMessages on the UI goroutine.
 	renderMinDelay atomic.Int64
-	paintedLines   atomic.Int64
 
 	// slowLog persists slow-render diagnostics; stderr is silenced while
 	// the TUI is on the alt screen (see slowlog.go). slowThreshold is the
@@ -176,12 +204,6 @@ type App struct {
 	isStreaming   atomic.Bool
 	needsRefresh  atomic.Bool
 	refreshQueued atomic.Bool
-
-	// needsFullRender forces refreshMessages to rebuild the entire
-	// conversation text instead of appending only new items. Set when an
-	// existing item mutates (block transitions, toggles) or on clear.
-	// Atomic because it is also written from the event-forwarder goroutine.
-	needsFullRender atomic.Bool
 
 	fallbackSem     chan struct{}
 	fallbackWaiters chan struct{}
@@ -196,69 +218,12 @@ type App struct {
 	agentNames []string
 	agentDescs map[string]string
 
-	// Render tracking for the incremental append fast path in
-	// refreshMessages: how many convItems are already reflected in the
-	// Messages text view, and at which width they were formatted.
-	renderedItems int
-	renderedWidth int
-
-	// fullRenderCount counts refreshMessages passes that rebuilt the
-	// buffer via SetText instead of appending. Test-visible so render
-	// tests can prove which branch ran, and exported on the tui.refresh
-	// span as full_renders.
-	fullRenderCount int
-
-	// Sticky prompt-header state (QueueUpdateDraw ONLY). promptAnchors
-	// maps each user prompt item to its estimated first painted row in
-	// the Messages buffer; reconcilePromptPin derives the pinned header
-	// from the scroll position and pinnedPrompt caches what the echo
-	// last showed so unchanged pins cost one binary search per draw.
-	promptAnchors []promptAnchor
-	renderedRows  int
-	pinnedPrompt  string
-
-	// Windowed painting (QueueUpdateDraw ONLY, except backfillWindow on
-	// the mouse-capture path — also the UI goroutine). windowStart is
-	// the first conversation item a full render paints; -1 means
-	// recompute the trailing window at the next full render (resize,
-	// compaction, clear, and returning to the live tail reset it).
-	// windowWidth is the width the current window was computed at, so a
-	// width change re-windows instead of reusing stale row budgets.
-	// windowPrePrompt is the most recent prompt entirely above the
-	// window, kept so the sticky pin still shows one at the seam.
-	windowStart     int
-	windowWidth     int
-	windowPrePrompt string
-
-	// windowEnd is the exclusive end of the painted window; -1 means the
-	// window extends to the live tail. Only revealItem (search) installs
-	// a bounded end: a window around an old hit must not run to the
-	// tail, or an early hit would repaint an unbounded range — the
-	// freeze the window exists to prevent. Backfill slides the end with
-	// computeWindowEnd; reaching the window's bottom seam (mouse scroll
-	// down) or End/:bottom returns to the tail. Reset to -1 wherever
-	// windowStart resets.
-	windowEnd int
-
-	// promptIdxs lists the conversation indices of user-prompt items in
-	// ascending order (UI goroutine). rebuildPromptAnchors finds the
-	// last prompt above the painted window with one binary search over
-	// it instead of a prefix scan of the whole log. Maintained by
-	// appendPromptItem; rebuilt by collapseCompacted; cleared with the
-	// log. See rebuildPromptAnchors.
-	promptIdxs []int
+	// Sticky prompt-header state (QueueUpdateDraw ONLY). pinnedPrompt
+	// caches what the echo last showed so unchanged pins cost one
+	// binary search per draw (see reconcilePromptPin).
+	pinnedPrompt string
 
 	version string
-
-	OnModelSelect func(model string)
-	// OnAgentSelect receives the persona the user picked in the :agent
-	// palette. The driver validates it and switches the current
-	// session to it (SetPersona).
-	OnAgentSelect func(name string)
-	// OnModeSelect receives the mode word the user picked in the :mode
-	// picker (read-only or full). The driver switches this session's mode
-	// axis, effective at the next run.
-	OnModeSelect func(word string)
 
 	// initialPrompt is a prompt submitted through OnSubmit once the event
 	// loop starts. It is the launcher seam for `yaah tui workflow run
@@ -271,39 +236,12 @@ type App struct {
 	history []HistoryItem
 }
 
-type convItem struct {
-	text           string
-	isPrompt       bool // user question; drives the sticky header pin
-	prompt         string
-	isMarkdown     bool
-	cached         string
-	cachedWidth    int
-	toolBlock      *toolblock.Block
-	reasoningBlock *reasoning.Block
-
-	// Cached display-row count (at rowsWidth) for the prompt-anchor
-	// bookkeeping; rowsWidth 0 = uncached. Cleared by the in-place block
-	// mutations (tool end/error, expand toggles) — the only ways a row
-	// count changes at a fixed width.
-	rowsCache int
-	rowsWidth int
-}
-
 // SetInitialPrompt queues a prompt for submission through OnSubmit once the
 // event loop starts. It is the launcher seam for `yaah tui workflow run
 // <spec>` (workflow-in-session Scope B, piece C): set it before Run, and the
 // seeded prompt runs through the exact same path a typed prompt does.
 func (t *App) SetInitialPrompt(text string) {
 	t.initialPrompt = text
-}
-
-// promptAnchor maps a user prompt convItem to its first painted row in
-// the Messages buffer, so scroll position can be translated into which
-// prompt the sticky header should show.
-type promptAnchor struct {
-	item      int
-	startLine int
-	input     string
 }
 
 func New(version string) *App {
@@ -316,9 +254,9 @@ func New(version string) *App {
 		fallbackSem:     make(chan struct{}, uiMaxDirectFallbacks),
 		fallbackWaiters: make(chan struct{}, uiMaxDirectWaiters),
 		slowThreshold:   50 * time.Millisecond,
-		windowStart:     -1,
-		windowEnd:       -1,
 	}
+	t.tr = transcript.NewModel(t.Theme)
+	t.pane = transcript.NewPane(t.tr)
 	t.buildUI()
 	return t
 }

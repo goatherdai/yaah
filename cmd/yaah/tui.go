@@ -158,7 +158,7 @@ func runTUI(initialSpec string) error {
 	catalog := newModelCatalog(cfg, nil)
 	go warmModelList(catalog, func(snap modelSnapshot) { sendModelList(controlCh, snap) })
 
-	app.OnModelSelect = func(model string) {
+	app.Hooks.OnModelSelect = func(model string) {
 		parts := strings.SplitN(model, "/", 2)
 		var providerName, modelName string
 		if len(parts) == 2 {
@@ -176,7 +176,7 @@ func runTUI(initialSpec string) error {
 	// the next run. The ephemeral line is the confirmation and the
 	// info-pane mode badge re-derives from the persona.
 	app.SetAgentPicker(personaNames(), personaDescriptions())
-	app.OnAgentSelect = func(name string) {
+	app.Hooks.OnAgentSelect = func(name string) {
 		reply, _ := sess.switchPersona(name)
 		app.SetMode(sess.Mode())
 		// A routing persona re-points the session's provider/model
@@ -189,31 +189,31 @@ func runTUI(initialSpec string) error {
 	// (read-only/full), the interactive parity surface for ACP
 	// session/set_mode. The word is already validated vocabulary; the reply
 	// is the confirmation and the info-pane badge re-derives.
-	app.OnModeSelect = func(word string) {
+	app.Hooks.OnModeSelect = func(word string) {
 		reply, _ := sess.switchMode(word)
 		app.SetMode(sess.Mode())
 		app.SetEphemeral(reply)
 	}
 
 	var cancelAgent context.CancelFunc
-	app.OnSubmit = func(input string) {
+	app.Hooks.OnSubmit = func(input string) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancelAgent = cancel
 		app.AddPrompt(input)
 		app.ShowThinking()
 		go sess.RunPrompt(ctx, input)
 	}
-	app.OnAbort = func() {
+	app.Hooks.OnAbort = func() {
 		app.HideThinking()
 		if cancelAgent != nil {
 			cancelAgent()
 			cancelAgent = nil
 		}
 	}
-	app.OnCompact = func() {
+	app.Hooks.OnCompact = func() {
 		go sess.Compact()
 	}
-	app.OnWorkflowRun = func(specPath string) {
+	app.Hooks.OnWorkflowRun = func(specPath string) {
 		// A bare name resolves against the search dirs (default-location
 		// feature) before the read guard; a path passes through unchanged.
 		if resolved, err := resolveWorkflowSpec(specPath, nil); err != nil {
@@ -275,7 +275,7 @@ func runTUI(initialSpec string) error {
 			}, tuiSendTimeout)
 		}()
 	}
-	app.OnWorkflowList = func() {
+	app.Hooks.OnWorkflowList = func() {
 		go func() {
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -294,7 +294,7 @@ func runTUI(initialSpec string) error {
 			sendCtrlMsg(controlCh, nil, &control.WorkflowList{Specs: entries}, tuiSendTimeout)
 		}()
 	}
-	app.OnWorkflowPicker = func() {
+	app.Hooks.OnWorkflowPicker = func() {
 		// Runs on the UI goroutine from HandleCommand; discovery is a local
 		// read of two directories, so it is safe to do inline.
 		cwd, err := os.Getwd()
@@ -316,24 +316,24 @@ func runTUI(initialSpec string) error {
 			entries = append(entries, workflowpicker.Entry{Name: s.Name, Path: s.Path})
 		}
 		app.ShowWorkflowPicker(entries, func(name string) {
-			if app.OnWorkflowRun != nil {
-				app.OnWorkflowRun(name)
+			if app.Hooks.OnWorkflowRun != nil {
+				app.Hooks.OnWorkflowRun(name)
 			}
 		})
 	}
-	app.OnClear = func() {}
-	app.OnSteer = func(text string) {
+	app.Hooks.OnClear = func() {}
+	app.Hooks.OnSteer = func(text string) {
 		// Flush in-flight streamed text and echo the steer as a prompt so
 		// what woke the turn is visible where the response lands, after
 		// the assistant text that was streaming when it was sent.
 		app.EchoPrompt(text)
 		sess.Steer(text)
 	}
-	app.OnFollowUp = func(text string) {
+	app.Hooks.OnFollowUp = func(text string) {
 		app.EchoPrompt(text)
 		sess.FollowUp(text)
 	}
-	app.OnStop = func() {
+	app.Hooks.OnStop = func() {
 		app.HideThinking()
 		if cancelAgent != nil {
 			cancelAgent()
@@ -341,7 +341,7 @@ func runTUI(initialSpec string) error {
 		}
 	}
 
-	app.ControlCh = controlCh
+	app.Hooks.ControlCh = controlCh
 	sess.SetView(app)
 	// The TUI accepts harness-initiated turns: a watch that fires while the
 	// terminal is idle starts a turn through the session's run gate. The

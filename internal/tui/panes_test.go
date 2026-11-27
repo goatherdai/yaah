@@ -96,7 +96,7 @@ func TestPromptEchoSeamSpacer(t *testing.T) {
 	ui.Root.Draw(sim)
 
 	_, ey, _, eh := ui.promptEcho.GetRect()
-	_, my, _, _ := ui.Messages.GetInnerRect()
+	_, my, _, _ := ui.pane.GetInnerRect()
 	if gap := my - (ey + eh); gap != 1 {
 		t.Errorf("expected exactly 1 spacer row between prompt echo and messages pane, got %d", gap)
 	}
@@ -124,13 +124,38 @@ func TestHeaderPaddingRow(t *testing.T) {
 		t.Errorf("padding row below the banner is not blank: %q", rows[pad])
 	}
 
+	// The pane's top while the banner is shown, to compare against the
+	// hidden layout below.
+	_, shownPaneY, _, _ := ui.pane.GetInnerRect()
+
 	ui.toggleBanner()
 	if ui.headerHeight() != 0 {
 		t.Errorf("headerHeight after :banner = %d, want 0", ui.headerHeight())
 	}
+	ui.Root.SetRect(0, 0, 120, 30)
+	ui.Root.Draw(sim)
+	if _, _, _, hh := ui.Header.GetRect(); hh != 0 {
+		t.Errorf("header still painted after :banner: height %d", hh)
+	}
+	_, hiddenPaneY, _, _ := ui.pane.GetInnerRect()
+	if hiddenPaneY >= shownPaneY {
+		t.Errorf("hiding the header did not move the pane up: %d >= %d", hiddenPaneY, shownPaneY)
+	}
+
 	ui.toggleBanner()
 	if ui.headerHeight() != ui.bannerLines+1 {
 		t.Errorf("headerHeight after re-show = %d, want %d", ui.headerHeight(), ui.bannerLines+1)
+	}
+	// The re-shown header must reclaim its leading slot, not append
+	// after the composer at the root flex's end.
+	ui.Root.SetRect(0, 0, 120, 30)
+	ui.Root.Draw(sim)
+	hx, hy, _, _ := ui.Header.GetRect()
+	if hy != 0 || hx != 0 {
+		t.Errorf("re-shown header at (%d,%d), want the root's top-left", hx, hy)
+	}
+	if _, ny, _, _ := ui.pane.GetInnerRect(); ny != shownPaneY {
+		t.Errorf("re-shown header moved the pane: top row %d, want %d", ny, shownPaneY)
 	}
 }
 
@@ -149,7 +174,7 @@ func TestPromptSeamRule(t *testing.T) {
 		t.Fatalf("rule rect while the pin is shown = %dx%d at (%d,%d), want 1 row", rw, rh, rx, ry)
 	}
 	_, ey, _, eh := ui.promptEcho.GetRect()
-	_, my, _, _ := ui.Messages.GetInnerRect()
+	_, my, _, _ := ui.pane.GetInnerRect()
 	if ry != ey+eh {
 		t.Errorf("rule row %d does not abut the pin's bottom row %d", ry, ey+eh)
 	}

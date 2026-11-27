@@ -127,7 +127,7 @@ func TestAcceptSuggestion_CompletesCommandAndHides(t *testing.T) {
 func TestGlobalInputCapture_EnterCompletesPartialCommand(t *testing.T) {
 	ui := newColonUI(t)
 	stopped := false
-	ui.OnStop = func() { stopped = true }
+	ui.Hooks.OnStop = func() { stopped = true }
 	typeText(ui, ":st")
 	if !ui.hasSuggestions() {
 		t.Fatal("precondition: suggestions for :st")
@@ -151,7 +151,7 @@ func TestGlobalInputCapture_EnterCompletesPartialCommand(t *testing.T) {
 func TestGlobalInputCapture_EnterOnArgCommandLeavesComposer(t *testing.T) {
 	ui := newColonUI(t)
 	submitted := false
-	ui.OnSubmit = func(string) { submitted = true }
+	ui.Hooks.OnSubmit = func(string) { submitted = true }
 	typeText(ui, ":sea")
 
 	enter := tcell.NewEventKey(tcell.KeyEnter, '\r', tcell.ModNone)
@@ -178,7 +178,7 @@ func TestGlobalInputCapture_EnterExactMatchSelectsExactCommand(t *testing.T) {
 	for _, text := range []string{":mode", ":MODE"} {
 		t.Run(text, func(t *testing.T) {
 			ui := newColonUI(t)
-			ui.OnModeSelect = func(string) {}
+			ui.Hooks.OnModeSelect = func(string) {}
 			typeText(ui, text)
 
 			if got := ui.suggestions[0].Label; got != "mode" {
@@ -202,7 +202,7 @@ func TestGlobalInputCapture_EnterExactMatchSelectsExactCommand(t *testing.T) {
 func TestGlobalInputCapture_EnterOnFullCommandDispatchesDirectly(t *testing.T) {
 	ui := newColonUI(t)
 	stopped := false
-	ui.OnStop = func() { stopped = true }
+	ui.Hooks.OnStop = func() { stopped = true }
 	typeText(ui, ":stop")
 
 	enter := tcell.NewEventKey(tcell.KeyEnter, '\r', tcell.ModNone)
@@ -217,7 +217,7 @@ func TestGlobalInputCapture_EnterOnFullCommandDispatchesDirectly(t *testing.T) {
 func TestGlobalInputCapture_EnterOnBareColonDoesNotComplete(t *testing.T) {
 	ui := newColonUI(t)
 	var submitted string
-	ui.OnSubmit = func(s string) { submitted = s }
+	ui.Hooks.OnSubmit = func(s string) { submitted = s }
 	typeText(ui, ":")
 
 	enter := tcell.NewEventKey(tcell.KeyEnter, '\r', tcell.ModNone)
@@ -293,7 +293,7 @@ func TestGlobalInputCapture_ArrowsCycleOnlyWhileVisible(t *testing.T) {
 func TestGlobalInputCapture_EscapeDismissesSuggestionsBeforeStopping(t *testing.T) {
 	ui := newColonUI(t)
 	stopped := false
-	ui.OnStop = func() { stopped = true }
+	ui.Hooks.OnStop = func() { stopped = true }
 	typeText(ui, ":st")
 
 	esc := tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)

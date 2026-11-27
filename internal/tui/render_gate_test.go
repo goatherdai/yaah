@@ -56,7 +56,8 @@ func synthProse(marker string, target int) string {
 }
 
 // setupSim lays the app out on a 120x40 simulation screen, the same shape
-// the append_render tests use, so messageWidth and Draw see a real layout.
+// the append_render tests use, so the pane's width and Draw see a real
+// layout.
 func setupSim(tb testing.TB, ui *App) tcell.SimulationScreen {
 	tb.Helper()
 	sim := tcell.NewSimulationScreen("UTF-8")
@@ -147,9 +148,9 @@ func measureBest(ui *App, sim tcell.SimulationScreen, runs int) time.Duration {
 	return best
 }
 
-// resizeSim re-lays the app out at a different width: the next full render
-// misses every width-keyed markdown cache (ci.cachedWidth != w), which is
-// the cold path a terminal resize hits at session scale.
+// resizeSim re-lays the app out at a different width: the next repaint
+// misses every width-keyed cache (markdown, wrapped rows), which is the
+// cold path a terminal resize hits at session scale.
 func resizeSim(ui *App, sim tcell.SimulationScreen) {
 	sim.SetSize(100, 40)
 	ui.Root.SetRect(0, 0, 100, 40)
@@ -189,7 +190,7 @@ func TestRefreshMessages_SessionScaleRenderBudget(t *testing.T) {
 	// windowed painter: the late turns must be painted, the early ones
 	// must be collapsed behind the seam, and the buffer must be bounded
 	// by the window budget instead of the transcript size.
-	rendered := ui.Messages.GetText(true)
+	rendered := ui.tr.PaintedText()
 	if !strings.Contains(rendered, "turn 174: investigate") {
 		t.Fatalf("painted transcript lost the late turns (%d bytes)", len(rendered))
 	}
@@ -201,17 +202,17 @@ func TestRefreshMessages_SessionScaleRenderBudget(t *testing.T) {
 	}
 
 	// The incremental path: one new tool chunk, no in-place mutation.
-	before := ui.fullRenderCount
+	before := ui.tr.FullRenders()
 	ui.AddToolStart("tail", "bash", `{"command":"true"}`)
 	appendRender := measureRender(ui, sim)
-	if ui.fullRenderCount != before {
-		t.Fatalf("tool append took the full-render path (%d -> %d)", before, ui.fullRenderCount)
+	if ui.tr.FullRenders() != before {
+		t.Fatalf("tool append took the full-render path (%d -> %d)", before, ui.tr.FullRenders())
 	}
 
 	resizeSim(ui, sim)
 	cold := measureBest(ui, sim, 3)
 
-	t.Logf("built 175 turns (%d items) in %s", len(ui.conversationLog), build.Round(time.Millisecond))
+	t.Logf("built 175 turns (%d items) in %s", ui.tr.Len(), build.Round(time.Millisecond))
 	t.Logf("full render+draw: warm %s (base %s, ratio %.1f); cold %s (base %s, ratio %.1f); append %s",
 		warm.Round(time.Millisecond), baseWarm.Round(time.Millisecond),
 		float64(warm)/float64(baseWarm),
@@ -264,7 +265,7 @@ func TestInputEchoDuringRenderStorm(t *testing.T) {
 	// keystroke may wait behind `renders` queued renders, so the budget is
 	// that backlog plus slack — not a constant a slow runner could breach
 	// while behaving correctly.
-	ui.needsFullRender.Store(true)
+	ui.tr.RequestFull()
 	oneRender := measureRender(ui, sim)
 
 	echoed := make(chan struct{}, 16)
@@ -307,7 +308,7 @@ func TestInputEchoDuringRenderStorm(t *testing.T) {
 			default:
 			}
 			ui.App.QueueUpdateDraw(func() {
-				ui.needsFullRender.Store(true)
+				ui.tr.RequestFull()
 				ui.refreshMessages()
 			})
 		}
@@ -363,7 +364,7 @@ func BenchmarkRefreshMessages_SessionScale(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ui.needsFullRender.Store(true)
+		ui.tr.RequestFull()
 		ui.refreshMessages()
 		ui.Root.Draw(sim)
 	}

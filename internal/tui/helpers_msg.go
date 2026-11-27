@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 
+	"github.com/goatherdai/yaah/internal/tui/transcript"
 	"github.com/rivo/tview"
 )
 
@@ -110,21 +111,12 @@ func promptDisplay(input string) string {
 // reconcilePromptPin — this deliberately does not pin the prompt: it
 // takes over the header only once it crosses the top seam.
 func (t *App) AddPrompt(input string) {
-	t.appendPromptItem(input)
+	t.tr.Append(transcript.PromptItem(
+		t.Theme.Tag(t.Theme.User, tview.Escape(promptDisplay(input))),
+		input,
+	))
 	t.markDirty()
 	t.App.SetFocus(t.Input)
-}
-
-// appendPromptItem appends a user-prompt item and records its index in
-// promptIdxs. It is the one place prompt items are created, so the
-// index list stays exact and the anchor rebuild can binary-search it.
-func (t *App) appendPromptItem(input string) {
-	t.conversationLog = append(t.conversationLog, convItem{
-		text:     t.Theme.Tag(t.Theme.User, tview.Escape(promptDisplay(input))),
-		isPrompt: true,
-		prompt:   input,
-	})
-	t.promptIdxs = append(t.promptIdxs, len(t.conversationLog)-1)
 }
 
 // EchoPrompt flushes any pending streamed tokens into the conversation
@@ -141,22 +133,26 @@ func (t *App) EchoPrompt(input string) {
 // from the event queue, not the input handler, so it deliberately does not
 // steal focus the way AddPrompt does.
 func (t *App) addWakePrompt(text string) {
-	t.appendPromptItem(text)
+	t.tr.Append(transcript.PromptItem(
+		t.Theme.Tag(t.Theme.User, tview.Escape(promptDisplay(text))),
+		text,
+	))
 	t.markDirty()
 }
 
-// addAssistantResponse stores raw markdown in the conversation log.
-// Markdown is rendered at display time via renderMarkdown, which produces
-// valid tview tags — no raw brackets survive to confuse SetDynamicColors.
+// addAssistantResponse stores raw markdown in the transcript. Markdown
+// renders at display width through transcript.RenderMarkdown, which
+// produces valid tview tags — no raw brackets survive to confuse the
+// row painter.
 func (t *App) addAssistantResponse(md string) {
-	t.conversationLog = append(t.conversationLog, convItem{text: md, isMarkdown: true})
+	t.tr.Append(transcript.MarkdownItem(md))
 	t.markDirty()
 	t.App.SetFocus(t.Input)
 }
 
-// appendMessage adds plain text to the conversation log and refreshes.
+// appendMessage adds plain tagged text to the transcript and refreshes.
 func (t *App) appendMessage(text string) {
-	t.conversationLog = append(t.conversationLog, convItem{text: text})
+	t.tr.Append(transcript.TextItem(text))
 	t.markDirty()
 	t.App.SetFocus(t.Input)
 }
