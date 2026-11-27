@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.222.1](https://github.com/goatherdai/yaah/compare/v0.222.0...v0.222.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* **tools:** make Belt and Registry safe for concurrent tool calls (yaah-2ke5) ([#444](https://github.com/goatherdai/yaah/issues/444)) ([afb3ea6](https://github.com/goatherdai/yaah/commit/afb3ea6436d94ce6b99f9fed1035cb84ddc42cd5))
+
 ## [0.222.0](https://github.com/goatherdai/yaah/compare/v0.221.1...v0.222.0) (2026-11-27)
 
 
