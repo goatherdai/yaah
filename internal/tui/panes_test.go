@@ -197,3 +197,36 @@ func TestPromptSeamRule(t *testing.T) {
 		t.Errorf("rule height after the pin clears = %d, want 0", rh)
 	}
 }
+
+// TestPanePaintsChromeBackground pins the 0.223.0 background regression:
+// the transcript pane must paint the same background as every other
+// element — its Box's construction-time color, the one the old TextView
+// painted — not the live PrimitiveBackgroundColor global, which buildUI
+// overrides to transparent after the chrome is built (the conversation
+// became the one region showing the terminal through).
+func TestPanePaintsChromeBackground(t *testing.T) {
+	ui := New("test")
+	sim := newPaneSim(t, 120, 30)
+	ui.Root.SetRect(0, 0, 120, 30)
+	ui.Root.Draw(sim)
+	sim.Show()
+
+	px, py, pw, ph := ui.pane.GetInnerRect()
+	cells, w, _ := sim.GetContents()
+	want := ui.pane.GetBackgroundColor()
+	for _, pos := range [][2]int{
+		{px + pw - 1, py},          // right edge of the first row
+		{px + pw - 1, py + ph - 1}, // bottom-right corner
+		{px, py + ph - 1},          // bottom-left corner
+	} {
+		i := pos[1]*w + pos[0]
+		if i < 0 || i >= len(cells) {
+			t.Fatalf("sample position (%d,%d) outside the screen", pos[0], pos[1])
+		}
+		_, got, _ := cells[i].Style.Decompose()
+		if got != want {
+			t.Fatalf("pane cell (%d,%d) paints background %v, want the chrome background %v",
+				pos[0], pos[1], got, want)
+		}
+	}
+}
