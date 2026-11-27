@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.224.1](https://github.com/goatherdai/yaah/compare/v0.224.0...v0.224.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* **tui:** consume the wheel and paint the pane's chrome background ([#452](https://github.com/goatherdai/yaah/issues/452)) ([86d51e4](https://github.com/goatherdai/yaah/commit/86d51e4906d842f200bbb0d36ba7470c7484d19a))
+
 ## [0.224.0](https://github.com/goatherdai/yaah/compare/v0.223.0...v0.224.0) (2026-11-27)
 
 
