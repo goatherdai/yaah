@@ -77,6 +77,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/goatherdai/yaah/internal/toolcontract"
 )
@@ -178,6 +179,17 @@ type Registry struct {
 	// belt is the session's tool belt: the registry refuses to install a
 	// tool the belt does not admit. Nil means every tool is admitted.
 	belt *Belt
+
+	// mu guards the tools map and the generation counter. The registry
+	// was born a construction-time object, but two facts made it a
+	// shared one: the agent loop executes a batch's tool calls
+	// concurrently, and the lazy toolbelt registers at runtime from
+	// inside a tool call. A Register racing a concurrent Execute's Get
+	// is a fatal (concurrent map write), not a data race. Lookup paths
+	// take the read lock; registration paths take the write lock. The
+	// workspace and validator fields are written only during wiring,
+	// before any tool call can run, and are read without the lock.
+	mu sync.RWMutex
 }
 
 // leafTools is the single source of truth for the names and
@@ -376,6 +388,8 @@ func NewLeafTool(name string) Tool {
 // is refused at the door: it is never added, and the belt records the name
 // so the session can tell the model (and the transcript) what is missing.
 func (r *Registry) Register(t Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.belt != nil && !r.belt.Allows(t.Name()) {
 		r.belt.Refuse(t.Name())
 		return
@@ -421,6 +435,8 @@ func (r *Registry) Withdraw(name string) {
 // dead-ends the run). Unregistering a name that is not registered is
 // a no-op.
 func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, ok := r.tools[name]; ok {
 		delete(r.tools, name)
 		r.generation++
@@ -453,6 +469,8 @@ func (r *Registry) inject(t Tool) {
 // migrated tools work without every caller having to set both. A later
 // SetWorkspace overrides it.
 func (r *Registry) SetPathValidator(pv *PathValidator) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.PathValidator = pv
 	if r.Workspace == nil {
 		r.Workspace = newLocalWorkspace(pv)
@@ -465,10 +483,11 @@ func (r *Registry) SetPathValidator(pv *PathValidator) {
 // FilesystemTool marks a tool that reads or writes files, or runs a process.
 //
 // It exists to track migration to the Workspace interface. The isolation gate in
-// SetWorkspace IS derived from these markers — via UnmigratedFilesystemTools
-// and HostOnlyFilesystemTools — so a filesystem tool that forgets the marker
-// (and implements no WorkspaceSetter) is invisible to the gate and silently
-// weakens isolation. Keep the markers current; they are the gate's eyes.
+// SetWorkspace IS derived from these markers — via classifyLocked, which also
+// backs UnmigratedFilesystemTools and HostOnlyFilesystemTools — so a filesystem
+// tool that forgets the marker (and implements no WorkspaceSetter) is invisible
+// to the gate and silently weakens isolation. Keep the markers current; they are
+// the gate's eyes.
 type FilesystemTool interface {
 	filesystemTool()
 }
@@ -511,35 +530,45 @@ func unwrapRecording(t Tool) Tool {
 // touch the filesystem but do not yet route that through a Workspace, excluding
 // the host-only tools that never will. This is the real remaining work.
 func (r *Registry) UnmigratedFilesystemTools() []string {
-	var out []string
-	for name, t := range r.tools {
-		inner := unwrapRecording(t)
-		if _, isFS := inner.(FilesystemTool); !isFS {
-			continue
-		}
-		if _, ok := inner.(WorkspaceSetter); ok {
-			continue // migrated
-		}
-		if _, ok := inner.(HostOnlyTool); ok {
-			continue // host-bound by design
-		}
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	unmigrated, _ := r.classifyLocked()
+	sort.Strings(unmigrated)
+	return unmigrated
 }
 
 // HostOnlyFilesystemTools returns the sorted names of registered host-only
 // tools. They are fine on a local workspace and disqualifying on an isolated one.
 func (r *Registry) HostOnlyFilesystemTools() []string {
-	var out []string
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, hostOnly := r.classifyLocked()
+	sort.Strings(hostOnly)
+	return hostOnly
+}
+
+// classifyLocked is the one copy of the isolation-gate classification:
+// the names that disqualify a registry from an isolated workspace —
+// tools that touch the filesystem but are not yet migrated to Workspace
+// (excluding host-only tools, which are counted separately), and every
+// host-only tool. Both public diagnostics and the SetWorkspace
+// enforcement gate derive from it, so a diagnostic can never classify a
+// tool differently than the gate that refuses it. Caller holds r.mu.
+func (r *Registry) classifyLocked() (unmigrated, hostOnly []string) {
 	for name, t := range r.tools {
-		if _, ok := unwrapRecording(t).(HostOnlyTool); ok {
-			out = append(out, name)
+		inner := unwrapRecording(t)
+		if _, isFS := inner.(FilesystemTool); isFS {
+			if _, ok := inner.(WorkspaceSetter); !ok {
+				if _, ok := inner.(HostOnlyTool); !ok {
+					unmigrated = append(unmigrated, name)
+				}
+			}
+		}
+		if _, ok := inner.(HostOnlyTool); ok {
+			hostOnly = append(hostOnly, name)
 		}
 	}
-	sort.Strings(out)
-	return out
+	return unmigrated, hostOnly
 }
 
 // SetWorkspace sets the execution substrate for already-registered tools.
@@ -550,18 +579,22 @@ func (r *Registry) HostOnlyFilesystemTools() []string {
 // some tools would be worse than not isolating at all, because the caller would
 // believe the whole run was contained. The refusal is unconditional rather than
 // annotation-derived where it counts, so a missing marker cannot silently weaken
-// it; the markers only produce the diagnostic lists.
+// it; the markers only produce the diagnostic lists — and both come from
+// classifyLocked, so the gate and the diagnostics cannot drift.
 func (r *Registry) SetWorkspace(ws Workspace) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if ws != nil && !ws.Local() {
-		unmigrated := r.UnmigratedFilesystemTools()
-		hostOnly := r.HostOnlyFilesystemTools()
+		unmigrated, hostOnly := r.classifyLocked()
 		if len(unmigrated) > 0 || len(hostOnly) > 0 {
 			var why []string
 			if len(unmigrated) > 0 {
+				sort.Strings(unmigrated)
 				why = append(why, fmt.Sprintf("%d tool(s) not yet migrated to Workspace [%s]",
 					len(unmigrated), strings.Join(unmigrated, ", ")))
 			}
 			if len(hostOnly) > 0 {
+				sort.Strings(hostOnly)
 				why = append(why, fmt.Sprintf("%d host-only tool(s) that cannot be isolated [%s]",
 					len(hostOnly), strings.Join(hostOnly, ", ")))
 			}
@@ -582,29 +615,39 @@ func (r *Registry) SetWorkspace(ws Workspace) error {
 // OpenAI tool definitions) keyed on this value to avoid rebuilding it every
 // turn when the tool set is unchanged.
 func (r *Registry) Generation() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.generation
 }
 
 // Get returns the tool with the given name, or nil if not found.
 func (r *Registry) Get(name string) Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.tools[name]
 }
 
 // Execute dispatches a tool call by name and returns the result.
 func (r *Registry) Execute(ctx context.Context, name, args string) (string, error) {
 	ctx = WithToolName(ctx, name)
-	t := r.Get(name)
+	r.mu.RLock()
+	t := r.tools[name]
+	hasLoader := r.tools["toolbelt"] != nil
+	r.mu.RUnlock()
 	if t == nil {
 		// A mountable family member the session can still load
 		// answers instructively — the stub block taught the model
 		// the name, so "unknown tool" would strand it. Only when
 		// this session carries the mount tool at all: without one
 		// the name really is not a tool this harness speaks of.
-		if family, ok := FamilyOf(name); ok && r.Get("toolbelt") != nil {
+		if family, ok := FamilyOf(name); ok && hasLoader {
 			return "", ToolNotMountedError{Name: name, Family: family}
 		}
 		return "", ToolNotFoundError{Name: name}
 	}
+	// The tool runs outside the lock: a batch's calls execute
+	// concurrently, and a mount registering while this call runs must
+	// not wait on it (nor must a long bash call hold the registry).
 	return t.Execute(ctx, args)
 }
 
@@ -614,6 +657,8 @@ func (r *Registry) Execute(ctx context.Context, name, args string) (string, erro
 // that providers cache, so map-iteration randomness here would break
 // sibling dispatches' prompt-cache hits (yaah-o02).
 func (r *Registry) List() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	names := make([]string, 0, len(r.tools))
 	for name := range r.tools {
 		names = append(names, name)

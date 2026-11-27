@@ -36,6 +36,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	kernel "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/prompts"
@@ -145,6 +146,20 @@ type ToolbeltTool struct {
 	// exists, like the accept seam's effect sink: at registration
 	// time the scope does not exist yet.
 	sink *MountSink
+
+	// mountMu serializes mounts. A batch's tool calls execute
+	// concurrently, and a mount is a check-then-act sequence —
+	// Get(name) == nil, then Admit, then Register — spanning several
+	// separate lock acquisitions. The belt and registry locks make
+	// each step safe, but only this mutex makes the sequence atomic
+	// per family: without it, two mounts of the same family in one
+	// batch both pass the Get check, and the second registration
+	// replaces the first (generation bumps twice) and both calls
+	// record a yaah.tool.mounted.v1 fact — breaking the idempotent
+	// remount's contract that a remount registers and records
+	// nothing. One ToolbeltTool per session (wiring_stages.go), so
+	// one mutex covers every mount a session can issue.
+	mountMu sync.Mutex
 }
 
 // SetSink late-binds the fact sink. Called from the wiring stage that
@@ -248,6 +263,13 @@ func (t *ToolbeltTool) mount(ctx context.Context, family string) (string, error)
 	if t.Reg == nil {
 		return "", fmt.Errorf("%s: no tool registry in this session", t.Name())
 	}
+	// Serialized for the whole mount, not per step: the Get→Admit→
+	// Register→record sequence must be atomic per family or the
+	// idempotent-remount contract breaks under a concurrent batch
+	// (see mountMu). The registry's own locks keep the belt and tool
+	// map consistent for non-mount traffic regardless.
+	t.mountMu.Lock()
+	defer t.mountMu.Unlock()
 	if strings.TrimSpace(family) == "" {
 		names := make([]string, len(toolFamilies))
 		for i, f := range toolFamilies {
