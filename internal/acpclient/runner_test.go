@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/goatherdai/yaah/internal/jobs"
@@ -270,6 +271,42 @@ func TestRunnerMissingBinaryFailsAtStart(t *testing.T) {
 	r := New(Manifest{Name: "missing", Command: "/definitely/not/a/real/acp-agent"})
 	if _, err := r.Run(context.Background(), "hi", jobs.SubAgentParams{}); err == nil || !strings.Contains(err.Error(), "start") {
 		t.Fatalf("expected a start error, got %v", err)
+	}
+}
+
+func TestRunnerDeadlineIsNotASupervisorHalt(t *testing.T) {
+	agent := &fakeAgent{block: true}
+	r := New(Manifest{Name: "fake", Command: "fake"})
+	r.connect = func(_ context.Context, c acp.Client, _ string) (*connection, error) {
+		return wire(t, agent, c), nil
+	}
+	var stop jobs.SubAgentStop
+	ctx := jobs.WithSubAgentStop(context.Background(), &stop)
+	deadline, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
+	defer cancel()
+	if _, err := r.Run(deadline, "sleep", jobs.SubAgentParams{}); err == nil {
+		t.Fatal("expected deadline error")
+	}
+	if stop.HaltedBySupervisor || stop.FinishReason != "timeout" {
+		t.Fatalf("stop = %+v, want timeout without supervisor halt", stop)
+	}
+}
+
+func TestRunnerOutputLimitKeepsUTF8Intact(t *testing.T) {
+	agent := &fakeAgent{reply: strings.Repeat("é", 20)}
+	r := New(Manifest{Name: "fake", Command: "fake"})
+	r.connect = func(_ context.Context, c acp.Client, _ string) (*connection, error) {
+		return wire(t, agent, c), nil
+	}
+	got, err := r.Run(context.Background(), "go", jobs.SubAgentParams{OutputLimit: 5})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncated report is not valid UTF-8: %q", got)
+	}
+	if !strings.HasPrefix(got, "éé\n...[truncated by acpclient]...") {
+		t.Fatalf("report = %q", got)
 	}
 }
 

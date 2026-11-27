@@ -23,7 +23,9 @@ func TestResolveDispatchRouteACPBackend(t *testing.T) {
 
 func TestMakeTaskRunnerACPBackend(t *testing.T) {
 	called := false
+	var seenParams tools.SubAgentParams
 	opts := taskRunnerOpts{
+		outputLimit: 7,
 		subCfg: config.SubAgentConfig{Roles: map[string]config.RoleConfig{
 			"developer": {Backend: "acp", ACPAgent: "vibe"},
 		}},
@@ -31,8 +33,9 @@ func TestMakeTaskRunnerACPBackend(t *testing.T) {
 			if backend != "acp" || agent != "vibe" {
 				t.Fatalf("resolver got %q/%q", backend, agent)
 			}
-			return func(_ context.Context, prompt string, _ tools.SubAgentParams) (string, error) {
+			return func(_ context.Context, prompt string, params tools.SubAgentParams) (string, error) {
 				called = true
+				seenParams = params
 				return "ACP:" + prompt, nil
 			}
 		},
@@ -44,6 +47,9 @@ func TestMakeTaskRunnerACPBackend(t *testing.T) {
 	}
 	if !called || got != "ACP:hi" {
 		t.Fatalf("called=%v text=%q", called, got)
+	}
+	if seenParams.OutputLimit != 7 {
+		t.Fatalf("ACP runner saw output limit %d, want resolved cap 7", seenParams.OutputLimit)
 	}
 }
 

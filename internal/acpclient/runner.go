@@ -3,6 +3,7 @@ package acpclient
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -214,7 +215,12 @@ func (r *Runner) Run(ctx context.Context, prompt string, params jobs.SubAgentPar
 		Prompt:    []acp.ContentBlock{acp.TextBlock(turnPrompt)},
 	})
 	if err != nil {
-		if ctx.Err() != nil {
+		switch {
+		case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
+			// A run-budget timeout is not a supervisor halt. retainedStopReason
+			// checks HaltedBySupervisor first, so leave it clear here.
+			jobs.CaptureSubAgentStop(ctx, jobs.SubAgentStop{FinishReason: "timeout"})
+		case ctx.Err() != nil:
 			jobs.CaptureSubAgentStop(ctx, jobs.SubAgentStop{HaltedBySupervisor: true, FinishReason: "cancelled"})
 		}
 		return "", stageErr("session/prompt", err, conn.stderr)
@@ -254,9 +260,28 @@ func (r *Runner) Run(ctx context.Context, prompt string, params jobs.SubAgentPar
 	}
 
 	if params.OutputLimit > 0 && len(text) > params.OutputLimit {
-		text = text[:params.OutputLimit] + "\n...[truncated by acpclient]..."
+		text = truncateUTF8Bytes(text, params.OutputLimit) + "\n...[truncated by acpclient]..."
 	}
 	return text, nil
+}
+
+// truncateUTF8Bytes mirrors the in-process runner's safeTruncateBytes so a
+// cap never splits a UTF-8 rune in the report handed back to the parent.
+func truncateUTF8Bytes(s string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(s) <= maxBytes {
+		return s
+	}
+	i := maxBytes
+	for i > 0 && i < len(s) {
+		if s[i] < 0x80 || s[i]&0xC0 == 0xC0 {
+			break
+		}
+		i--
+	}
+	return s[:i]
 }
 
 // tokensFromUsage maps ACP usage_update metadata to yaah's usage shape. ACP

@@ -665,6 +665,10 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			if runner == nil {
 				return "", fmt.Errorf("sub-agent %s: no ACP agent %q configured", role, route.agent)
 			}
+			// The in-process path caps results with outLimit (per-call, role,
+			// then global). The external runner only reads params.OutputLimit,
+			// so hand it the resolved cap instead of silently dropping it.
+			params.OutputLimit = outLimit
 			return runner(ctx, prompt, params)
 		}
 
