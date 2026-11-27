@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.222.0](https://github.com/goatherdai/yaah/compare/v0.221.1...v0.222.0) (2026-11-27)
+
+
+### Features
+
+* **tui:** windowed transcript painting, incremental text appends, compaction stubs (yaah-30t6 T2) ([#439](https://github.com/goatherdai/yaah/issues/439)) ([7c0d494](https://github.com/goatherdai/yaah/commit/7c0d49427165df5d6376380e3cb73231f959bab5))
+
+
+### Documentation
+
+* **agents:** keep thread resolution with the reviewer on rejections ([#442](https://github.com/goatherdai/yaah/issues/442)) ([442560b](https://github.com/goatherdai/yaah/commit/442560b3219c99f5a39760f7bb51cb4c57fa66ed))
+
 ## [0.221.1](https://github.com/goatherdai/yaah/compare/v0.221.0...v0.221.1) (2026-11-27)
 
 
