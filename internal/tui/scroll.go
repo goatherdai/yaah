@@ -415,17 +415,16 @@ func (t *App) itemRows(ci *convItem, it messages.Item, w int) int {
 // rebuildPromptAnchors recomputes the anchor table from scratch during a
 // full render, over the painted window only: rows before the window are
 // the seam's, and prompts entirely above the window are remembered as
-// windowPrePrompt so the pin still shows one at the seam. Row estimates
-// use the same measure Format's emissions are checked against (itemRows),
-// so counted and painted rows share one code path; the per-item cache
-// keeps the walk itself cheap.
+// windowPrePrompt so the pin still shows one at the seam. The pre-window
+// prompt comes from promptIdxs by binary search, so the rebuild stays
+// O(window) in item count. Row estimates use the same measure Format's
+// emissions are checked against (itemRows), so counted and painted rows
+// share one code path; the per-item cache keeps the walk itself cheap.
 func (t *App) rebuildPromptAnchors(items []messages.Item, w, start int) {
 	t.promptAnchors = t.promptAnchors[:0]
 	t.windowPrePrompt = ""
-	for i := 0; i < start; i++ {
-		if ci := &t.conversationLog[i]; ci.isPrompt {
-			t.windowPrePrompt = ci.prompt
-		}
+	if j := sort.SearchInts(t.promptIdxs, start); j > 0 {
+		t.windowPrePrompt = t.conversationLog[t.promptIdxs[j-1]].prompt
 	}
 	rows := t.seamRows(start, w)
 	for i := range items {

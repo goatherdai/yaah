@@ -5,7 +5,6 @@ import (
 
 	"github.com/goatherdai/yaah/internal/tui/components/reasoning"
 	"github.com/goatherdai/yaah/internal/tui/components/toolblock"
-	"github.com/rivo/tview"
 )
 
 // HistoryKind identifies the visible role of a restored conversation row.
@@ -56,11 +55,7 @@ func (t *App) restoreHistory() {
 	for i, item := range t.history {
 		switch item.Kind {
 		case HistoryUser:
-			t.conversationLog = append(t.conversationLog, convItem{
-				text:     t.Theme.Tag(t.Theme.User, tview.Escape(promptDisplay(item.Text))),
-				isPrompt: true,
-				prompt:   item.Text,
-			})
+			t.appendPromptItem(item.Text)
 		case HistoryAssistant:
 			if item.Reasoning != "" {
 				id := "history-reason-" + strconv.Itoa(i)

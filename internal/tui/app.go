@@ -220,6 +220,14 @@ type App struct {
 	windowWidth     int
 	windowPrePrompt string
 
+	// promptIdxs lists the conversation indices of user-prompt items in
+	// ascending order (UI goroutine). rebuildPromptAnchors finds the
+	// last prompt above the painted window with one binary search over
+	// it instead of a prefix scan of the whole log. Maintained by
+	// appendPromptItem; rebuilt by collapseCompacted; cleared with the
+	// log. See rebuildPromptAnchors.
+	promptIdxs []int
+
 	version string
 
 	OnModelSelect func(model string)

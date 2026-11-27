@@ -104,6 +104,11 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 		t.Messages.ScrollTo(0, 0)
 		return true
 	case command.CmdBottom:
+		// Same live-tail reset as the mouse scroll-down path: back at
+		// the end, later appends auto-scroll and the next full render
+		// re-windows to the trailing budget.
+		t.userScrolled = false
+		t.windowStart = -1
 		t.Messages.ScrollToEnd()
 		return true
 	case command.CmdBanner:

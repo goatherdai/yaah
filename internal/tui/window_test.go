@@ -2,8 +2,11 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/goatherdai/yaah/internal/tui/components/command"
 )
 
 // TestRender_WindowBoundsPaint pins the windowed painter at session scale:
@@ -359,6 +362,120 @@ func TestSearchMessages_CoversCollapsedItems(t *testing.T) {
 	ui.searchMessages("no such text anywhere")
 	if ui.windowStart != before {
 		t.Fatalf("miss moved the window: %d -> %d", before, ui.windowStart)
+	}
+}
+
+// TestRevealItem_NormalizesUnestablishedWindow pins the round-2 reveal fix:
+// after a live-tail reset (windowStart -1, no full render since), revealing
+// a hit must normalize the window first — a painted-range hit used to start
+// the row loop at -1 and index conversationLog[-1], and a collapsed hit
+// stayed unpainted (Robin F1).
+func TestRevealItem_NormalizesUnestablishedWindow(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	for i := 0; i < 200; i++ {
+		ui.appendMessage(fmt.Sprintf("item %03d", i))
+	}
+	ui.refreshMessages()
+
+	// Painted-range hit from the reset state: must not panic.
+	ui.windowStart = -1
+	ui.revealItem(199)
+	if ui.windowStart < 0 {
+		t.Fatalf("reveal left the window unestablished: %d", ui.windowStart)
+	}
+
+	// Collapsed hit from the reset state: must expand and paint.
+	ui.windowStart = -1
+	ui.revealItem(5)
+	if ui.windowStart > 5 {
+		t.Fatalf("reveal did not expand the window to the hit: %d", ui.windowStart)
+	}
+	if !strings.Contains(ui.Messages.GetText(true), "item 005") {
+		t.Fatalf("hit not painted after reveal")
+	}
+}
+
+// TestSearchMarkdownLinkLabel pins the round-2 search-text fix: markdown
+// items are searched raw, so a link label inside [label](url) stays
+// findable — StripTags eats the bracket group and hid the label (Robin F2).
+func TestSearchMarkdownLinkLabel(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	ui.addAssistantResponse("see [the docs](https://example.com) for details")
+	ui.refreshMessages()
+
+	want := "see [the docs](https://example.com) for details"
+	if got := ui.searchableItemText(&ui.conversationLog[0]); got != want {
+		t.Fatalf("markdown search text = %q, want %q", got, want)
+	}
+	ui.searchMessages("the docs")
+	if ui.ephemeralMsg != "Found in message 1 of 1" {
+		t.Fatalf("link label not found: ephemeral = %q", ui.ephemeralMsg)
+	}
+}
+
+// TestPromptIndex_MaintainedAcrossRewrites pins the round-2 anchor fix:
+// promptIdxs tracks prompt items exactly across appends, the compaction
+// rewrite, and clear, and rebuildPromptAnchors derives windowPrePrompt
+// from it by binary search instead of a prefix scan (Robin F3).
+func TestPromptIndex_MaintainedAcrossRewrites(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	ui.AddPrompt("first question")
+	ui.appendMessage("answer one")
+	ui.AddPrompt("second question")
+	ui.appendMessage("answer two")
+
+	if got, want := ui.promptIdxs, []int{0, 2}; !slices.Equal(got, want) {
+		t.Fatalf("promptIdxs = %v, want %v", got, want)
+	}
+
+	// A window starting past the first prompt pins it above the seam;
+	// the second prompt is inside the painted range.
+	items := ui.buildItems(2, 4, 120)
+	ui.rebuildPromptAnchors(items, 120, 2)
+	if ui.windowPrePrompt != "first question" {
+		t.Fatalf("windowPrePrompt = %q", ui.windowPrePrompt)
+	}
+
+	// Compaction rewrites the log; the index list is rebuilt to match.
+	ui.compactBoundary = 2
+	ui.collapseCompacted()
+	if got, want := ui.promptIdxs, []int{1}; !slices.Equal(got, want) {
+		t.Fatalf("promptIdxs after compaction = %v, want %v", got, want)
+	}
+
+	// Clearing the conversation clears the index.
+	ui.clearConversation()
+	if len(ui.promptIdxs) != 0 {
+		t.Fatalf("promptIdxs survived clear: %v", ui.promptIdxs)
+	}
+}
+
+// TestCmdBottom_ResetsLiveTail pins the round-2 :bottom fix: the command
+// mirrors the mouse scroll-down live-tail reset (userScrolled cleared,
+// window re-established at the next full render) instead of leaving the
+// view in manual-scroll mode (Robin F5).
+func TestCmdBottom_ResetsLiveTail(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	for i := 0; i < 20; i++ {
+		ui.appendMessage(fmt.Sprintf("item %02d", i))
+	}
+	ui.refreshMessages()
+
+	ui.userScrolled = true
+	ui.windowStart = 5
+	ui.windowWidth = 120
+	if !ui.HandleCommand(command.CmdBottom, "") {
+		t.Fatalf("CmdBottom was not handled")
+	}
+	if ui.userScrolled {
+		t.Fatalf("CmdBottom left the view in manual-scroll mode")
+	}
+	if ui.windowStart != -1 {
+		t.Fatalf("CmdBottom kept a stale window: %d", ui.windowStart)
 	}
 }
 

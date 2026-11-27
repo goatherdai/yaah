@@ -191,6 +191,14 @@ func (t *App) collapseCompacted() {
 	t.windowStart = -1
 	t.renderedItems = 0
 	t.renderedWidth = 0
+	// The rewrite shifted every index, so the prompt index list is
+	// rebuilt in one pass; compaction is rare enough to afford it.
+	t.promptIdxs = t.promptIdxs[:0]
+	for i := range t.conversationLog {
+		if t.conversationLog[i].isPrompt {
+			t.promptIdxs = append(t.promptIdxs, i)
+		}
+	}
 }
 
 func (t *App) flushPendingTokens() bool {
