@@ -31,6 +31,11 @@ func (t *App) revealItem(k int) {
 	w := t.pane.ContentWidth()
 	t.tr.Reveal(k, w)
 	t.refreshMessages()
-	t.pane.ScrollTo(t.tr.ItemRow(k))
+	// The reveal window contains its hit by construction; a miss here
+	// means stale window bookkeeping, and not scrolling is better than
+	// scrolling to a wrong row.
+	if row, ok := t.tr.ItemRow(k); ok {
+		t.pane.ScrollTo(row)
+	}
 	t.SetEphemeral(t.tr.ReportFound(k))
 }

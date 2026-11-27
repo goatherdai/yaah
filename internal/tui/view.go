@@ -17,29 +17,11 @@ func (t *App) buildUI() {
 	// The transcript pane replaces a TextView: the model's wrapped-row
 	// table is painted per visible row (transcript.Pane.Draw), so the
 	// paint cost is O(viewport) instead of O(buffer) per frame. The
-	// mouse capture rides the pane's Box seam; tview forwards wheel
-	// actions to every child's handler, so the capture fires wherever
-	// the wheel spins — the same exposure the TextView path had.
-	t.pane.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
-		switch action {
-		case tview.MouseScrollUp:
-			t.tr.SetScrolled(true)
-			// Scrolling up at the top of the painted window means the
-			// user reached the "earlier messages" seam: lazily prepend
-			// older items (backfill) in the same event cycle, so the
-			// wheel that asked for them also paints them.
-			t.maybeBackfillAtSeam()
-		case tview.MouseScrollDown:
-			// Back at the bottom of the painted window: return to the
-			// live tail (a reveal window's bottom seam means the tail
-			// itself still needs painting; returnToTail decides whether
-			// a repaint is needed).
-			if t.pane.AtBottom() {
-				t.returnToTail()
-			}
-		}
-		return action, event
-	})
+	// mouse capture (scroll.go paneMouseCapture) rides the pane's Box
+	// seam; tview forwards wheel actions to every child's handler, so
+	// it fires wherever the wheel spins — the same exposure the
+	// TextView path had.
+	t.pane.SetMouseCapture(t.paneMouseCapture)
 
 	// Prompt input: bordered TextArea with pink border. Grows up to
 	// promptMaxContentLines content rows as the user types, then the

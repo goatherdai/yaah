@@ -38,8 +38,9 @@ type DriverHooks struct {
 
 	// OnWorkflowRun receives a spec file path the user typed at
 	// :workflow run; OnWorkflowList is invoked at :workflow list; and
-	// OnWorkflowPicker at bare :workflow, where the driver discovers
-	// the specs and opens the selector modal (ShowWorkflowPicker).
+	// OnWorkflowPicker when :workflow run is given no spec, where the
+	// driver discovers the specs and opens the selector modal
+	// (ShowWorkflowPicker). Bare :workflow prints usage (RequiresArg).
 	OnWorkflowRun    func(specPath string)
 	OnWorkflowList   func()
 	OnWorkflowPicker func()

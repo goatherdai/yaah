@@ -104,7 +104,15 @@ func (m *Model) Reveal(k int, w int) {
 	}
 	m.windowStart = max(0, k-BackfillStep)
 	m.windowWidth = w
-	if end := m.computeWindowEnd(m.windowStart, n, w); end < n {
+	end := m.computeWindowEnd(m.windowStart, n, w)
+	if end <= k {
+		// A single item taller than the row budget inside the backfill
+		// batch can stop the forward walk before the hit; the window
+		// must still contain the item it exists to show, so the budget
+		// yields before the hit does.
+		end = k + 1
+	}
+	if end < n {
 		m.windowEnd = end
 	} else {
 		m.windowEnd = -1

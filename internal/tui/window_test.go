@@ -446,7 +446,11 @@ func TestReveal_ScrollsToHitRow(t *testing.T) {
 	// and the hit's content must sit inside the first few rows of the
 	// block (a leading separator row may precede it).
 	row := ui.pane.Offset()
-	if want := ui.tr.ItemRow(150); row != want {
+	want, ok := ui.tr.ItemRow(150)
+	if !ok {
+		t.Fatalf("hit is not inside the reveal window")
+	}
+	if row != want {
 		t.Fatalf("reveal scrolled to row %d; the hit's exact first row is %d", row, want)
 	}
 	hit := -1
@@ -679,4 +683,50 @@ func containsItem(ui *App, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestReveal_WindowContainsHitBehindHugeItem pins the reveal budget rule:
+// an item taller than the whole row budget directly above the search hit
+// used to stop the forward window walk before the hit, so ItemRow
+// reported its out-of-range sentinel and the reveal scrolled to the top.
+// The hit must always sit inside its own reveal window.
+func TestReveal_WindowContainsHitBehindHugeItem(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	for i := 0; i < 40; i++ {
+		ui.appendMessage(fmt.Sprintf("item %02d", i))
+	}
+	// One item taller than the whole row budget immediately above the
+	// hit, and tail items after it so the reveal window is bounded.
+	ui.appendMessage(strings.Repeat("huge line\n", transcript.WindowRows+50))
+	ui.appendMessage("the needle")
+	for i := 0; i < 10; i++ {
+		ui.appendMessage(fmt.Sprintf("tail %02d", i))
+	}
+	hit := ui.tr.Len() - 11
+	ui.refreshMessages()
+
+	ui.revealItem(hit)
+
+	// The old bug: the forward walk stopped at the huge item, the hit
+	// fell outside the window, and ItemRow's sentinel scrolled to the
+	// top. The hit must now be inside the window and on screen.
+	row, ok := ui.tr.ItemRow(hit)
+	if !ok {
+		t.Fatalf("hit %d is not inside its reveal window", hit)
+	}
+	found := false
+	for _, ln := range ui.tr.Rows() {
+		if strings.Contains(ln, "the needle") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("hit is not painted after reveal")
+	}
+	_, _, _, h := ui.pane.GetInnerRect()
+	if off := ui.pane.Offset(); row < off || row >= off+h {
+		t.Fatalf("hit row %d is not visible: viewport rows %d-%d", row, off, off+h)
+	}
 }

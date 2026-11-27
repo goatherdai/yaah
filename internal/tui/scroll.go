@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 
 	"github.com/goatherdai/yaah/internal/observability"
 	"go.opentelemetry.io/otel"
@@ -182,6 +183,50 @@ func (t *App) repaintOnResize(screen tcell.Screen) {
 	if w := t.pane.ContentWidth(); w != t.tr.PaintedWidth() {
 		t.refreshMessages()
 		t.pane.Draw(screen)
+	}
+}
+
+// wheelStep is the rows one mouse-wheel notch scrolls the transcript.
+const wheelStep = 3
+
+// paneMouseCapture is the transcript pane's mouse handler: the wheel
+// scrolls the pane for real and rides the seams — up at the top of the
+// painted window backfills older items, down at the bottom returns to
+// the live tail. It is a named method (not a buildUI closure) so tests
+// can drive it directly. The pane is a plain Box: without this handler
+// the wheel does nothing, which is the TextView behavior it replaces.
+func (t *App) paneMouseCapture(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
+	switch action {
+	case tview.MouseScrollUp:
+		t.tr.SetScrolled(true)
+		t.pane.ScrollBy(-wheelStep)
+		// Scrolling up at the top of the painted window means the
+		// user reached the "earlier messages" seam: lazily prepend
+		// older items (backfill) in the same event cycle, so the
+		// wheel that asked for them also paints them.
+		t.maybeBackfillAtSeam()
+	case tview.MouseScrollDown:
+		t.scrollPaneDown(wheelStep)
+	}
+	return action, event
+}
+
+// scrollPaneDown scrolls the transcript down n rows and returns the view
+// to live-tail follow when the viewport lands on the bottom seam of the
+// painted window. The plain scroll keeps the manual window (the user
+// may still be reading above the tail); only the seam re-enters
+// follow mode.
+func (t *App) scrollPaneDown(n int) {
+	t.pane.ScrollBy(n)
+	t.returnToTailAtBottom()
+}
+
+// returnToTailAtBottom returns the view to live-tail follow when the
+// viewport sits on the painted window's bottom seam; elsewhere the
+// manual window stays (the user may still be reading above the tail).
+func (t *App) returnToTailAtBottom() {
+	if t.pane.AtBottom() {
+		t.returnToTail()
 	}
 }
 

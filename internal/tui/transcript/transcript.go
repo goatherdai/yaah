@@ -291,14 +291,15 @@ func (m *Model) Rows() []string { return m.rows }
 // for tests and future text extraction (copy).
 func (m *Model) PaintedText() string { return strings.Join(m.rows, "\n") }
 
-// ItemRow returns item i's first painted row. The item must be inside
-// the painted window — reveal guarantees this for its hits; callers
-// holding stale windows must repaint first.
-func (m *Model) ItemRow(i int) int {
+// ItemRow returns item i's first painted row, reporting false when the
+// item sits outside the painted window instead of a misleading row 0 —
+// callers holding stale windows must repaint first. Reveal guarantees
+// its hits are inside the window (its budget yields before the hit).
+func (m *Model) ItemRow(i int) (int, bool) {
 	if i < m.start || i >= m.end {
-		return 0
+		return 0, false
 	}
-	return m.prefix[i-m.start]
+	return m.prefix[i-m.start], true
 }
 
 // PinFor returns the prompt to show in the sticky header when the
