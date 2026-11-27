@@ -483,10 +483,11 @@ func (r *Registry) SetPathValidator(pv *PathValidator) {
 // FilesystemTool marks a tool that reads or writes files, or runs a process.
 //
 // It exists to track migration to the Workspace interface. The isolation gate in
-// SetWorkspace IS derived from these markers — via UnmigratedFilesystemTools
-// and HostOnlyFilesystemTools — so a filesystem tool that forgets the marker
-// (and implements no WorkspaceSetter) is invisible to the gate and silently
-// weakens isolation. Keep the markers current; they are the gate's eyes.
+// SetWorkspace IS derived from these markers — via classifyLocked, which also
+// backs UnmigratedFilesystemTools and HostOnlyFilesystemTools — so a filesystem
+// tool that forgets the marker (and implements no WorkspaceSetter) is invisible
+// to the gate and silently weakens isolation. Keep the markers current; they are
+// the gate's eyes.
 type FilesystemTool interface {
 	filesystemTool()
 }
@@ -530,38 +531,44 @@ func unwrapRecording(t Tool) Tool {
 // the host-only tools that never will. This is the real remaining work.
 func (r *Registry) UnmigratedFilesystemTools() []string {
 	r.mu.RLock()
-	var out []string
-	for name, t := range r.tools {
-		inner := unwrapRecording(t)
-		if _, isFS := inner.(FilesystemTool); !isFS {
-			continue
-		}
-		if _, ok := inner.(WorkspaceSetter); ok {
-			continue // migrated
-		}
-		if _, ok := inner.(HostOnlyTool); ok {
-			continue // host-bound by design
-		}
-		out = append(out, name)
-	}
-	r.mu.RUnlock()
-	sort.Strings(out)
-	return out
+	defer r.mu.RUnlock()
+	unmigrated, _ := r.classifyLocked()
+	sort.Strings(unmigrated)
+	return unmigrated
 }
 
 // HostOnlyFilesystemTools returns the sorted names of registered host-only
 // tools. They are fine on a local workspace and disqualifying on an isolated one.
 func (r *Registry) HostOnlyFilesystemTools() []string {
 	r.mu.RLock()
-	var out []string
+	defer r.mu.RUnlock()
+	_, hostOnly := r.classifyLocked()
+	sort.Strings(hostOnly)
+	return hostOnly
+}
+
+// classifyLocked is the one copy of the isolation-gate classification:
+// the names that disqualify a registry from an isolated workspace —
+// tools that touch the filesystem but are not yet migrated to Workspace
+// (excluding host-only tools, which are counted separately), and every
+// host-only tool. Both public diagnostics and the SetWorkspace
+// enforcement gate derive from it, so a diagnostic can never classify a
+// tool differently than the gate that refuses it. Caller holds r.mu.
+func (r *Registry) classifyLocked() (unmigrated, hostOnly []string) {
 	for name, t := range r.tools {
-		if _, ok := unwrapRecording(t).(HostOnlyTool); ok {
-			out = append(out, name)
+		inner := unwrapRecording(t)
+		if _, isFS := inner.(FilesystemTool); isFS {
+			if _, ok := inner.(WorkspaceSetter); !ok {
+				if _, ok := inner.(HostOnlyTool); !ok {
+					unmigrated = append(unmigrated, name)
+				}
+			}
+		}
+		if _, ok := inner.(HostOnlyTool); ok {
+			hostOnly = append(hostOnly, name)
 		}
 	}
-	r.mu.RUnlock()
-	sort.Strings(out)
-	return out
+	return unmigrated, hostOnly
 }
 
 // SetWorkspace sets the execution substrate for already-registered tools.
@@ -572,25 +579,13 @@ func (r *Registry) HostOnlyFilesystemTools() []string {
 // some tools would be worse than not isolating at all, because the caller would
 // believe the whole run was contained. The refusal is unconditional rather than
 // annotation-derived where it counts, so a missing marker cannot silently weaken
-// it; the markers only produce the diagnostic lists.
+// it; the markers only produce the diagnostic lists — and both come from
+// classifyLocked, so the gate and the diagnostics cannot drift.
 func (r *Registry) SetWorkspace(ws Workspace) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if ws != nil && !ws.Local() {
-		var unmigrated, hostOnly []string
-		for name, t := range r.tools {
-			inner := unwrapRecording(t)
-			if _, isFS := inner.(FilesystemTool); isFS {
-				if _, ok := inner.(WorkspaceSetter); !ok {
-					if _, ok := inner.(HostOnlyTool); !ok {
-						unmigrated = append(unmigrated, name)
-					}
-				}
-			}
-			if _, ok := inner.(HostOnlyTool); ok {
-				hostOnly = append(hostOnly, name)
-			}
-		}
+		unmigrated, hostOnly := r.classifyLocked()
 		if len(unmigrated) > 0 || len(hostOnly) > 0 {
 			var why []string
 			if len(unmigrated) > 0 {
@@ -663,11 +658,11 @@ func (r *Registry) Execute(ctx context.Context, name, args string) (string, erro
 // sibling dispatches' prompt-cache hits (yaah-o02).
 func (r *Registry) List() []string {
 	r.mu.RLock()
+	defer r.mu.RUnlock()
 	names := make([]string, 0, len(r.tools))
 	for name := range r.tools {
 		names = append(names, name)
 	}
-	r.mu.RUnlock()
 	sort.Strings(names)
 	return names
 }

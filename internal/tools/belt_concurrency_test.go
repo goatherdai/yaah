@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	kernel "github.com/goatherdai/goatherd-kernel"
 )
 
 // The concurrency contract these tests pin: a batch's tool calls execute
@@ -166,5 +168,66 @@ func TestToolbelt_SequentialMountStillAtomic(t *testing.T) {
 	}
 	if got, want := strings.Join(belt.Allowed(), ","), strings.Join(before, ","); got != want {
 		t.Errorf("a failed mount widened the belt: before %q, after %q", want, got)
+	}
+}
+
+// lockedFactCounter is a thread-safe MountFactAppender: recordMount
+// runs under the toolbelt's mount mutex, but the test must not rely on
+// that to count facts safely.
+type lockedFactCounter struct {
+	mu    sync.Mutex
+	facts int
+}
+
+func (c *lockedFactCounter) AppendFact(ctx context.Context, schemaRef, kindLabel string, payload map[string]any) (kernel.AppendReceipt, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.facts++
+	return kernel.AppendReceipt{}, nil
+}
+
+// TestToolbelt_ConcurrentSameFamilyMounts pins the mount's per-family
+// atomicity, the gap the cross-family test above cannot see: a mount
+// is a check-then-act sequence (Get == nil, Admit, Register), so two
+// concurrent mounts of the SAME family can both pass the check. With
+// the mount serialized, the second mount is a clean idempotent
+// remount: it registers nothing (generation advances exactly once per
+// member) and records nothing (exactly one mount fact). Unsynchronized,
+// the loser's Register replaces the winner's — generation overcounts —
+// and both calls append a yaah.tool.mounted.v1 fact.
+func TestToolbelt_ConcurrentSameFamilyMounts(t *testing.T) {
+	belt := NewBelt([]string{"toolbelt"})
+	reg := NewRegistryWithBelt(belt)
+	sink := &lockedFactCounter{}
+	tb := &ToolbeltTool{Reg: reg}
+	tb.SetSink(&MountSink{Appender: sink})
+
+	const mounts = 8
+	var wg sync.WaitGroup
+	for i := 0; i < mounts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := tb.Execute(context.Background(), `{"action":"mount","family":"analysis"}`); err != nil {
+				t.Errorf("concurrent same-family mount failed: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	members := 0
+	for _, fam := range toolFamilies {
+		if fam.Name == "analysis" {
+			members = len(fam.Tools)
+		}
+	}
+	if got := reg.Generation(); got != members {
+		t.Errorf("generation = %d, want %d: a racing remount must not re-register members", got, members)
+	}
+	sink.mu.Lock()
+	facts := sink.facts
+	sink.mu.Unlock()
+	if facts != 1 {
+		t.Errorf("recorded %d mount facts, want 1: an idempotent remount appends nothing", facts)
 	}
 }
