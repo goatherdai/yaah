@@ -282,6 +282,20 @@ Rules:
 - Conservative git policy by default: do not commit, push, or run Dolt remote
   sync unless the user asks.
 
+## Review fixes
+
+When addressing reviewer or bot findings on a PR:
+
+- Fix verified defects minimally: the smallest diff that resolves the
+  finding, in existing style. Eager rewrites of working code in response
+  to review nits manufacture the next review round.
+- When the minimal fix would be a bandaid over a genuine larger issue,
+  put in the minimal fix and file a follow-on bead for the larger work
+  instead of expanding the PR.
+- Reply to every inline finding — fix or factual rejection with
+  evidence — and resolve the thread; never merge without explicit
+  authorization.
+
 ## What not to do
 
 - Don't add a `web/` or `gateway/` package, or integrations for
