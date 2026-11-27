@@ -80,9 +80,15 @@ func (p *Pane) Draw(screen tcell.Screen) {
 		p.ClampOffset()
 	}
 
+	// The pane paints its Box's background — the color captured at
+	// construction, like every other primitive — not the live global:
+	// buildUI overrides PrimitiveBackgroundColor to ColorDefault after
+	// the chrome is built, so the global reads "transparent" while the
+	// rest of the UI paints its captured color, and the conversation
+	// would become the one region showing the terminal through.
 	blank := tcell.StyleDefault.
 		Foreground(tview.Styles.PrimaryTextColor).
-		Background(tview.Styles.PrimitiveBackgroundColor)
+		Background(p.GetBackgroundColor())
 	for r := 0; r < h; r++ {
 		sy := y + r
 		for c := 0; c < w; c++ {

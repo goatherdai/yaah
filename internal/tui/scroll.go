@@ -207,8 +207,15 @@ func (t *App) paneMouseCapture(action tview.MouseAction, event *tcell.EventMouse
 		t.maybeBackfillAtSeam()
 	case tview.MouseScrollDown:
 		t.scrollPaneDown(wheelStep)
+	default:
+		return action, event
 	}
-	return action, event
+	// Claim the wheel: tview redraws after a mouse event only when a
+	// handler consumes it, and the pane's plain Box never does — the
+	// scroll would land but the screen would not repaint until some
+	// unrelated event drew the app. A nil event with MouseConsumed is
+	// tview's documented "consumed, redraw" contract (WrapMouseHandler).
+	return tview.MouseConsumed, nil
 }
 
 // scrollPaneDown scrolls the transcript down n rows and returns the view

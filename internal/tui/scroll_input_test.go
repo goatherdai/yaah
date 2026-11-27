@@ -163,3 +163,31 @@ func TestArrowKeysRespectComposer(t *testing.T) {
 		})
 	}
 }
+
+// TestWheelDispatchThroughRoot pins the tview dispatch contract, not just
+// the capture: the wheel event must reach the pane's capture through the
+// real flex chain AND be consumed — tview redraws after a mouse event only
+// when a handler claims it, so an unconsumed scroll lands but never paints
+// (the 0.223.0 regression: the wheel looked dead while keyboard scroll,
+// whose key events always trigger a draw, worked).
+func TestWheelDispatchThroughRoot(t *testing.T) {
+	ui := gateApp()
+	sim := setupSim(t, ui)
+	growForScroll(t, ui, 200)
+	ui.Root.Draw(sim)
+
+	tail := ui.pane.Offset()
+	x, y, _, _ := ui.pane.GetInnerRect()
+	ev := tcell.NewEventMouse(x+5, y+5, tcell.WheelUp, tcell.ModNone)
+	handler := ui.Root.MouseHandler()
+	if handler == nil {
+		t.Fatalf("root has no mouse handler")
+	}
+	consumed, _ := handler(tview.MouseScrollUp, ev, func(tview.Primitive) {})
+	if !consumed {
+		t.Fatalf("wheel event was not consumed; tview would not redraw")
+	}
+	if got := ui.pane.Offset(); got != tail-wheelStep {
+		t.Fatalf("wheel through the dispatch chain moved the viewport to %d, want %d", got, tail-wheelStep)
+	}
+}
