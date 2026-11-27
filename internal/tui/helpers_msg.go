@@ -41,7 +41,8 @@ func (t *App) echoWidth() int {
 }
 
 // resizePromptEcho grows/shrinks the echo row to fit its wrapped line
-// count, capped at promptEchoMaxLines.
+// count, capped at promptEchoMaxLines, and shows the separator rule
+// beneath it — the rule exists only as the pin's lower edge.
 func (t *App) resizePromptEcho(lines int) {
 	rows := lines
 	if rows < 1 {
@@ -51,6 +52,16 @@ func (t *App) resizePromptEcho(lines int) {
 		rows = promptEchoMaxLines
 	}
 	t.messagesCol.ResizeItem(t.promptEcho, rows, 0)
+	t.messagesCol.ResizeItem(t.promptRule, 1, 0)
+}
+
+// hidePromptEcho collapses the pin and its separator rule together:
+// with no pinned prompt there is no seam to draw, and the conversation
+// meets the header's own padding row directly.
+func (t *App) hidePromptEcho() {
+	t.promptEcho.SetText("")
+	t.messagesCol.ResizeItem(t.promptEcho, 0, 0)
+	t.messagesCol.ResizeItem(t.promptRule, 0, 0)
 }
 
 // growPromptInput resizes the prompt row to fit the TextArea's visual

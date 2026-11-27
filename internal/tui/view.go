@@ -6,6 +6,7 @@ import (
 	"github.com/goatherdai/yaah/internal/tui/components/banner"
 	"github.com/goatherdai/yaah/internal/tui/components/infopane"
 	"github.com/goatherdai/yaah/internal/tui/components/input"
+	"github.com/goatherdai/yaah/internal/tui/components/rule"
 	localTodo "github.com/goatherdai/yaah/internal/tui/components/todo"
 	"github.com/rivo/tview"
 )
@@ -62,9 +63,9 @@ func (t *App) buildUI() {
 	t.BackgroundJobsPane.SetBorderColor(tcell.GetColor(t.Theme.SubAgentsBorder))
 	t.BackgroundJobsPane.SetTitleColor(tcell.GetColor(t.Theme.SubAgentsBorder))
 
-	headerRows := bannerLines
-	totalRows := headerRows
-	rows := make([]int, totalRows)
+	t.bannerLines = bannerLines
+	headerRows := bannerLines + 1 // + the padding row below the tagline
+	rows := make([]int, headerRows)
 	for i := range rows {
 		rows[i] = 1
 	}
@@ -74,15 +75,28 @@ func (t *App) buildUI() {
 		SetColumns(-1).
 		SetBorders(false)
 
-	t.Header.AddItem(t.Banner, 0, 0, headerRows, 1, 0, 0, false)
+	// The banner spans its own lines only; the last grid row stays
+	// empty — the blank seam between the tagline and whatever sits
+	// below the header, gone together with the banner on :banner.
+	t.Header.AddItem(t.Banner, 0, 0, bannerLines, 1, 0, 0, false)
 
-	// One blank row between the sticky prompt echo and the conversation
-	// pane, so agent content never butts up against the question line
-	// as it scrolls beneath it.
+	// The separator line under the sticky prompt pin, shown only while
+	// the pin is (SetCurrentPrompt shows it, hidePromptEcho collapses
+	// it) — a rule, not a blank row, so the anchored question reads as
+	// chrome above the conversation rather than floating in it. Both the
+	// echo and the rule start at height 0: no pin is up at startup, and
+	// reconcilePromptPin early-returns while both stay empty, so a
+	// nonzero seed would paint an empty echo row and a stray rule
+	// until the first prompt scrolls under the header.
+	ruleColor := t.Theme.Dim
+	if t.Theme.NoColor {
+		ruleColor = ""
+	}
+	t.promptRule = rule.New(ruleColor)
 	messagesCol := tview.NewFlex().
 		SetDirection(tview.FlexRow).
-		AddItem(t.promptEcho, 1, 0, false).
-		AddItem(tview.NewBox(), 1, 0, false).
+		AddItem(t.promptEcho, 0, 0, false).
+		AddItem(t.promptRule, 0, 0, false).
 		AddItem(t.pane, 0, 1, false)
 	t.messagesCol = messagesCol
 
@@ -102,7 +116,7 @@ func (t *App) buildUI() {
 		SetDirection(tview.FlexRow).
 		SetFullScreen(true)
 
-	t.Root.AddItem(t.Header, headerRows, 0, false)
+	t.Root.AddItem(t.Header, t.headerHeight(), 0, false)
 	t.Root.AddItem(body, 0, 1, true)
 	t.Root.AddItem(t.activityLine, 1, 0, false)
 	t.Root.AddItem(t.suggestionsView, 0, 0, false)

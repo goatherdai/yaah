@@ -56,9 +56,14 @@ func (p *Pane) ContentWidth() int {
 	return w
 }
 
-// Draw paints the visible viewport. The offset is clamped first, so a
-// shrunken row table (clear, compaction) can never leave the viewport
-// past the end.
+// Draw paints the visible viewport. While the model follows its live
+// tail (UserScrolled false) the viewport re-snaps to the row table's
+// end here rather than at repaint time: the pane's height is only
+// final once the flex lays it out, and a mid-frame chrome change (the
+// sticky pin's rows appearing or clearing) would otherwise leave the
+// tail cut off by the stale-height offset until the next repaint. The
+// offset is clamped otherwise, so a shrunken row table (clear,
+// compaction) can never leave the viewport past the end.
 func (p *Pane) Draw(screen tcell.Screen) {
 	p.Box.DrawForSubclass(screen, p)
 	x, y, w, h := p.GetInnerRect()
@@ -67,7 +72,13 @@ func (p *Pane) Draw(screen tcell.Screen) {
 	}
 	p.height = h
 	rows := p.model.Rows()
-	p.ClampOffset()
+	if !p.model.UserScrolled() {
+		if p.offset = len(rows) - h; p.offset < 0 {
+			p.offset = 0
+		}
+	} else {
+		p.ClampOffset()
+	}
 
 	blank := tcell.StyleDefault.
 		Foreground(tview.Styles.PrimaryTextColor).
