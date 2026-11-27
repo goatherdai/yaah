@@ -293,8 +293,9 @@ When addressing reviewer or bot findings on a PR:
   put in the minimal fix and file a follow-on bead for the larger work
   instead of expanding the PR.
 - Reply to every inline finding — fix or factual rejection with
-  evidence — and resolve the thread; never merge without explicit
-  authorization.
+  evidence. Resolve threads for applied fixes; leave factual
+  rejections open for the reviewer to confirm. Never merge without
+  explicit authorization.
 
 ## What not to do
 
