@@ -7,6 +7,7 @@ import (
 	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/config"
 	"github.com/goatherdai/yaah/internal/tools"
+	"github.com/goatherdai/yaah/internal/tools/substrate"
 )
 
 func TestResolveDispatchRouteACPBackend(t *testing.T) {
@@ -50,6 +51,45 @@ func TestMakeTaskRunnerACPBackend(t *testing.T) {
 	}
 	if seenParams.OutputLimit != 7 {
 		t.Fatalf("ACP runner saw output limit %d, want resolved cap 7", seenParams.OutputLimit)
+	}
+}
+
+func TestMakeTaskRunnerACPUsesWorkspaceWorkdir(t *testing.T) {
+	var seen tools.SubAgentParams
+	opts := taskRunnerOpts{
+		pathValidator: &substrate.PathValidator{WorkDir: "/session/worktree"},
+		subCfg: config.SubAgentConfig{Roles: map[string]config.RoleConfig{
+			"developer": {Backend: "acp", ACPAgent: "vibe"},
+		}},
+		resolveTaskRunner: func(backend, agent string) tools.TaskRunner {
+			return func(_ context.Context, _ string, params tools.SubAgentParams) (string, error) {
+				seen = params
+				return "ok", nil
+			}
+		},
+	}
+	run := makeTaskRunner(opts, 1)
+	if _, err := run(context.Background(), "hi", tools.SubAgentParams{Role: "developer"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if seen.Workdir != "/session/worktree" {
+		t.Fatalf("ACP runner workdir = %q, want the session workspace", seen.Workdir)
+	}
+}
+
+func TestMakeTaskRunnerACPRefusesProposalLane(t *testing.T) {
+	opts := taskRunnerOpts{
+		subCfg: config.SubAgentConfig{Roles: map[string]config.RoleConfig{
+			"developer": {Backend: "acp", ACPAgent: "vibe"},
+		}},
+		resolveTaskRunner: func(backend, agent string) tools.TaskRunner {
+			return func(context.Context, string, tools.SubAgentParams) (string, error) { return "ok", nil }
+		},
+	}
+	run := makeTaskRunner(opts, 1)
+	_, err := run(context.Background(), "hi", tools.SubAgentParams{Role: "developer", Lane: "retained-proposal"})
+	if err == nil {
+		t.Fatal("proposal lane must be refused for an ACP backend")
 	}
 }
 

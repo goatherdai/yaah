@@ -85,6 +85,9 @@ type Runner struct {
 
 	// connect is an unexported seam for deterministic in-process tests.
 	connect func(context.Context, acp.Client, string) (*connection, error)
+
+	// heartbeatInterval is unexported so tests can shrink the 5s watchdog beat.
+	heartbeatInterval time.Duration
 }
 
 // New returns a Runner with the sub-agent-safe defaults.
@@ -210,6 +213,32 @@ func (r *Runner) Run(ctx context.Context, prompt string, params jobs.SubAgentPar
 	jobs.WriteSubAgentModel(ctx, model)
 	jobs.NotifySubAgentStart(ctx, model)
 
+	// The stuck-child watchdog arms on "ready" and expects periodic beats.
+	// The in-process loop beats once per iteration; a single long ACP turn
+	// has no iterations, so beat on a timer until the turn ends.
+	jobs.NotifySubAgentReady(ctx)
+	jobs.SendHeartbeat(ctx)
+	stopHeartbeat := make(chan struct{})
+	defer close(stopHeartbeat)
+	interval := r.heartbeatInterval
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopHeartbeat:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				jobs.SendHeartbeat(ctx)
+			}
+		}
+	}()
+
 	resp, err := conn.conn.Prompt(ctx, acp.PromptRequest{
 		SessionId: session.SessionId,
 		Prompt:    []acp.ContentBlock{acp.TextBlock(turnPrompt)},
@@ -295,9 +324,17 @@ func tokensFromUsage(u acp.SessionUsageUpdate) types.Usage {
 	if err := u.Meta.Get("completionTokens", &completion); err == nil {
 		out.CompletionTokens = int(completion)
 	}
-	if err := u.Meta.Get("cachedTokens", &cached); err == nil {
-		out.CachedPromptTokens = int(cached)
+	// yaah's ACP server emits cachedPromptTokens; Vibe emits cachedTokens.
+	// Accept both so driving either agent records the same usage shape.
+	if err := u.Meta.Get("cachedPromptTokens", &cached); err != nil {
+		_ = u.Meta.Get("cachedTokens", &cached)
 	}
-	out.TotalTokens = out.PromptTokens + out.CompletionTokens
+	out.CachedPromptTokens = int(cached)
+	var total int64
+	if err := u.Meta.Get("totalTokens", &total); err == nil && total > 0 {
+		out.TotalTokens = int(total)
+	} else {
+		out.TotalTokens = out.PromptTokens + out.CompletionTokens
+	}
 	return out
 }

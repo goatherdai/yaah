@@ -115,7 +115,9 @@ Notes worth knowing per kind:
   for them and a `lane: proposal` delegate must not name one. Usage, model,
   transcript, and stop facts reported over ACP flow into the same node
   envelope; tool calls inside the external agent are not visible to yaah's
-  permission middleware.
+  permission middleware. The child is started in the session workspace (or the
+  manifest's `cwd`), but yaah cannot sandbox the external process — treat the
+  configured ACP agent as trusted code.
 - **`fanout`/`loop`** bodies are node lists; each item/iteration mints body
   instances (`steps.<id>.items[2].body[0]`, `steps.<id>.iters[1].body[0]`).
   The `collect` accumulates one entry per succeeded item/iteration — the

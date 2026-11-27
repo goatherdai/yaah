@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 // Manifest describes one external ACP agent that yaah can launch as a child
@@ -32,8 +33,9 @@ func (m Manifest) Validate() error {
 		return fmt.Errorf("acpclient: manifest cwd must be absolute, got %q", m.Cwd)
 	}
 	for _, entry := range m.Env {
-		if entry == "" {
-			return errors.New("acpclient: empty env entry")
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok || key == "" {
+			return fmt.Errorf("acpclient: env entry %q must be KEY=VALUE", entry)
 		}
 	}
 	return nil

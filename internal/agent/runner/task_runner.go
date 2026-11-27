@@ -665,6 +665,20 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			if runner == nil {
 				return "", fmt.Errorf("sub-agent %s: no ACP agent %q configured", role, route.agent)
 			}
+			// An external agent is not sandboxed by yaah's tool layer. At
+			// minimum start it in the session workspace rather than the host
+			// cwd, and refuse lanes that promise a sealed worktree we cannot
+			// provide. The agent's own OS access remains its own trust boundary.
+			if params.Workdir == "" && opts.pathValidator != nil {
+				if wd := strings.TrimSpace(opts.pathValidator.WorkDir); wd != "" {
+					params.Workdir = wd
+				} else if root := strings.TrimSpace(opts.pathValidator.WorkspaceRoot); root != "" {
+					params.Workdir = root
+				}
+			}
+			if strings.EqualFold(profile.Output, "proposal") || params.Lane == "retained-proposal" {
+				return "", fmt.Errorf("sub-agent %s: backend acp requires a report lane (no sealed worktree)", role)
+			}
 			// The in-process path caps results with outLimit (per-call, role,
 			// then global). The external runner only reads params.OutputLimit,
 			// so hand it the resolved cap instead of silently dropping it.

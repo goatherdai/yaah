@@ -27,6 +27,8 @@ type fakeAgent struct {
 	systemPrompt       bool
 	seenPrompt         string
 	seenSystem         *acp.SystemPrompt
+	cachedPrompt       int
+	totalTokens        int
 }
 
 func (a *fakeAgent) SetAgentConnection(c *acp.AgentSideConnection) { a.conn = c }
@@ -97,9 +99,14 @@ func (a *fakeAgent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.Prompt
 		a.permissionSelected = string(resp.Outcome.Selected.OptionId)
 		a.permissionGranted = a.permissionSelected == "allow"
 	}
-	meta, err := acp.NewMeta(map[string]any{
-		"promptTokens": 10, "completionTokens": 3, "cachedTokens": 2,
-	})
+	usageMeta := map[string]any{"promptTokens": 10, "completionTokens": 3, "cachedTokens": 2}
+	if a.cachedPrompt > 0 {
+		usageMeta["cachedPromptTokens"] = a.cachedPrompt
+	}
+	if a.totalTokens > 0 {
+		usageMeta["totalTokens"] = a.totalTokens
+	}
+	meta, err := acp.NewMeta(usageMeta)
 	if err != nil {
 		return acp.PromptResponse{}, err
 	}
@@ -143,6 +150,12 @@ func TestManifestValidate(t *testing.T) {
 	}
 	if err := (Manifest{Command: "vibe-acp", Cwd: "relative"}).Validate(); err == nil {
 		t.Fatal("relative cwd should fail")
+	}
+	if err := (Manifest{Command: "vibe-acp", Env: []string{"FOO"}}).Validate(); err == nil {
+		t.Fatal("env entry without = should fail")
+	}
+	if err := (Manifest{Command: "vibe-acp", Env: []string{"FOO=bar"}}).Validate(); err != nil {
+		t.Fatalf("valid env entry rejected: %v", err)
 	}
 	if err := (Manifest{Command: "vibe-acp"}).Validate(); err != nil {
 		t.Fatalf("valid manifest rejected: %v", err)
@@ -264,6 +277,48 @@ func TestRunnerRefusalStopReason(t *testing.T) {
 	}
 	if stop.FinishReason != "refusal" {
 		t.Fatalf("finish reason = %q", stop.FinishReason)
+	}
+}
+
+func TestRunnerUsageMetaAliases(t *testing.T) {
+	agent := &fakeAgent{reply: "ok", cachedPrompt: 7, totalTokens: 99}
+	r := New(Manifest{Name: "fake", Command: "fake"})
+	r.connect = func(_ context.Context, c acp.Client, _ string) (*connection, error) {
+		return wire(t, agent, c), nil
+	}
+	var usage types.Usage
+	ctx := jobs.WithSubAgentUsage(context.Background(), &usage)
+	if _, err := r.Run(ctx, "go", jobs.SubAgentParams{}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if usage.CachedPromptTokens != 7 || usage.TotalTokens != 99 {
+		t.Fatalf("usage = %+v, want cached 7 / total 99", usage)
+	}
+}
+
+func TestRunnerEmitsReadyAndHeartbeats(t *testing.T) {
+	agent := &fakeAgent{block: true}
+	r := New(Manifest{Name: "fake", Command: "fake"})
+	r.heartbeatInterval = 5 * time.Millisecond
+	r.connect = func(_ context.Context, c acp.Client, _ string) (*connection, error) {
+		return wire(t, agent, c), nil
+	}
+	hb := make(chan struct{}, 1)
+	ready := false
+	base := jobs.WithSubAgentHeartbeat(context.Background(), hb)
+	base = jobs.WithSubAgentReadyNotifier(base, func() { ready = true })
+	ctx, cancel := context.WithTimeout(base, 100*time.Millisecond)
+	defer cancel()
+	if _, err := r.Run(ctx, "sleep", jobs.SubAgentParams{}); err == nil {
+		t.Fatal("expected deadline error")
+	}
+	if !ready {
+		t.Fatal("ready notifier was not called")
+	}
+	select {
+	case <-hb:
+	default:
+		t.Fatal("no heartbeat emitted during the turn")
 	}
 }
 
