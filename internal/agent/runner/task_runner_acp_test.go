@@ -6,6 +6,7 @@ import (
 
 	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/dispatch"
 	"github.com/goatherdai/yaah/internal/tools"
 	"github.com/goatherdai/yaah/internal/tools/substrate"
 )
@@ -120,9 +121,26 @@ func TestMakeTaskRunnerACPRefusesProposalLane(t *testing.T) {
 		},
 	}
 	run := makeTaskRunner(opts, 1)
-	_, err := run(context.Background(), "hi", tools.SubAgentParams{Role: "developer", Lane: "retained"})
+	ctx := dispatch.WithLane(context.Background(), dispatch.LaneProposal)
+	_, err := run(ctx, "hi", tools.SubAgentParams{Role: "developer", Lane: "retained"})
 	if err == nil {
 		t.Fatal("proposal lane must be refused for an ACP backend")
+	}
+}
+
+func TestMakeTaskRunnerACPAllowsRetainedReportLane(t *testing.T) {
+	opts := taskRunnerOpts{
+		subCfg: config.SubAgentConfig{Roles: map[string]config.RoleConfig{
+			"developer": {Backend: "acp", ACPAgent: "vibe"},
+		}},
+		resolveTaskRunner: func(backend, agent string) tools.TaskRunner {
+			return func(context.Context, string, tools.SubAgentParams) (string, error) { return "ok", nil }
+		},
+	}
+	run := makeTaskRunner(opts, 1)
+	ctx := dispatch.WithLane(context.Background(), dispatch.LaneReport)
+	if _, err := run(ctx, "hi", tools.SubAgentParams{Role: "developer", Lane: "retained"}); err != nil {
+		t.Fatalf("report lane on a retained world should be allowed: %v", err)
 	}
 }
 

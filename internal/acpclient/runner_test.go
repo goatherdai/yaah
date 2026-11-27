@@ -152,6 +152,21 @@ func wire(t *testing.T, agent *fakeAgent, c acp.Client) *connection {
 	return &connection{conn: conn, close: func() {}, stderr: func() string { return "" }}
 }
 
+func TestLimitedBufferConsumesOverflow(t *testing.T) {
+	b := &limitedBuffer{}
+	first := []byte(strings.Repeat("x", maxStderrBytes+16))
+	if n, err := b.Write(first); err != nil || n != len(first) {
+		t.Fatalf("first write n=%d err=%v", n, err)
+	}
+	if b.buf.Len() != maxStderrBytes {
+		t.Fatalf("buffer kept %d bytes", b.buf.Len())
+	}
+	second := []byte("more stderr")
+	if n, err := b.Write(second); err != nil || n != len(second) {
+		t.Fatalf("second write n=%d err=%v", n, err)
+	}
+}
+
 func TestManifestValidate(t *testing.T) {
 	if err := (Manifest{}).Validate(); err == nil {
 		t.Fatal("empty manifest should fail")

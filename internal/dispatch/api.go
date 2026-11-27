@@ -15,6 +15,25 @@ import (
 // this vocabulary; a nil role resolver keeps the historical proposal lane.
 type Lane string
 
+// laneContextKey carries the concrete dispatch lane to the runner. Params.Lane
+// only names the substrate ("shared" or "retained"); the runner needs to tell
+// a sealed proposal from a plain report when both use a retained world.
+type laneContextKey struct{}
+
+// WithLane records the concrete lane on ctx for the runner.
+func WithLane(ctx context.Context, lane Lane) context.Context {
+	return context.WithValue(ctx, laneContextKey{}, lane)
+}
+
+// LaneFromContext returns the concrete lane recorded by WithLane, or "" when
+// none was set (older callers).
+func LaneFromContext(ctx context.Context) Lane {
+	if lane, ok := ctx.Value(laneContextKey{}).(Lane); ok {
+		return lane
+	}
+	return ""
+}
+
 const (
 	// LaneProposal: isolated world, sealed delta, orchestrator settles it.
 	LaneProposal Lane = "proposal"
@@ -151,6 +170,7 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 	if lane == "" {
 		lane = LaneProposal
 	}
+	ctx = WithLane(ctx, lane)
 	if params.Lane == "" {
 		if req.Retained == nil || lane == LaneShared {
 			params.Lane = "shared"

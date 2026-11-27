@@ -29,15 +29,19 @@ type limitedBuffer struct {
 func (b *limitedBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	consumed := len(p)
 	remaining := maxStderrBytes - b.buf.Len()
 	if remaining <= 0 {
-		return len(p), nil
+		return consumed, nil
 	}
-	if len(p) > remaining {
-		p = p[:remaining]
+	kept := p
+	if len(kept) > remaining {
+		kept = kept[:remaining]
 	}
-	n, _ := b.buf.Write(p)
-	return n, nil
+	_, _ = b.buf.Write(kept)
+	// Always report the full input: io.Copy treats a short write with no
+	// error as ErrShortWrite and would stop draining the child's stderr.
+	return consumed, nil
 }
 
 func (b *limitedBuffer) String() string {

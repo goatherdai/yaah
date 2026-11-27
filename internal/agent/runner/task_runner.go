@@ -22,6 +22,7 @@ import (
 	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/agent/supervision"
 	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/dispatch"
 	"github.com/goatherdai/yaah/internal/memory"
 	"github.com/goatherdai/yaah/internal/permissions"
 	"github.com/goatherdai/yaah/internal/supervisionapi"
@@ -680,11 +681,11 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 					}
 				}
 			}
-			// dispatch.Run sets params.Lane to "shared" or "retained"; both
-			// isolated variants (proposal and retained-report) arrive as
-			// "retained". Neither can be honoured by an external process.
-			if params.Lane == "retained" {
-				return "", fmt.Errorf("sub-agent %s: backend acp requires a report lane (no sealed worktree)", role)
+			// Params.Lane only names the substrate: a report on a retained
+			// world and a sealed proposal both arrive as "retained". The
+			// concrete lane rides on ctx, so refuse only a true proposal.
+			if dispatch.LaneFromContext(ctx) == dispatch.LaneProposal {
+				return "", fmt.Errorf("sub-agent %s: backend acp cannot run a proposal lane (no sealed worktree)", role)
 			}
 			// The in-process path caps results with outLimit (per-call, role,
 			// then global). The external runner only reads params.OutputLimit,
