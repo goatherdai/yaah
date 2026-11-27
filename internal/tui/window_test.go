@@ -581,6 +581,81 @@ func TestCmdBottom_ResetsLiveTail(t *testing.T) {
 	}
 }
 
+// TestCmdTop_BackfillsFromAnyRow pins the round-3 :top fix: the command
+// backfills unconditionally while older items are collapsed — the seam-row
+// gate used to leave ":top" from mid-scroll landing on the seam line
+// instead of readable content.
+func TestCmdTop_BackfillsFromAnyRow(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	for i := 0; i < 200; i++ {
+		ui.appendMessage(fmt.Sprintf("item %03d", i))
+	}
+	ui.refreshMessages()
+	if ui.windowStart != 80 {
+		t.Fatalf("windowStart=%d, want 80", ui.windowStart)
+	}
+
+	// Away from row 0: :top must still load the next batch.
+	ui.Messages.ScrollTo(5, 0)
+	if !ui.HandleCommand(command.CmdTop, "") {
+		t.Fatalf("CmdTop was not handled")
+	}
+	if ui.windowStart != 80-renderBackfillStep {
+		t.Fatalf(":top away from the seam did not backfill: windowStart=%d", ui.windowStart)
+	}
+}
+
+// TestBackfill_BatchCappedByRows pins the round-3 batch bound: a
+// backfill prepends at most renderBackfillStep items AND at most
+// renderWindowRows rows — a batch of tall tool or markdown items must
+// not repaint a freeze-sized buffer on the lazy scroll path.
+func TestBackfill_BatchCappedByRows(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	for i := 0; i < 20; i++ {
+		ui.appendMessage(fmt.Sprintf("item %02d\n%s", i, strings.Repeat("row\n", 400)))
+	}
+	ui.refreshMessages()
+	if ui.windowStart <= 0 {
+		t.Fatalf("row budget did not engage: windowStart=%d", ui.windowStart)
+	}
+	oldStart := ui.windowStart
+
+	ui.userScrolled = true // callers set it before backfilling
+	ui.backfillWindow()
+	batch := oldStart - ui.windowStart
+	if batch <= 0 {
+		t.Fatalf("backfill made no progress: windowStart=%d -> %d", oldStart, ui.windowStart)
+	}
+	if batch >= renderBackfillStep {
+		t.Fatalf("row cap did not bind: batch=%d items, want < %d", batch, renderBackfillStep)
+	}
+}
+
+// TestBackfill_KeepsManualWindowOnWidthChange pins the round-3 width fix:
+// backfillWindow records the current width so a resize between renders
+// cannot make the repaint recompute the trailing window and yank the
+// user to the live tail mid-backfill.
+func TestBackfill_KeepsManualWindowOnWidthChange(t *testing.T) {
+	ui := gateApp()
+	setupSim(t, ui)
+	for i := 0; i < 200; i++ {
+		ui.appendMessage(fmt.Sprintf("item %03d", i))
+	}
+	ui.refreshMessages()
+
+	ui.userScrolled = true // callers set it before backfilling
+	ui.windowWidth = 42    // stale: the pane was resized since the window
+	ui.backfillWindow()
+	if ui.windowStart != 80-renderBackfillStep {
+		t.Fatalf("stale width re-windowed the backfill: windowStart=%d", ui.windowStart)
+	}
+	if ui.windowWidth != messageWidth(ui.Messages) {
+		t.Fatalf("backfill left a stale windowWidth=%d, want %d", ui.windowWidth, messageWidth(ui.Messages))
+	}
+}
+
 func containsItem(ui *App, want string) bool {
 	for i := range ui.conversationLog {
 		if strings.Contains(ui.conversationLog[i].text, want) {

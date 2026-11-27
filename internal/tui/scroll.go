@@ -290,20 +290,30 @@ func (t *App) backfillWindow() {
 	}
 	w := messageWidth(t.Messages)
 	n := len(t.conversationLog)
-	newStart := oldStart - renderBackfillStep
-	if newStart < 0 {
-		newStart = 0
+	// The batch is capped by rows as well as items: a dozen tall tool or
+	// markdown items would repaint a buffer far past the row budget on
+	// the exact scroll path meant to stay bounded. The first item always
+	// loads, so a seam exists whenever progress is possible; an item
+	// taller than the whole budget alone is simply not lazy-loadable.
+	newStart, added := oldStart, 0
+	for newStart > 0 && oldStart-newStart < renderBackfillStep {
+		r := t.itemRows(&t.conversationLog[newStart-1], t.buildItems(newStart-1, newStart, w)[0], w)
+		if oldStart-newStart > 0 && added+r > renderWindowRows {
+			break
+		}
+		newStart--
+		added += r
 	}
 	if newStart == oldStart {
 		return
 	}
-	added := 0
-	for i := newStart; i < oldStart; i++ {
-		added += t.itemRows(&t.conversationLog[i], t.buildItems(i, i+1, w)[0], w)
-	}
 	oldSeam := t.seamRows(oldStart, w)
 	newSeam := t.seamRows(newStart, w)
 	t.windowStart = newStart
+	// The manual window survives the repaint at the current width: a
+	// stale windowWidth would make refreshMessages recompute the
+	// trailing window and yank the user to the live tail mid-backfill.
+	t.windowWidth = w
 	// A reveal window slides with the start so the painted range stays
 	// inside the budgets; a tail window keeps growing toward n as
 	// before.
