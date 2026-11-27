@@ -241,6 +241,13 @@ func Validate(cfg *Config) error {
 			errs = append(errs, fmt.Sprintf(
 				"agents.subagent.acp_agents.%s.cwd must be absolute", name))
 		}
+		for _, entry := range agentCfg.Env {
+			key, _, ok := strings.Cut(entry, "=")
+			if !ok || key == "" {
+				errs = append(errs, fmt.Sprintf(
+					"agents.subagent.acp_agents.%s.env entry %q must be KEY=VALUE", name, entry))
+			}
+		}
 	}
 
 	// Sub-agent budget floors must be sane: non-negative, not above the

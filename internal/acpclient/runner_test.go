@@ -29,6 +29,17 @@ type fakeAgent struct {
 	seenSystem         *acp.SystemPrompt
 	cachedPrompt       int
 	totalTokens        int
+	alwaysFirst        bool
+}
+
+func permissionOptions(alwaysFirst bool) []acp.PermissionOption {
+	once := acp.PermissionOption{Kind: acp.PermissionOptionKindAllowOnce, Name: "Allow", OptionId: acp.PermissionOptionId("allow")}
+	always := acp.PermissionOption{Kind: acp.PermissionOptionKindAllowAlways, Name: "Always", OptionId: acp.PermissionOptionId("always")}
+	reject := acp.PermissionOption{Kind: acp.PermissionOptionKindRejectOnce, Name: "Reject", OptionId: acp.PermissionOptionId("reject")}
+	if alwaysFirst {
+		return []acp.PermissionOption{always, once, reject}
+	}
+	return []acp.PermissionOption{once, reject, always}
 }
 
 func (a *fakeAgent) SetAgentConnection(c *acp.AgentSideConnection) { a.conn = c }
@@ -85,10 +96,7 @@ func (a *fakeAgent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.Prompt
 		resp, err := a.conn.RequestPermission(ctx, acp.RequestPermissionRequest{
 			SessionId: p.SessionId,
 			ToolCall:  acp.ToolCallUpdate{},
-			Options: []acp.PermissionOption{
-				{Kind: acp.PermissionOptionKindAllowOnce, Name: "Allow", OptionId: acp.PermissionOptionId("allow")},
-				{Kind: acp.PermissionOptionKindRejectOnce, Name: "Reject", OptionId: acp.PermissionOptionId("reject")},
-			},
+			Options:   permissionOptions(a.alwaysFirst),
 		})
 		if err != nil {
 			return acp.PromptResponse{}, err
@@ -223,7 +231,7 @@ func TestRunnerSystemPromptFallback(t *testing.T) {
 }
 
 func TestRunnerPermissionAutoAnswer(t *testing.T) {
-	agent := &fakeAgent{reply: "allowed", askPermission: true}
+	agent := &fakeAgent{reply: "allowed", askPermission: true, alwaysFirst: true}
 	r := New(Manifest{Name: "fake", Command: "fake"})
 	r.connect = func(_ context.Context, c acp.Client, _ string) (*connection, error) {
 		return wire(t, agent, c), nil
@@ -237,6 +245,32 @@ func TestRunnerPermissionAutoAnswer(t *testing.T) {
 	}
 	if !agent.permissionGranted {
 		t.Fatal("permission request was not auto-approved")
+	}
+}
+
+func TestRunnerAllowAlwaysRequiresOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		permit bool
+		want   string
+	}{
+		{"default", false, "allow"},
+		{"opted_in", true, "always"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := &fakeAgent{reply: "ok", askPermission: true, alwaysFirst: true}
+			r := New(Manifest{Name: "fake", Command: "fake"})
+			r.PermitAllowAlways = tc.permit
+			r.connect = func(_ context.Context, c acp.Client, _ string) (*connection, error) {
+				return wire(t, agent, c), nil
+			}
+			if _, err := r.Run(context.Background(), "go", jobs.SubAgentParams{}); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if agent.permissionSelected != tc.want {
+				t.Fatalf("selected %q, want %q", agent.permissionSelected, tc.want)
+			}
+		})
 	}
 }
 

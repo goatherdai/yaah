@@ -69,8 +69,9 @@ func stageErr(stage string, err error, stderr func() string) error {
 // Session policy: one Run == one child process == one ACP connection == one
 // session. Nothing is reused between calls, so a dispatch cannot inherit
 // another dispatch's conversation or tools. The close function always closes
-// stdin, kills the process, and waits — on success, error, cancellation, and
-// timeout alike — so a child is never left behind.
+// stdin, kills the direct child, and waits on success, error, cancellation,
+// and timeout alike. Descendants the agent spawns itself are its own
+// responsibility: yaah does not manage another process group on Windows.
 type Runner struct {
 	Manifest Manifest
 
@@ -79,9 +80,15 @@ type Runner struct {
 	// the prompt text.
 	SystemPrompt string
 
-	// AutoApprove selects the first allow option for permission requests. It
-	// defaults to true; yaah sub-agents have no approval bridge.
+	// AutoApprove selects an allow option for permission requests. It
+	// defaults to true; yaah sub-agents have no approval bridge. Only
+	// allow_once is selected unless PermitAllowAlways is set.
 	AutoApprove bool
+
+	// PermitAllowAlways opts into persistent (allow_always) grants. Off by
+	// default because an external agent's tool calls bypass yaah's approval
+	// middleware.
+	PermitAllowAlways bool
 
 	// connect is an unexported seam for deterministic in-process tests.
 	connect func(context.Context, acp.Client, string) (*connection, error)
@@ -165,7 +172,7 @@ func (r *Runner) Run(ctx context.Context, prompt string, params jobs.SubAgentPar
 		defer cancel()
 	}
 
-	collector := &collector{autoApprove: r.AutoApprove}
+	collector := &collector{autoApprove: r.AutoApprove, permitAllowAlways: r.PermitAllowAlways}
 	var conn *connection
 	if r.connect != nil {
 		conn, err = r.connect(ctx, collector, cwd)
@@ -255,7 +262,7 @@ func (r *Runner) Run(ctx context.Context, prompt string, params jobs.SubAgentPar
 		return "", stageErr("session/prompt", err, conn.stderr)
 	}
 
-	text, chunks, calls, permissions, updates, usage, denials := collector.result()
+	text, chunks, calls, permissions, updates, usage, denials, permissionKinds := collector.result()
 	jobs.AddSubAgentUsage(ctx, tokensFromUsage(usage))
 	jobs.CaptureSubAgentDenials(ctx, denials)
 	jobs.CaptureSubAgentTranscript(ctx, []types.Message{
@@ -281,6 +288,7 @@ func (r *Runner) Run(ctx context.Context, prompt string, params jobs.SubAgentPar
 			attribute.Int("acp.tool_calls", calls),
 			attribute.Int("acp.permission_requests", permissions),
 			attribute.Int("acp.denials", len(denials)),
+			attribute.StringSlice("acp.permission_kinds", permissionKinds),
 		}
 		if cost, ok := usage.Meta["cost"]; ok {
 			attrs = append(attrs, attribute.String("acp.cost", string(cost)))

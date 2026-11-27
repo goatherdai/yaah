@@ -51,6 +51,17 @@ func TestValidateACPRequiresDeclaredAgent(t *testing.T) {
 	}
 }
 
+func TestValidateACPRejectsMalformedEnv(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Agent.SubAgent.ACPAgents = map[string]ACPAgentConfig{
+		"vibe": {Command: "vibe-acp", Env: []string{"BROKEN"}},
+	}
+	err := Validate(cfg)
+	if err == nil || !strings.Contains(err.Error(), "must be KEY=VALUE") {
+		t.Fatalf("malformed env should be rejected at startup, got %v", err)
+	}
+}
+
 func TestValidateACPRejectsIsolatedWorld(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Agent.SubAgent.ACPAgents = map[string]ACPAgentConfig{

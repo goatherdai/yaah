@@ -669,14 +669,21 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			// minimum start it in the session workspace rather than the host
 			// cwd, and refuse lanes that promise a sealed worktree we cannot
 			// provide. The agent's own OS access remains its own trust boundary.
-			if params.Workdir == "" && opts.pathValidator != nil {
-				if wd := strings.TrimSpace(opts.pathValidator.WorkDir); wd != "" {
-					params.Workdir = wd
-				} else if root := strings.TrimSpace(opts.pathValidator.WorkspaceRoot); root != "" {
-					params.Workdir = root
+			if params.Workdir == "" {
+				if opts.workspace != nil {
+					params.Workdir = opts.workspace.WorkDir()
+				} else if opts.pathValidator != nil {
+					if wd := strings.TrimSpace(opts.pathValidator.WorkDir); wd != "" {
+						params.Workdir = wd
+					} else if root := strings.TrimSpace(opts.pathValidator.WorkspaceRoot); root != "" {
+						params.Workdir = root
+					}
 				}
 			}
-			if strings.EqualFold(profile.Output, "proposal") || params.Lane == "retained-proposal" {
+			// dispatch.Run sets params.Lane to "shared" or "retained"; both
+			// isolated variants (proposal and retained-report) arrive as
+			// "retained". Neither can be honoured by an external process.
+			if params.Lane == "retained" {
 				return "", fmt.Errorf("sub-agent %s: backend acp requires a report lane (no sealed worktree)", role)
 			}
 			// The in-process path caps results with outLimit (per-call, role,

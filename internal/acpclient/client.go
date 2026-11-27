@@ -13,15 +13,17 @@ import (
 // streamed updates into one final text result and auto-answers permission
 // requests, matching the allow-mode posture of yaah's in-process sub-agents.
 type collector struct {
-	mu            sync.Mutex
-	text          strings.Builder
-	updates       int
-	messageChunks int
-	toolCalls     int
-	permissions   int
-	lastUsage     acp.SessionUsageUpdate
-	autoApprove   bool
-	denials       []jobs.SubAgentDenial
+	mu                sync.Mutex
+	text              strings.Builder
+	updates           int
+	messageChunks     int
+	toolCalls         int
+	permissions       int
+	lastUsage         acp.SessionUsageUpdate
+	autoApprove       bool
+	permitAllowAlways bool
+	denials           []jobs.SubAgentDenial
+	permissionKinds   []string
 }
 
 var _ acp.Client = (*collector)(nil)
@@ -57,31 +59,42 @@ func (c *collector) RequestPermission(_ context.Context, p acp.RequestPermission
 
 	// Select an option by kind, never by label: the agent chooses both the
 	// id and the polarity, so a label cannot be trusted to mean "allow".
-	selectByKind := func(kinds ...acp.PermissionOptionKind) (acp.PermissionOptionId, bool) {
+	selectByKind := func(kinds ...acp.PermissionOptionKind) (acp.PermissionOptionId, acp.PermissionOptionKind, bool) {
 		for _, option := range p.Options {
 			for _, kind := range kinds {
 				if option.Kind == kind {
-					return option.OptionId, true
+					return option.OptionId, kind, true
 				}
 			}
 		}
-		return "", false
+		return "", "", false
+	}
+	selected := func(id acp.PermissionOptionId, kind acp.PermissionOptionKind) acp.RequestPermissionResponse {
+		c.mu.Lock()
+		c.permissionKinds = append(c.permissionKinds, string(kind))
+		c.mu.Unlock()
+		return acp.RequestPermissionResponse{Outcome: acp.NewRequestPermissionOutcomeSelected(id)}
 	}
 
-	allowKinds := []acp.PermissionOptionKind{acp.PermissionOptionKindAllowOnce, acp.PermissionOptionKindAllowAlways}
+	// A sub-agent has no approval bridge, so grant only this once unless the
+	// caller explicitly opts into persistent grants.
+	allowKinds := []acp.PermissionOptionKind{acp.PermissionOptionKindAllowOnce}
+	if c.permitAllowAlways {
+		allowKinds = append(allowKinds, acp.PermissionOptionKindAllowAlways)
+	}
 	rejectKinds := []acp.PermissionOptionKind{acp.PermissionOptionKindRejectOnce, acp.PermissionOptionKindRejectAlways}
 
 	if auto {
-		if id, ok := selectByKind(allowKinds...); ok {
-			return acp.RequestPermissionResponse{Outcome: acp.NewRequestPermissionOutcomeSelected(id)}, nil
+		if id, kind, ok := selectByKind(allowKinds...); ok {
+			return selected(id, kind), nil
 		}
-		if id, ok := selectByKind(rejectKinds...); ok {
+		if id, kind, ok := selectByKind(rejectKinds...); ok {
 			c.recordDenial(tool, "permission request offered no allow option")
-			return acp.RequestPermissionResponse{Outcome: acp.NewRequestPermissionOutcomeSelected(id)}, nil
+			return selected(id, kind), nil
 		}
-	} else if id, ok := selectByKind(rejectKinds...); ok {
+	} else if id, kind, ok := selectByKind(rejectKinds...); ok {
 		c.recordDenial(tool, "acpclient permission policy is deny")
-		return acp.RequestPermissionResponse{Outcome: acp.NewRequestPermissionOutcomeSelected(id)}, nil
+		return selected(id, kind), nil
 	}
 	return acp.RequestPermissionResponse{}, acp.NewInvalidParams(map[string]any{
 		"error": "acpclient: permission request offered no selectable option",
@@ -95,10 +108,11 @@ func (c *collector) recordDenial(tool, reason string) {
 }
 
 // result returns a snapshot of everything collected during the turn.
-func (c *collector) result() (text string, chunks, calls, permissions, updates int, usage acp.SessionUsageUpdate, denials []jobs.SubAgentDenial) {
+func (c *collector) result() (text string, chunks, calls, permissions, updates int, usage acp.SessionUsageUpdate, denials []jobs.SubAgentDenial, permissionKinds []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.text.String(), c.messageChunks, c.toolCalls, c.permissions, c.updates, c.lastUsage, append([]jobs.SubAgentDenial(nil), c.denials...)
+	return c.text.String(), c.messageChunks, c.toolCalls, c.permissions, c.updates, c.lastUsage,
+		append([]jobs.SubAgentDenial(nil), c.denials...), append([]string(nil), c.permissionKinds...)
 }
 
 func notFound(method string) *acp.RequestError { return acp.NewMethodNotFound(method) }

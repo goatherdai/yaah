@@ -117,7 +117,9 @@ Notes worth knowing per kind:
   envelope; tool calls inside the external agent are not visible to yaah's
   permission middleware. The child is started in the session workspace (or the
   manifest's `cwd`), but yaah cannot sandbox the external process — treat the
-  configured ACP agent as trusted code.
+  configured ACP agent as trusted code. Permission requests are auto-answered
+  with `allow_once` only; persistent `allow_always` grants require an explicit
+  opt-in. Descendants spawned by the external agent are not reaped by yaah.
 - **`fanout`/`loop`** bodies are node lists; each item/iteration mints body
   instances (`steps.<id>.items[2].body[0]`, `steps.<id>.iters[1].body[0]`).
   The `collect` accumulates one entry per succeeded item/iteration — the

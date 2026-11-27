@@ -77,6 +77,39 @@ func TestMakeTaskRunnerACPUsesWorkspaceWorkdir(t *testing.T) {
 	}
 }
 
+type workdirWorkspace struct {
+	substrate.Workspace
+	dir string
+}
+
+func (w workdirWorkspace) WorkDir() string         { return w.dir }
+func (w workdirWorkspace) Local() bool             { return true }
+func (w workdirWorkspace) Shell() (string, string) { return "sh", "-c" }
+
+func TestMakeTaskRunnerACPPrefersWorkspaceWorkdir(t *testing.T) {
+	var seen tools.SubAgentParams
+	opts := taskRunnerOpts{
+		workspace:     workdirWorkspace{dir: "/sandbox/workspace"},
+		pathValidator: &substrate.PathValidator{WorkDir: "/host/worktree"},
+		subCfg: config.SubAgentConfig{Roles: map[string]config.RoleConfig{
+			"developer": {Backend: "acp", ACPAgent: "vibe"},
+		}},
+		resolveTaskRunner: func(backend, agent string) tools.TaskRunner {
+			return func(_ context.Context, _ string, params tools.SubAgentParams) (string, error) {
+				seen = params
+				return "ok", nil
+			}
+		},
+	}
+	run := makeTaskRunner(opts, 1)
+	if _, err := run(context.Background(), "hi", tools.SubAgentParams{Role: "developer"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if seen.Workdir != "/sandbox/workspace" {
+		t.Fatalf("ACP runner workdir = %q, want the sandbox workspace", seen.Workdir)
+	}
+}
+
 func TestMakeTaskRunnerACPRefusesProposalLane(t *testing.T) {
 	opts := taskRunnerOpts{
 		subCfg: config.SubAgentConfig{Roles: map[string]config.RoleConfig{
@@ -87,7 +120,7 @@ func TestMakeTaskRunnerACPRefusesProposalLane(t *testing.T) {
 		},
 	}
 	run := makeTaskRunner(opts, 1)
-	_, err := run(context.Background(), "hi", tools.SubAgentParams{Role: "developer", Lane: "retained-proposal"})
+	_, err := run(context.Background(), "hi", tools.SubAgentParams{Role: "developer", Lane: "retained"})
 	if err == nil {
 		t.Fatal("proposal lane must be refused for an ACP backend")
 	}
