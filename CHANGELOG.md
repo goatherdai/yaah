@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.223.0](https://github.com/goatherdai/yaah/compare/v0.222.2...v0.223.0) (2026-11-27)
+
+
+### Features
+
+* **tui:** header padding row and a separator rule under the prompt pin ([#448](https://github.com/goatherdai/yaah/issues/448)) ([4cbd615](https://github.com/goatherdai/yaah/commit/4cbd6151cc6cd2d20505de524c27115371b17b72))
+
 ## [0.222.2](https://github.com/goatherdai/yaah/compare/v0.222.1...v0.222.2) (2026-11-27)
 
 
