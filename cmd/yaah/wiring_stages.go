@@ -52,6 +52,7 @@ import (
 	"github.com/goatherdai/yaah/internal/providers"
 	"github.com/goatherdai/yaah/internal/providers/catalog"
 	"github.com/goatherdai/yaah/internal/todo"
+	"github.com/goatherdai/yaah/internal/toolcontract"
 	"github.com/goatherdai/yaah/internal/tools"
 	"github.com/goatherdai/yaah/internal/types"
 	"github.com/goatherdai/yaah/internal/wake"
@@ -1563,14 +1564,14 @@ func wireBackgroundJobs(st *loopInfraStage, tr *toolRegistryStage) {
 	// reached the host would close an import cycle. It is registered
 	// unconditionally: unlike the gated lanes it needs no store, sandbox or
 	// scope tree, and a run it cannot complete reports why.
-	tr.reg.Admit("workflow_run")
+	tr.reg.Admit(toolcontract.ToolWorkflowRun)
 	tr.reg.Register(&WorkflowRunTool{})
 
 	// workflow_list (workflow default-location feature): the discovery
 	// companion to workflow_run. Same layering and registration shape — it
 	// lives in this package beside workflow_run and reaches only the discover
 	// leaf, so the agent can list specs before running one.
-	tr.reg.Admit("workflow_list")
+	tr.reg.Admit(toolcontract.ToolWorkflowList)
 	tr.reg.Register(&WorkflowListTool{})
 }
 

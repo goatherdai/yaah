@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/goatherdai/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/toolcontract"
 	"github.com/goatherdai/yaah/internal/tools"
 	"github.com/goatherdai/yaah/internal/workflow/discover"
 	"github.com/goatherdai/yaah/internal/workflow/exec"
@@ -49,7 +50,7 @@ var _ tools.WorkspaceSetter = (*WorkflowRunTool)(nil)
 // than the server process's.
 func (t *WorkflowRunTool) SetWorkspace(ws tools.Workspace) { t.WS = ws }
 
-func (t *WorkflowRunTool) Name() string { return "workflow_run" }
+func (t *WorkflowRunTool) Name() string { return toolcontract.ToolWorkflowRun }
 
 func (t *WorkflowRunTool) Description() string {
 	return prompts.ToolDescription("workflow_run")

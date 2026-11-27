@@ -8,6 +8,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
+	"github.com/goatherdai/yaah/internal/toolcontract"
 	"github.com/goatherdai/yaah/internal/tools"
 	"github.com/goatherdai/yaah/internal/tui/colors"
 )
@@ -362,7 +363,10 @@ func TestRender_EndsWithFullReset(t *testing.T) {
 // explained here, not silent fallbacks.
 //
 // workflow_run and workflow_list are cmd-level tools (cmd/yaah), outside
-// the policy table, and are asserted alongside it for the same reason.
+// the policy table; their names live in toolcontract.CmdLevelToolNames —
+// the registry cmd/yaah's Name(), Admit, and belt entries read — so a new
+// cmd-level tool joins the inventory by being registered there, and this
+// test fails its coverage until the icon and color entries exist.
 func TestIconAndColor_CoverEveryBuiltIn(t *testing.T) {
 	// delegate never renders a tool block — the TUI skips it
 	// (proxy.go routes sub-agents to their own pane instead).
@@ -382,7 +386,7 @@ func TestIconAndColor_CoverEveryBuiltIn(t *testing.T) {
 			}
 		})
 	}
-	for _, name := range []string{"workflow_run", "workflow_list"} {
+	for _, name := range toolcontract.CmdLevelToolNames() {
 		if got := Icon(name); got == "🔧" {
 			t.Errorf("cmd-level tool %q renders the fallback icon; add a distinct entry to Icon()", name)
 		}

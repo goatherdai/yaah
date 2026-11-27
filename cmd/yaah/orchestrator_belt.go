@@ -1,5 +1,7 @@
 package yaah
 
+import "github.com/goatherdai/yaah/internal/toolcontract"
+
 // orchestrator_belt.go holds the default orchestrator belt (yaah-6mi9.1).
 //
 // Agents.default.tools omitted used to mean "register everything" — and
@@ -123,11 +125,11 @@ var defaultOrchestratorBelt = []string{
 	// always-on tool is an acknowledged floor cost of ~780 tokens/call,
 	// admitted deliberately so the orchestrator runs a document in-process
 	// instead of shelling out to `yaah workflow run`.
-	"workflow_run",
+	toolcontract.ToolWorkflowRun,
 	// workflow_list is workflow_run's discovery companion (default-location
 	// feature): the agent lists the runnable specs before choosing one. Same
 	// acknowledged floor cost, admitted so list-then-run needs no config.
-	"workflow_list",
+	toolcontract.ToolWorkflowList,
 	"write",
 }
 

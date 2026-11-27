@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/goatherdai/yaah/internal/control"
+	"github.com/goatherdai/yaah/internal/toolcontract"
 	"github.com/goatherdai/yaah/internal/tools"
 	"github.com/goatherdai/yaah/internal/workflow/exec"
 )
@@ -86,7 +87,7 @@ func installControlBridges(sess *agentSession, surface control.Surface) {
 		// this bridge projects each committed lifecycle event onto the control
 		// surface so the TUI can show per-node progress live instead of only
 		// the report at completion (workflow-in-session Scope B).
-		if wt, ok := reg.Get("workflow_run").(*WorkflowRunTool); ok {
+		if wt, ok := reg.Get(toolcontract.ToolWorkflowRun).(*WorkflowRunTool); ok {
 			wt.progress = func(p exec.ProgressEvent) {
 				if msg := workflowProgressMsg(p); msg != nil {
 					surface.Send(msg)
