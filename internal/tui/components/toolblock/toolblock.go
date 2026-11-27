@@ -103,6 +103,10 @@ const (
 	Running State = iota
 	Done
 	Error
+	// Interrupted is terminal without a result: the turn ended before the
+	// call's end event arrived (the DoneEvent sweep), so the block is
+	// sealed with an explicit marker instead of a permanent chevron.
+	Interrupted
 )
 
 type Block struct {
@@ -141,6 +145,11 @@ func (b *Block) S() State         { return b.state }
 func (b *Block) IsExpanded() bool { return b.expanded }
 func (b *Block) Toggle()          { b.expanded = !b.expanded }
 
+// IsRunning reports whether the block is still waiting for its end
+// event; the turn-end sweep uses it so callers do not need this
+// package's constants.
+func (b *Block) IsRunning() bool { return b.state == Running }
+
 // SearchText returns the block's searchable content: the tool name, its
 // args, and its result. Search runs over this instead of the rendered
 // form so it stays cheap and independent of the paint width.
@@ -163,6 +172,15 @@ func (b *Block) Fail(summary, err string) {
 	b.state = Error
 	b.tag = summary
 	b.result = err
+}
+
+// Interrupt seals a still-Running block whose end event never arrived:
+// the turn is over, so no result exists to show — only the fact that the
+// call was cut short.
+func (b *Block) Interrupt() {
+	b.endTime = time.Now()
+	b.state = Interrupted
+	b.tag = "interrupted"
 }
 
 func (b *Block) Render() string { return b.RenderCtx(colors.RenderCtx{Theme: b.theme}) }
@@ -199,6 +217,10 @@ func (b *Block) renderCollapsed() string {
 	case Error:
 		return fmt.Sprintf(`  %s✗ %s %s%s %s· %s (%s)%s`,
 			b.theme.ColorTag(hex), b.icon, b.name, b.theme.ResetTag(), b.theme.DimTag(), b.theme.Tag(b.theme.Error, b.tag), b.durationStr(), b.theme.ResetTag())
+	case Interrupted:
+		return fmt.Sprintf(`  %s◌ %s %s%s %s· %s (%s, %s)%s`,
+			b.theme.ColorTag(hex), b.icon, b.name, b.theme.ResetTag(),
+			b.theme.DimTag(), b.args, b.tag, b.durationStr(), b.theme.ResetTag())
 	default:
 		return ""
 	}
@@ -221,6 +243,9 @@ func (b *Block) renderExpanded(width int) string {
 			b.theme.ColorTag(hex), b.icon, b.name, b.theme.ResetTag())
 	case Error:
 		header = fmt.Sprintf(`  %s✗ %s %s%s`,
+			b.theme.ColorTag(hex), b.icon, b.name, b.theme.ResetTag())
+	case Interrupted:
+		header = fmt.Sprintf(`  %s◌ %s %s%s`,
 			b.theme.ColorTag(hex), b.icon, b.name, b.theme.ResetTag())
 	}
 	fill := max(2, width-colors.TaggedStringWidth(header)-2)
@@ -253,6 +278,11 @@ func (b *Block) renderExpanded(width int) string {
 
 	if b.state == Error && b.result != "" {
 		bld.WriteString(fmt.Sprintf(`  %s│%s %s`, b.theme.DimTag(), b.theme.ResetTag(), b.theme.Tag(b.theme.Error, b.result)))
+		bld.WriteString("\n")
+	}
+
+	if b.state == Interrupted {
+		bld.WriteString(fmt.Sprintf(`  %s│%s Interrupted: no result was delivered`, b.theme.DimTag(), b.theme.ResetTag()))
 		bld.WriteString("\n")
 	}
 

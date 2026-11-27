@@ -395,3 +395,51 @@ func TestIconAndColor_CoverEveryBuiltIn(t *testing.T) {
 		}
 	}
 }
+
+func TestRender_InterruptedCollapsed(t *testing.T) {
+	th := colors.NewDarkTheme()
+	b := New("t1", "bash", `{"command":"ls"}`, &th)
+	b.Interrupt()
+	out := b.Render()
+	if !strings.Contains(out, "◌") {
+		t.Errorf("interrupted collapsed should contain ◌, got %q", out)
+	}
+	if !strings.Contains(out, "interrupted") {
+		t.Errorf("interrupted collapsed should carry the marker, got %q", out)
+	}
+	if strings.Contains(out, "▶") {
+		t.Error("interrupted collapsed must not contain the running chevron")
+	}
+	if b.S() != Interrupted {
+		t.Errorf("state = %d, want Interrupted", b.S())
+	}
+}
+
+func TestRender_InterruptedExpanded(t *testing.T) {
+	th := colors.NewDarkTheme()
+	b := New("t1", "bash", `{"command":"ls"}`, &th)
+	b.Toggle()
+	b.Interrupt()
+	out := b.Render()
+	if !strings.Contains(out, "◌") {
+		t.Errorf("interrupted expanded should contain ◌, got %q", out)
+	}
+	if !strings.Contains(out, "Interrupted: no result was delivered") {
+		t.Errorf("interrupted expanded should explain the marker, got %q", out)
+	}
+	if strings.Contains(out, "▶") {
+		t.Error("interrupted expanded must not contain the running chevron")
+	}
+}
+
+func TestIsRunning(t *testing.T) {
+	th := colors.NewDarkTheme()
+	b := New("t1", "read", "", &th)
+	if !b.IsRunning() {
+		t.Error("a fresh block is running")
+	}
+	b.Interrupt()
+	if b.IsRunning() {
+		t.Error("an interrupted block is not running")
+	}
+}

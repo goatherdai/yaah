@@ -39,6 +39,8 @@ var (
 	tuiRefreshCad   metric.Int64Histogram
 
 	memoryEmbedFailures metric.Int64Counter
+
+	tuiToolOrphans metric.Int64Counter
 )
 
 func initMetrics() {
@@ -138,6 +140,11 @@ func initMetrics() {
 		metric.WithUnit("ms"),
 	)
 
+	tuiToolOrphans, _ = meter.Int64Counter(
+		"yaah.tui.tool_orphans",
+		metric.WithDescription("Tool blocks sealed without a matched end event: unmatched end events and still-Running blocks swept at turn end"),
+	)
+
 	memoryEmbedFailures, _ = meter.Int64Counter(
 		"yaah.memory.embed_failures",
 		metric.WithDescription("Number of memory embedding operations that failed"),
@@ -216,6 +223,16 @@ func RecordTUIQueueEvent(ctx context.Context, eventType, outcome string, depth i
 }
 
 // RecordTUIRefresh records refresh count, duration, cadence, and queue depth.
+// RecordTUIToolOrphan counts one tool-block orphan: kind is
+// "unmatched_end" (an end event arrived with no block to receive it) or
+// "swept" (a still-Running block sealed by the turn-end sweep).
+func RecordTUIToolOrphan(ctx context.Context, kind string) {
+	if tuiToolOrphans == nil {
+		return
+	}
+	tuiToolOrphans.Add(ctx, 1, metric.WithAttributes(attribute.String("orphan_kind", kind)))
+}
+
 func RecordTUIRefresh(ctx context.Context, duration time.Duration, cadence time.Duration, queueDepth int) {
 	if tuiRefreshCount == nil {
 		return
