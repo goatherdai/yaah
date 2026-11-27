@@ -80,17 +80,18 @@ func TestMakeTaskRunnerACPUsesWorkspaceWorkdir(t *testing.T) {
 
 type workdirWorkspace struct {
 	substrate.Workspace
-	dir string
+	dir   string
+	local bool
 }
 
 func (w workdirWorkspace) WorkDir() string         { return w.dir }
-func (w workdirWorkspace) Local() bool             { return true }
+func (w workdirWorkspace) Local() bool             { return w.local }
 func (w workdirWorkspace) Shell() (string, string) { return "sh", "-c" }
 
 func TestMakeTaskRunnerACPPrefersWorkspaceWorkdir(t *testing.T) {
 	var seen tools.SubAgentParams
 	opts := taskRunnerOpts{
-		workspace:     workdirWorkspace{dir: "/sandbox/workspace"},
+		workspace:     workdirWorkspace{dir: "/sandbox/workspace", local: true},
 		pathValidator: &substrate.PathValidator{WorkDir: "/host/worktree"},
 		subCfg: config.SubAgentConfig{Roles: map[string]config.RoleConfig{
 			"developer": {Backend: "acp", ACPAgent: "vibe"},
@@ -121,8 +122,11 @@ func TestMakeTaskRunnerACPRefusesProposalLane(t *testing.T) {
 		},
 	}
 	run := makeTaskRunner(opts, 1)
-	ctx := dispatch.WithLane(context.Background(), dispatch.LaneProposal)
-	_, err := run(ctx, "hi", tools.SubAgentParams{Role: "developer", Lane: "retained"})
+	// A background job has no lane on ctx; the concrete lane must ride in
+	// SubAgentParams so the guard still fires.
+	_, err := run(context.Background(), "hi", tools.SubAgentParams{
+		Role: "developer", Lane: "retained", DispatchLane: string(dispatch.LaneProposal),
+	})
 	if err == nil {
 		t.Fatal("proposal lane must be refused for an ACP backend")
 	}
@@ -138,9 +142,26 @@ func TestMakeTaskRunnerACPAllowsRetainedReportLane(t *testing.T) {
 		},
 	}
 	run := makeTaskRunner(opts, 1)
-	ctx := dispatch.WithLane(context.Background(), dispatch.LaneReport)
-	if _, err := run(ctx, "hi", tools.SubAgentParams{Role: "developer", Lane: "retained"}); err != nil {
+	if _, err := run(context.Background(), "hi", tools.SubAgentParams{
+		Role: "developer", Lane: "retained", DispatchLane: string(dispatch.LaneReport),
+	}); err != nil {
 		t.Fatalf("report lane on a retained world should be allowed: %v", err)
+	}
+}
+
+func TestMakeTaskRunnerACPRefusesNonLocalWorkspace(t *testing.T) {
+	opts := taskRunnerOpts{
+		workspace: workdirWorkspace{dir: "/container/workspace", local: false},
+		subCfg: config.SubAgentConfig{Roles: map[string]config.RoleConfig{
+			"developer": {Backend: "acp", ACPAgent: "vibe"},
+		}},
+		resolveTaskRunner: func(backend, agent string) tools.TaskRunner {
+			return func(context.Context, string, tools.SubAgentParams) (string, error) { return "ok", nil }
+		},
+	}
+	run := makeTaskRunner(opts, 1)
+	if _, err := run(dispatch.WithLane(context.Background(), dispatch.LaneReport), "hi", tools.SubAgentParams{Role: "developer"}); err == nil {
+		t.Fatal("a container workdir must not be handed to a host child process")
 	}
 }
 

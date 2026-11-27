@@ -171,6 +171,7 @@ func Run(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
 		lane = LaneProposal
 	}
 	ctx = WithLane(ctx, lane)
+	params.DispatchLane = string(lane)
 	if params.Lane == "" {
 		if req.Retained == nil || lane == LaneShared {
 			params.Lane = "shared"
