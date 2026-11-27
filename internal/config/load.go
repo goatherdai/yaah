@@ -460,6 +460,19 @@ type SubAgentConfig struct {
 	// Roles holds per-role overrides keyed by role name
 	// ("analyst", "developer", "tester", "reviewer").
 	Roles map[string]RoleConfig `yaml:"roles"`
+
+	// ACPAgents names external ACP agents that roles may dispatch to with
+	// backend: acp. The agent is launched as a child process and driven over
+	// stdio; its own credentials and configuration stay with that agent.
+	ACPAgents map[string]ACPAgentConfig `yaml:"acp_agents,omitempty"`
+}
+
+// ACPAgentConfig describes one external ACP agent executable.
+type ACPAgentConfig struct {
+	Command string   `yaml:"command"`
+	Args    []string `yaml:"args,omitempty"`
+	Env     []string `yaml:"env,omitempty"`
+	Cwd     string   `yaml:"cwd,omitempty"`
 }
 
 // GrantConfig is one declared root inside a dispatch world.
@@ -516,6 +529,14 @@ type RoleConfig struct {
 	// supervisor default; an explicit empty list stays deny-all (a shell
 	// can execute anything a pattern matcher cannot see).
 	AllowCommands []string `yaml:"allow_commands"`
+
+	// Backend selects the dispatch backend: empty or "loop" runs yaah's
+	// in-process agent loop; "acp" runs an external agent named by ACPAgent.
+	Backend string `yaml:"backend,omitempty"`
+
+	// ACPAgent names the entry in agents.subagent.acp_agents when Backend
+	// is "acp".
+	ACPAgent string `yaml:"acp_agent,omitempty"`
 }
 
 // MCPServerConfig holds the configuration for a single MCP server,

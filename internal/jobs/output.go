@@ -98,6 +98,11 @@ type SubAgentParams struct {
 	// Lane names the dispatch lane for trace aggregation: "shared" or
 	// "retained". Empty means unknown (older callers/tests).
 	Lane string
+
+	// DispatchLane is the concrete lane ("shared", "report", "proposal").
+	// Unlike Lane it survives background-job context resets, so backends
+	// that cannot honour a sealed proposal can fail closed reliably.
+	DispatchLane string
 }
 
 // EscalationSeverity classifies how serious a sub-agent escalation is.

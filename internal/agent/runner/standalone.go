@@ -72,6 +72,10 @@ type StandaloneOpts struct {
 	// Provider — provider construction is CLI wiring and does not belong
 	// here.
 	ResolveProviderByName func(map[string]config.Provider, string) agent.Provider
+
+	// ResolveTaskRunner resolves a backend/agent name to a sub-agent runner.
+	// Injected from the composition root; nil leaves only the in-process loop.
+	ResolveTaskRunner func(backend, agent string) tools.TaskRunner
 }
 
 // standaloneDepth is the nesting depth a standalone dispatch grants: zero, so
@@ -109,6 +113,7 @@ func NewStandaloneTaskRunner(opts StandaloneOpts) (tools.TaskRunner, error) {
 		toolSpillDir:          opts.ToolSpillDir,
 		pathValidator:         opts.PathValidator,
 		resolveProviderByName: opts.ResolveProviderByName,
+		resolveTaskRunner:     opts.ResolveTaskRunner,
 
 		// Deliberately unset, because a standalone command has no session to
 		// resolve them from:

@@ -161,6 +161,15 @@ agents:
     containment: auto                  # auto | off | paddock
     network: allow_all                 # allow_all | deny_all | broker
     network_hosts: []                  # broker allowlist; empty = admit nothing
+    # External ACP agents: named executables launched over stdio and driven
+    # with the Agent Client Protocol. A role with backend: acp runs its whole
+    # turn in one of these instead of yaah's in-process loop.
+    # acp_agents:
+    #   vibe:
+    #     command: vibe-acp
+    #     args: []
+    #     env: []                       # extra KEY=VALUE entries
+    #     cwd: /abs/path                # optional; must be absolute
     roles:
       analyst:
         timeout: 600
@@ -178,6 +187,10 @@ agents:
       tester:
         timeout: 300
         max_iterations: 30
+      # external:
+      #   backend: acp                 # "" | loop (default) | acp
+      #   acp_agent: vibe              # name from agents.subagent.acp_agents
+      #   world: auto                  # worktree/container are rejected for acp
 
   fallback:
     provider: ollama

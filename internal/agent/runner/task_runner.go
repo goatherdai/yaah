@@ -22,6 +22,7 @@ import (
 	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/agent/supervision"
 	"github.com/goatherdai/yaah/internal/config"
+	"github.com/goatherdai/yaah/internal/dispatch"
 	"github.com/goatherdai/yaah/internal/memory"
 	"github.com/goatherdai/yaah/internal/permissions"
 	"github.com/goatherdai/yaah/internal/supervisionapi"
@@ -168,6 +169,10 @@ type taskRunnerOpts struct {
 	// the planner's provider.
 	resolveProviderByName func(pmap map[string]config.Provider, name string) agent.Provider
 
+	// resolveTaskRunner resolves a configured backend/agent name to a
+	// sub-agent runner. Nil means only the in-process loop is available.
+	resolveTaskRunner func(backend, agent string) tools.TaskRunner
+
 	// now mints dispatch timestamps for the sub-agent trace ID. Nil means
 	// time.Now; tests pin it to force two dispatches into the same clock
 	// tick and prove the per-dispatch sequence keeps their scope keys
@@ -248,6 +253,10 @@ type dispatchRoute struct {
 	provider     agent.Provider
 	providerName string
 	model        string
+	// backend is "loop" (the in-process agent loop) or "acp"; agent names
+	// the external ACP agent in the registry for the latter.
+	backend string
+	agent   string
 }
 
 // resolveDispatchRoute applies the parity-W1 routing chain:
@@ -286,6 +295,17 @@ func resolveDispatchRoute(opts taskRunnerOpts, role subagent.SubAgentRole, param
 	// The config role entry is config-authoritative: it sits above the
 	// role file, and an unresolvable entry falls through to it.
 	rc, hasRC := opts.subCfg.Roles[string(role)]
+
+	// Backend routing is config-authoritative and independent of provider
+	// resolution: an ACP role hands the whole turn to an external agent.
+	backend, acpAgent := "loop", ""
+	if hasRC {
+		if b := strings.TrimSpace(rc.Backend); b != "" {
+			backend = strings.ToLower(b)
+		}
+		acpAgent = rc.ACPAgent
+	}
+	route.backend, route.agent = backend, acpAgent
 
 	// providerDecided tracks whether an explicit source picked the
 	// provider; the parent/global defaults only fill what nobody named.
@@ -542,6 +562,52 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		role := subagent.SubAgentRole(params.Role)
 		profile := subagent.RoleProfileFor(role)
 
+		// Resolve routing and the output cap before any in-process preflight.
+		// An external ACP agent does not use yaah's tool registry, permission
+		// rules, or confinement, so those checks must not gate it.
+		outLimit := resolveOutputLimit(params.OutputLimit, opts.subCfg, role, opts.outputLimit)
+		route := resolveDispatchRoute(opts, role, params, profile)
+
+		// An ACP-backed role hands the entire turn to the external agent.
+		// The runner owns model/start/usage/transcript reporting, so none of
+		// the in-process loop, scope, or settlement machinery applies here.
+		if route.backend == "acp" {
+			if opts.resolveTaskRunner == nil {
+				return "", fmt.Errorf("sub-agent %s: backend acp is not wired", role)
+			}
+			runner := opts.resolveTaskRunner("acp", route.agent)
+			if runner == nil {
+				return "", fmt.Errorf("sub-agent %s: no ACP agent %q configured", role, route.agent)
+			}
+			// An external agent is not sandboxed by yaah's tool layer, and a
+			// container workspace path is not host-visible to a child process.
+			if opts.workspace != nil && !opts.workspace.Local() {
+				return "", fmt.Errorf("sub-agent %s: backend acp needs a host-visible workspace", role)
+			}
+			// At minimum start it in the session workspace rather than the
+			// host cwd. The agent's own OS access remains its trust boundary.
+			if params.Workdir == "" {
+				if opts.workspace != nil {
+					params.Workdir = opts.workspace.WorkDir()
+				} else if opts.pathValidator != nil {
+					if wd := strings.TrimSpace(opts.pathValidator.WorkDir); wd != "" {
+						params.Workdir = wd
+					} else if root := strings.TrimSpace(opts.pathValidator.WorkspaceRoot); root != "" {
+						params.Workdir = root
+					}
+				}
+			}
+			// Params.Lane only names the substrate: a report on a retained
+			// world and a sealed proposal both arrive as "retained". The
+			// concrete lane rides on the dispatch params/context, so refuse
+			// only a true proposal.
+			if dispatch.Lane(params.DispatchLane) == dispatch.LaneProposal || dispatch.LaneFromContext(ctx) == dispatch.LaneProposal {
+				return "", fmt.Errorf("sub-agent %s: backend acp cannot run a proposal lane (no sealed worktree)", role)
+			}
+			params.OutputLimit = outLimit
+			return runner(ctx, prompt, params)
+		}
+
 		// Is THIS dispatch supervised? (design §4.2, yaah-ugtl) The
 		// dispatching tool resolves it — the per-call supervise override over
 		// the session posture — and carries the answer on the dispatch
@@ -618,8 +684,6 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			jsonMode = true
 		}
 
-		outLimit := resolveOutputLimit(params.OutputLimit, opts.subCfg, role, opts.outputLimit)
-
 		sysPrompt := buildSubAgentSysPrompt(opts, role, profile, jsonMode, params.Workdir, subConf)
 
 		// Record the role's directives on the sub-agent span so traces
@@ -630,7 +694,6 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			}
 		}
 
-		route := resolveDispatchRoute(opts, role, params, profile)
 		subProvider := route.provider
 		subProviderName := route.providerName
 		subModel := route.model
