@@ -8,6 +8,8 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
+	"github.com/goatherdai/yaah/internal/toolcontract"
+	"github.com/goatherdai/yaah/internal/tools"
 	"github.com/goatherdai/yaah/internal/tui/colors"
 )
 
@@ -55,14 +57,17 @@ func TestIcon_Known(t *testing.T) {
 // same way by every terminal.
 func TestIcon_SingleRuneAndDoubleWidth(t *testing.T) {
 	names := []string{
-		"read", "write", "edit", "delete", "patch", "sed", "replace",
-		"grep", "glob", "ls", "file_info", "http", "webfetch", "bash",
+		"read", "write", "edit", "delete", "rmdir", "patch", "sed", "replace",
+		"append", "apply_out", "bulk_files", "checksum", "copy", "copy_tree",
+		"find", "grep", "glob", "ls", "file_info", "http", "webfetch", "bash",
 		"powershell", "git", "diff", "bisect", "go_test", "go_outline",
 		"go_refactor", "staticcheck", "go_mod", "json_query", "calculate",
 		"todowrite", "question", "plan", "list_subagents", "skill", "role",
 		"memory_search", "memory_add", "memory_update", "memory_delete",
 		"memory_search_sessions", "background_process", "task", "",
-		"nonexistent_tool",
+		"mkdir", "move", "move_tree", "tail", "mcp", "subagent_jobs",
+		"supervise", "supervisor", "proposal", "toolbelt", "wait_for",
+		"watch", "workflow_run", "workflow_list", "nonexistent_tool",
 	}
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
@@ -345,5 +350,48 @@ func TestRender_EndsWithFullReset(t *testing.T) {
 				t.Errorf("collapsed render should end with full reset, got %q", out)
 			}
 		})
+	}
+}
+
+// TestIconAndColor_CoverEveryBuiltIn is the drift guard (yaah-ubkc): the
+// icon table, the color table, and the capability policy table are three
+// hand-maintained lists with no shared source of truth, so a new tool
+// silently rendered the generic fallback icon and the dim color — the
+// exact drift the bead was filed over. The policy table is the
+// authoritative built-in inventory; every name in it must have a real
+// icon and color unless it is exempt. Exemptions are explicit and
+// explained here, not silent fallbacks.
+//
+// workflow_run and workflow_list are cmd-level tools (cmd/yaah), outside
+// the policy table; their names live in toolcontract.CmdLevelToolNames —
+// the registry cmd/yaah's Name(), Admit, and belt entries read — so a new
+// cmd-level tool joins the inventory by being registered there, and this
+// test fails its coverage until the icon and color entries exist.
+func TestIconAndColor_CoverEveryBuiltIn(t *testing.T) {
+	// delegate never renders a tool block — the TUI skips it
+	// (proxy.go routes sub-agents to their own pane instead).
+	exempt := map[string]bool{"delegate": true}
+
+	th := colors.NewDarkTheme()
+	for name := range tools.Policies() {
+		if exempt[name] {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			if got := Icon(name); got == "🔧" {
+				t.Errorf("built-in %q renders the fallback icon; add a distinct entry to Icon()", name)
+			}
+			if got := th.ToolHex(name); got == th.Dim {
+				t.Errorf("built-in %q renders the fallback dim color; add an entry to newToolColors()", name)
+			}
+		})
+	}
+	for _, name := range toolcontract.CmdLevelToolNames() {
+		if got := Icon(name); got == "🔧" {
+			t.Errorf("cmd-level tool %q renders the fallback icon; add a distinct entry to Icon()", name)
+		}
+		if got := th.ToolHex(name); got == th.Dim {
+			t.Errorf("cmd-level tool %q renders the fallback dim color; add an entry to newToolColors()", name)
+		}
 	}
 }

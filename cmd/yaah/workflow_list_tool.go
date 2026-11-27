@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/goatherdai/yaah/internal/prompts"
+	"github.com/goatherdai/yaah/internal/toolcontract"
 	"github.com/goatherdai/yaah/internal/tools"
 	"github.com/goatherdai/yaah/internal/workflow/discover"
 )
@@ -44,7 +45,7 @@ var _ tools.WorkspaceSetter = (*WorkflowListTool)(nil)
 // than the server process's.
 func (t *WorkflowListTool) SetWorkspace(ws tools.Workspace) { t.WS = ws }
 
-func (t *WorkflowListTool) Name() string { return "workflow_list" }
+func (t *WorkflowListTool) Name() string { return toolcontract.ToolWorkflowList }
 
 func (t *WorkflowListTool) Description() string {
 	return prompts.ToolDescription("workflow_list")

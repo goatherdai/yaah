@@ -12,18 +12,40 @@ func Icon(name string) string {
 	switch name {
 	case "read":
 		return "📖"
-	case "write", "edit":
+	case "write", "edit", "append":
 		return "📝"
-	case "delete":
+	case "delete", "rmdir":
 		return "🧹"
 	case "patch", "replace":
 		return "🩹"
+	case "apply_out":
+		return "📤"
 	case "grep", "glob":
 		return "🔍"
+	case "find":
+		return "🧭"
 	case "ls", "file_info":
 		return "📂"
+	case "mkdir":
+		return "📁"
+	case "tail":
+		return "🪶"
+	case "checksum":
+		return "🔑"
+	case "copy":
+		return "👯"
+	case "copy_tree":
+		return "🌳"
+	case "move":
+		return "🚚"
+	case "move_tree":
+		return "🌲"
+	case "bulk_files":
+		return "📚"
 	case "http", "webfetch":
 		return "🌐"
+	case "mcp":
+		return "🔌"
 	case "bash":
 		return "💻"
 	case "powershell":
@@ -52,6 +74,24 @@ func Icon(name string) string {
 		return "🌀"
 	case "task":
 		return "🔗"
+	case "subagent_jobs":
+		return "📇"
+	case "supervise":
+		return "📡"
+	case "supervisor":
+		return "👑"
+	case "proposal":
+		return "🤝"
+	case "toolbelt":
+		return "🧰"
+	case "wait_for":
+		return "⌛"
+	case "watch":
+		return "👀"
+	case "workflow_run":
+		return "🚀"
+	case "workflow_list":
+		return "📃"
 	default:
 		return "🔧"
 	}
