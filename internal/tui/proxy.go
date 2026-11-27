@@ -151,6 +151,11 @@ func (t *App) HandleEvent(event agent.Event) {
 		t.queueUpdateDrawCritical(func() {
 			flushed := t.flushPendingTokens()
 			t.pendingTool = ""
+			// Self-healing seal: any tool block still Running has no end
+			// event coming — the turn is over. Sweep it to a terminal
+			// state with an interrupted marker instead of leaving a
+			// permanent chevron (yaah-ebhe).
+			t.SweepStuckToolBlocks()
 			t.setActivity(activity.Idle, "")
 			if !flushed && e.Response != "" {
 				t.addAssistantResponse(e.Response)

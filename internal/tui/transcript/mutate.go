@@ -38,6 +38,26 @@ func (m *Model) FailTool(id, summary, err string) bool {
 	return false
 }
 
+// SweepRunningTools seals every still-Running tool block as
+// interrupted. The turn is over when the sweep runs (the agent loop's
+// DoneEvent), so a Running block's end event was dropped or reordered —
+// without the sweep it renders a permanent chevron. It reports how many
+// blocks it sealed.
+func (m *Model) SweepRunningTools() int {
+	n := 0
+	for i := range m.items {
+		if tb := m.items[i].ToolBlock; tb != nil && tb.IsRunning() {
+			tb.Interrupt()
+			m.items[i].gen++
+			n++
+		}
+	}
+	if n > 0 {
+		m.dirty = dirtyFull
+	}
+	return n
+}
+
 // ToggleBlockByIndex toggles the nth toggleable block (reasoning or
 // tool) and reports whether one existed at that index.
 func (m *Model) ToggleBlockByIndex(n int) bool {

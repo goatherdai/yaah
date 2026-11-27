@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"context"
+
+	"github.com/goatherdai/yaah/internal/observability"
 	"github.com/goatherdai/yaah/internal/tui/components/reasoning"
 	"github.com/goatherdai/yaah/internal/tui/components/subagent"
 	"github.com/goatherdai/yaah/internal/tui/components/toolblock"
@@ -21,12 +24,25 @@ func (t *App) AddReasoningBlock(id, content string) {
 	t.markDirty()
 }
 
+// Orphan kinds recorded on the yaah.tui.tool_orphans counter.
+const (
+	// orphanKindUnmatchedEnd: an end/error event arrived whose tool block
+	// does not exist — dropped, reordered, or belonging to a cleared log.
+	orphanKindUnmatchedEnd = "unmatched_end"
+	// orphanKindSwept: a still-Running block sealed by the turn-end sweep.
+	orphanKindSwept = "swept"
+)
+
 // AddToolError finds a tool block in the transcript by ID and
-// transitions it to Error.
+// transitions it to Error. An unmatched ID is counted as an orphan: the
+// event was dropped or reordered, and the counter makes the drift
+// visible instead of silently discarding it.
 func (t *App) AddToolError(id, summary, err string) {
 	if t.tr.FailTool(id, summary, err) {
 		t.markDirty()
+		return
 	}
+	observability.RecordTUIToolOrphan(context.Background(), orphanKindUnmatchedEnd)
 }
 
 // AddToolStart adds a tool block to the transcript.
@@ -44,7 +60,22 @@ func (t *App) AddToolStart(id, name, args string) {
 func (t *App) AddToolEnd(id, summary, result string) {
 	if t.tr.CompleteTool(id, summary, result) {
 		t.markDirty()
+		return
 	}
+	observability.RecordTUIToolOrphan(context.Background(), orphanKindUnmatchedEnd)
+}
+
+// SweepStuckToolBlocks seals every still-Running tool block at turn end:
+// its end event never arrived, and without the sweep it would render a
+// permanent chevron (the stuck-tool-block finding). Each sealed block
+// renders terminal with an interrupted marker.
+func (t *App) SweepStuckToolBlocks() int {
+	n := t.tr.SweepRunningTools()
+	if n > 0 {
+		t.markDirty()
+		observability.RecordTUIToolOrphan(context.Background(), orphanKindSwept)
+	}
+	return n
 }
 
 // AddSubAgentStart adds a sub-agent to the dedicated Subagents pane.
