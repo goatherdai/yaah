@@ -1,8 +1,8 @@
-// Package textclip is the single owner of "cut a string on a UTF-8 boundary"
-// for yaah. Callers from the agent pipeline, providers, tools, memory, ACP and
-// the CLI all used to carry their own copy of the byte/rune walk; they differ
-// only in budget unit and marker policy, so the dangerous cut lives here and
-// each caller composes its own marker.
+// Package textclip owns "cut a string on a UTF-8 boundary" for yaah. The
+// byte/rune walk used to be copied into individual callers across the agent
+// pipeline, providers, tools, memory, ACP and the CLI; they differ only in
+// budget unit and marker policy, so the dangerous cut lives here and each
+// caller composes its own marker.
 package textclip
 
 import "unicode/utf8"
