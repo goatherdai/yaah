@@ -13,6 +13,7 @@ import (
 
 	"github.com/goatherdai/goatherd-runtime/sandbox/confinement"
 	"github.com/goatherdai/goatherd-runtime/sandbox/containment"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"github.com/goatherdai/yaah/internal/tools"
 )
 
@@ -127,7 +128,7 @@ func TestClientWorkspace_WriteInternalErrorIsActionable(t *testing.T) {
 		done <- err
 	}()
 	req := h.recvRequest(t, "fs/write_text_file")
-	if err := h.replyError(req.ID, codeInternal, "Internal error"); err != nil {
+	if err := h.replyError(req.ID, jsonrpc.CodeInternal, "Internal error"); err != nil {
 		t.Fatal(err)
 	}
 	err := <-done

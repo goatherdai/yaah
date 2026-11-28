@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -49,8 +50,8 @@ func fakeServer(t *testing.T, mode string) *Client {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { c.Close() })
-	c.writer = NewNewlineWriter(stdin)
-	c.reader = NewNewlineReader(stdout)
+	c.writer = jsonrpc.NewNewlineWriter(stdin)
+	c.reader = jsonrpc.NewNewlineReader(stdout)
 	go c.readLoop()
 	return c
 }
@@ -76,14 +77,14 @@ func TestHelperProcess(t *testing.T) {
 		if err != nil {
 			return
 		}
-		var req JSONRPCMessage
+		var req jsonrpc.Message
 		if json.Unmarshal([]byte(line), &req) != nil {
 			continue
 		}
-		if req.ID == nil {
+		id, ok := req.IDInt()
+		if !ok {
 			continue // notification from client
 		}
-		id := *req.ID
 		switch mode {
 		case "interleave":
 			// Emit a notification BEFORE the response: with the old
@@ -184,7 +185,7 @@ func TestAutoDetectReader_whitespacePrefixed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMessage: %v", err)
 	}
-	if msg.ID == nil || *msg.ID != 1 {
+	if id, ok := msg.IDInt(); !ok || id != 1 {
 		t.Errorf("ID = %v, want 1", msg.ID)
 	}
 }
@@ -204,9 +205,10 @@ func TestHTTPClient_lifecycle(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		var req JSONRPCMessage
+		var req jsonrpc.Message
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		if req.ID == nil {
+		id, ok := req.IDInt()
+		if !ok {
 			// Notification: acknowledged without a body.
 			w.WriteHeader(http.StatusAccepted)
 			return
@@ -215,19 +217,19 @@ func TestHTTPClient_lifecycle(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch req.Method {
 		case "initialize":
-			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"fake","version":"0"}}}`, *req.ID)
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"fake","version":"0"}}}`, id)
 		case "tools/list":
 			var params struct {
 				Cursor string `json:"cursor"`
 			}
 			_ = json.Unmarshal(req.Params, &params)
 			if params.Cursor == "" {
-				fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"a"}],"nextCursor":"2"}}`, *req.ID)
+				fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"a"}],"nextCursor":"2"}}`, id)
 			} else {
-				fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"b"}]}}`, *req.ID)
+				fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"b"}]}}`, id)
 			}
 		default:
-			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{}}`, *req.ID)
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{}}`, id)
 		}
 	}))
 	defer srv.Close()

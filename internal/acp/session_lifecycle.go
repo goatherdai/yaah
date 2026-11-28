@@ -15,6 +15,7 @@ import (
 	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/control"
 	"github.com/goatherdai/yaah/internal/cwdpath"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"github.com/goatherdai/yaah/internal/tools"
 	"github.com/goatherdai/yaah/internal/types"
 	"github.com/goatherdai/yaah/internal/worldinfo"
@@ -181,27 +182,27 @@ func (s *Server) refreshAvailableCommands(st *sessionState, sendUpdate updateSen
 // are unique per created session, and independent sessions may coexist
 // in one process. ctx bounds the model-catalog wait so a slow provider
 // discovery is abandoned when the server shuts down.
-func (s *Server) handleSessionNew(ctx context.Context, msg Message, sendUpdate updateSender, respOK func(id json.RawMessage, result any), respErr func(id json.RawMessage, code int, message string)) {
+func (s *Server) handleSessionNew(ctx context.Context, msg jsonrpc.Message, sendUpdate updateSender, respOK func(id json.RawMessage, result any), respErr func(id json.RawMessage, code int, message string)) {
 	var p SessionNewParams
 	if len(msg.Params) > 0 {
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, "invalid params: "+err.Error())
 			return
 		}
 	}
 	cwd, err := canonicalCwd(p.Cwd)
 	if err != nil {
-		respErr(msg.ID, codeInvalidParams, err.Error())
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, err.Error())
 		return
 	}
 	mcpRefs, err := resolveMCPRefs(p.McpServers, cwd)
 	if err != nil {
-		respErr(msg.ID, codeInvalidParams, err.Error())
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, err.Error())
 		return
 	}
 	st, err := s.buildSession(BuildOptions{Cwd: cwd, MCPServers: mcpRefs}, "")
 	if err != nil {
-		respErr(msg.ID, codeInvalidParams, "create session: "+err.Error())
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "create session: "+err.Error())
 		return
 	}
 	respOK(msg.ID, SessionNewResult{
@@ -303,7 +304,7 @@ func (s *Server) replayConversation(st *sessionState, sendUpdate updateSender) {
 // again, as a load request requires.
 func (s *Server) handleSessionLoad(
 	ctx context.Context,
-	msg Message,
+	msg jsonrpc.Message,
 	sendUpdate updateSender,
 	respOK func(id json.RawMessage, result any),
 	respErr func(id json.RawMessage, code int, message string),
@@ -311,22 +312,22 @@ func (s *Server) handleSessionLoad(
 	var p SessionLoadParams
 	if len(msg.Params) > 0 {
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, "invalid params: "+err.Error())
 			return
 		}
 	}
 	if p.SessionID == "" {
-		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "sessionId is required")
 		return
 	}
 	cwd, err := canonicalCwd(p.Cwd)
 	if err != nil {
-		respErr(msg.ID, codeInvalidParams, err.Error())
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, err.Error())
 		return
 	}
 	mcpRefs, err := resolveMCPRefs(p.McpServers, cwd)
 	if err != nil {
-		respErr(msg.ID, codeInvalidParams, err.Error())
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, err.Error())
 		return
 	}
 
@@ -343,7 +344,7 @@ func (s *Server) handleSessionLoad(
 			return
 		}
 		if st.cwd != "" && !sameDir(st.cwd, cwd) {
-			respErr(msg.ID, codeInvalidParams,
+			respErr(msg.ID, jsonrpc.CodeInvalidParams,
 				fmt.Sprintf("session %q was created with cwd %q, requested %q", st.id, st.cwd, cwd))
 			return
 		}
@@ -362,7 +363,7 @@ func (s *Server) handleSessionLoad(
 		MCPServers: mcpRefs,
 	}, p.SessionID)
 	if err != nil {
-		respErr(msg.ID, codeInvalidParams, err.Error())
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, err.Error())
 		return
 	}
 	s.replayConversation(st, sendUpdate)
@@ -495,33 +496,33 @@ func CanonicalFilterCwd(cwd string) (string, error) {
 // callback supplies pages; the cwd filter and pagination cursor are
 // validated here so malformed input surfaces as invalid params.
 func (s *Server) handleSessionList(
-	msg Message,
+	msg jsonrpc.Message,
 	respOK func(id json.RawMessage, result any),
 	respErr func(id json.RawMessage, code int, message string),
 ) {
 	if s.ListSessions == nil {
-		respErr(msg.ID, codeMethodNotFound, "session/list is not available in this server configuration")
+		respErr(msg.ID, jsonrpc.CodeMethodNotFound, "session/list is not available in this server configuration")
 		return
 	}
 	var p ListSessionsParams
 	if len(msg.Params) > 0 {
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, "invalid params: "+err.Error())
 			return
 		}
 	}
 	filter, err := cwdpath.Canonical(p.Cwd)
 	if err != nil {
-		respErr(msg.ID, codeInvalidParams, err.Error())
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, err.Error())
 		return
 	}
 	sessions, next, err := s.ListSessions(filter, p.Cursor)
 	if err != nil {
 		if errors.Is(err, ErrInvalidCursor) {
-			respErr(msg.ID, codeInvalidParams, "invalid cursor")
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, "invalid cursor")
 			return
 		}
-		respErr(msg.ID, codeInternal, "list sessions: "+err.Error())
+		respErr(msg.ID, jsonrpc.CodeInternal, "list sessions: "+err.Error())
 		return
 	}
 	if sessions == nil {
@@ -542,7 +543,7 @@ func (s *Server) handleSessionList(
 // params.
 func (s *Server) handleSessionResume(
 	ctx context.Context,
-	msg Message,
+	msg jsonrpc.Message,
 	sendUpdate updateSender,
 	respOK func(id json.RawMessage, result any),
 	respErr func(id json.RawMessage, code int, message string),
@@ -550,22 +551,22 @@ func (s *Server) handleSessionResume(
 	var p SessionResumeParams
 	if len(msg.Params) > 0 {
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, "invalid params: "+err.Error())
 			return
 		}
 	}
 	if p.SessionID == "" {
-		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "sessionId is required")
 		return
 	}
 	cwd, err := canonicalCwd(p.Cwd)
 	if err != nil {
-		respErr(msg.ID, codeInvalidParams, err.Error())
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, err.Error())
 		return
 	}
 	mcpRefs, err := resolveMCPRefs(p.McpServers, cwd)
 	if err != nil {
-		respErr(msg.ID, codeInvalidParams, err.Error())
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, err.Error())
 		return
 	}
 
@@ -582,7 +583,7 @@ func (s *Server) handleSessionResume(
 			return
 		}
 		if st.cwd != "" && !sameDir(st.cwd, cwd) {
-			respErr(msg.ID, codeInvalidParams,
+			respErr(msg.ID, jsonrpc.CodeInvalidParams,
 				fmt.Sprintf("session %q was created with cwd %q, requested %q", st.id, st.cwd, cwd))
 			return
 		}
@@ -597,7 +598,7 @@ func (s *Server) handleSessionResume(
 		MCPServers: mcpRefs,
 	}, p.SessionID)
 	if err != nil {
-		respErr(msg.ID, codeInvalidParams, err.Error())
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, err.Error())
 		return
 	}
 	respOK(msg.ID, SessionResumeResult{ConfigOptions: s.loadConfigOptions(ctx, st)})
@@ -640,26 +641,26 @@ func (s *Server) retireSession(st *sessionState) {
 // free the session. Only live sessions are closable — the spec allows an
 // error when the session does not exist or is not active in this agent.
 func (s *Server) handleSessionClose(
-	msg Message,
+	msg jsonrpc.Message,
 	respOK func(id json.RawMessage, result any),
 	respErr func(id json.RawMessage, code int, message string),
 ) {
 	var p SessionTargetParams
 	if len(msg.Params) > 0 {
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, "invalid params: "+err.Error())
 			return
 		}
 	}
 	if p.SessionID == "" {
-		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "sessionId is required")
 		return
 	}
 	s.mu.Lock()
 	st, ok := s.sessions[p.SessionID]
 	s.mu.Unlock()
 	if !ok {
-		respErr(msg.ID, codeInvalidParams, "unknown session id")
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "unknown session id")
 		return
 	}
 	s.retireSession(st)
@@ -672,26 +673,26 @@ func (s *Server) handleSessionClose(
 // contract). Deleting an already-deleted or never-created id succeeds
 // silently per spec; real store failures are internal errors.
 func (s *Server) handleSessionDelete(
-	msg Message,
+	msg jsonrpc.Message,
 	respOK func(id json.RawMessage, result any),
 	respErr func(id json.RawMessage, code int, message string),
 ) {
 	var p SessionTargetParams
 	if len(msg.Params) > 0 {
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, "invalid params: "+err.Error())
 			return
 		}
 	}
 	if p.SessionID == "" {
-		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "sessionId is required")
 		return
 	}
 	if s.DeleteSession == nil {
 		// Checked before any side effect: capabilities never advertise
 		// delete without wiring, but a client may still ask — and that
 		// must not have already torn down a live session.
-		respErr(msg.ID, codeMethodNotFound, "session/delete is not available in this server configuration")
+		respErr(msg.ID, jsonrpc.CodeMethodNotFound, "session/delete is not available in this server configuration")
 		return
 	}
 	s.mu.Lock()
@@ -701,7 +702,7 @@ func (s *Server) handleSessionDelete(
 		s.retireSession(st)
 	}
 	if err := s.DeleteSession(p.SessionID); err != nil && !errors.Is(err, ErrNoSession) {
-		respErr(msg.ID, codeInternal, "delete session: "+err.Error())
+		respErr(msg.ID, jsonrpc.CodeInternal, "delete session: "+err.Error())
 		return
 	}
 	respOK(msg.ID, nil)

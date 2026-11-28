@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"io"
 	"net"
 	"net/http"
@@ -150,7 +151,7 @@ func TestHTTPInitializeIssuesSession(t *testing.T) {
 		t.Errorf("session id = %q, expected >=16 hex chars", sid)
 	}
 
-	var resp JSONRPCMessage
+	var resp jsonrpc.Message
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		t.Fatalf("unmarshal response: %v; body=%s", err, respBody)
 	}
@@ -199,7 +200,7 @@ func TestHTTPInitializeThenToolsList(t *testing.T) {
 	if status != 200 {
 		t.Fatalf("tools/list status = %d body=%s", status, body)
 	}
-	var resp JSONRPCMessage
+	var resp jsonrpc.Message
 	if err := json.Unmarshal(body, &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -293,7 +294,7 @@ func TestHTTPToolsCall(t *testing.T) {
 		t.Fatalf("status = %d body=%s", status, body)
 	}
 
-	var resp JSONRPCMessage
+	var resp jsonrpc.Message
 	if err := json.Unmarshal(body, &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -613,7 +614,7 @@ func TestHTTPSSEHandshake(t *testing.T) {
 	if postResp.StatusCode != 200 {
 		t.Fatalf("post status = %d body=%s", postResp.StatusCode, postBody)
 	}
-	var httpResp JSONRPCMessage
+	var httpResp jsonrpc.Message
 	if err := json.Unmarshal(postBody, &httpResp); err != nil {
 		t.Fatalf("parse http response: %v", err)
 	}
@@ -629,11 +630,11 @@ func TestHTTPSSEHandshake(t *testing.T) {
 	if event2 != "message" {
 		t.Errorf("second event = %q, want message", event2)
 	}
-	var sseResp JSONRPCMessage
+	var sseResp jsonrpc.Message
 	if err := json.Unmarshal([]byte(data2), &sseResp); err != nil {
 		t.Fatalf("parse sse response: %v", err)
 	}
-	if sseResp.ID == nil || *sseResp.ID != 42 {
+	if id, ok := sseResp.IDInt(); !ok || id != 42 {
 		t.Errorf("sse response id = %v, want 42", sseResp.ID)
 	}
 	if sseResp.Error != nil {

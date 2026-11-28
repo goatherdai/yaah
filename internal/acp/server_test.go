@@ -17,6 +17,7 @@ import (
 	"github.com/goatherdai/yaah/internal/agent"
 	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/control"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"github.com/goatherdai/yaah/internal/tools"
 	"github.com/goatherdai/yaah/internal/types"
 	"github.com/goatherdai/yaah/internal/worldinfo"
@@ -228,7 +229,7 @@ func (f *fakeSession) currentView() agent.View {
 type acpHarness struct {
 	inW     io.Writer
 	send    func(method string, id any, params string) error
-	recv    func(t *testing.T) Message
+	recv    func(t *testing.T) jsonrpc.Message
 	recvRaw func(t *testing.T) string
 	done    func()
 	resumes func() []string
@@ -306,7 +307,7 @@ func newACPHarnessFactory(t *testing.T, factory func(resumeID string) (Session, 
 		server: s,
 		inW:    inW,
 		send: func(method string, id any, params string) error {
-			msg := Message{JSONRPC: "2.0", Method: method, Params: json.RawMessage(params)}
+			msg := jsonrpc.Message{JSONRPC: "2.0", Method: method, Params: json.RawMessage(params)}
 			if id != nil {
 				b, _ := json.Marshal(id)
 				msg.ID = b
@@ -318,21 +319,21 @@ func newACPHarnessFactory(t *testing.T, factory func(resumeID string) (Session, 
 			_, err = io.WriteString(inW, string(out)+"\n")
 			return err
 		},
-		recv: func(t *testing.T) Message {
+		recv: func(t *testing.T) jsonrpc.Message {
 			t.Helper()
 			select {
 			case line, ok := <-lines:
 				if !ok {
 					t.Fatal("server output closed")
 				}
-				var msg Message
+				var msg jsonrpc.Message
 				if err := json.Unmarshal([]byte(line), &msg); err != nil {
 					t.Fatalf("invalid server output %q: %v", line, err)
 				}
 				return msg
 			case <-time.After(5 * time.Second):
 				t.Fatal("timed out waiting for server message")
-				return Message{}
+				return jsonrpc.Message{}
 			}
 		},
 		recvRaw: func(t *testing.T) string {
@@ -445,8 +446,8 @@ func TestServer_authenticate(t *testing.T) {
 			t.Fatal(err)
 		}
 		msg := h.recv(t)
-		if msg.Error == nil || msg.Error.Code != codeInvalidParams {
-			t.Fatalf("response = %+v, want %d invalid params", msg, codeInvalidParams)
+		if msg.Error == nil || msg.Error.Code != jsonrpc.CodeInvalidParams {
+			t.Fatalf("response = %+v, want %d invalid params", msg, jsonrpc.CodeInvalidParams)
 		}
 		if !strings.Contains(msg.Error.Message, "not-a-method") {
 			t.Errorf("error message %q does not name the rejected method", msg.Error.Message)
@@ -786,7 +787,7 @@ func TestServer_sessionLoadReplaysHistory(t *testing.T) {
 	}
 
 	var replayed []string
-	var resp Message
+	var resp jsonrpc.Message
 	for {
 		msg := h.recv(t)
 		if msg.Method == "session/update" {
@@ -851,7 +852,7 @@ func TestServer_sessionLoadUnknownSessionRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg := h.recv(t)
-	if msg.Error == nil || msg.Error.Code != codeInvalidParams {
+	if msg.Error == nil || msg.Error.Code != jsonrpc.CodeInvalidParams {
 		t.Fatalf("response = %+v, want invalid params", msg)
 	}
 	if !strings.Contains(msg.Error.Message, "sess-ghost") {
@@ -881,7 +882,7 @@ func TestServer_sessionLoadMismatchedResumedSession(t *testing.T) {
 	if msg.Method == "session/update" {
 		t.Fatalf("replay update streamed before the rejection: %v", msg)
 	}
-	if msg.Error == nil || msg.Error.Code != codeInvalidParams {
+	if msg.Error == nil || msg.Error.Code != jsonrpc.CodeInvalidParams {
 		t.Fatalf("response = %+v, want invalid params", msg)
 	}
 	for _, id := range []string{"sess-someone-else", "sess-requested"} {
@@ -949,7 +950,7 @@ func TestServer_sessionLoadSameIdReplaysAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	var replayed []string
-	var resp Message
+	var resp jsonrpc.Message
 	for {
 		msg := h.recv(t)
 		if msg.Method == "session/update" {
@@ -988,8 +989,8 @@ func TestServer_unknownMethodReturns32601(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg := h.recv(t)
-	if msg.Error == nil || msg.Error.Code != codeMethodNotFound {
-		t.Fatalf("response = %+v, want %d method not found", msg, codeMethodNotFound)
+	if msg.Error == nil || msg.Error.Code != jsonrpc.CodeMethodNotFound {
+		t.Fatalf("response = %+v, want %d method not found", msg, jsonrpc.CodeMethodNotFound)
 	}
 	if !strings.Contains(msg.Error.Message, "bogus/method") {
 		t.Errorf("error message %q should name the method", msg.Error.Message)
@@ -1005,8 +1006,8 @@ func TestServer_sessionPromptUnknownSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg := h.recv(t)
-	if msg.Error == nil || msg.Error.Code != codeInvalidParams {
-		t.Fatalf("response = %+v, want %d unknown session", msg, codeInvalidParams)
+	if msg.Error == nil || msg.Error.Code != jsonrpc.CodeInvalidParams {
+		t.Fatalf("response = %+v, want %d unknown session", msg, jsonrpc.CodeInvalidParams)
 	}
 }
 
@@ -1082,7 +1083,7 @@ func TestServer_modeConfigAndSetMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	rejected := h.recv(t)
-	if rejected.Error == nil || rejected.Error.Code != codeInvalidParams {
+	if rejected.Error == nil || rejected.Error.Code != jsonrpc.CodeInvalidParams {
 		t.Fatalf("unknown mode response = %+v, want invalid params", rejected)
 	}
 	if sess.Mode() != SessionModePlan {
@@ -1163,7 +1164,7 @@ func TestServer_setAgentSwitchesAddressedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	rejected := h.recv(t)
-	if rejected.Error == nil || rejected.Error.Code != codeInvalidParams {
+	if rejected.Error == nil || rejected.Error.Code != jsonrpc.CodeInvalidParams {
 		t.Fatalf("unknown agent response = %+v, want invalid params", rejected)
 	}
 	if sess.PersonaName() != "plan" {
@@ -1390,7 +1391,7 @@ func TestServer_secondPromptWhileBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Drain until the busy error lands.
-	var busy *RPCError
+	var busy *jsonrpc.Error
 	for i := 0; i < 8 && busy == nil; i++ {
 		msg := h.recv(t)
 		if msg.Error != nil {
@@ -1453,7 +1454,7 @@ func TestServer_sessionNewRequiresAbsoluteCwd(t *testing.T) {
 			t.Fatal(err)
 		}
 		msg := h.recv(t)
-		if msg.Error == nil || msg.Error.Code != codeInvalidParams {
+		if msg.Error == nil || msg.Error.Code != jsonrpc.CodeInvalidParams {
 			t.Fatalf("%s: response = %+v, want invalid params", params, msg)
 		}
 	}
@@ -1467,7 +1468,7 @@ func TestServer_parseErrorRepliesWithNullID(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg := h.recv(t)
-	if msg.Error == nil || msg.Error.Code != codeParseError {
+	if msg.Error == nil || msg.Error.Code != jsonrpc.CodeParseError {
 		t.Fatalf("response = %+v, want parse error", msg)
 	}
 	if string(msg.ID) != "null" {
@@ -1484,7 +1485,7 @@ func TestServer_invalidRequestRepliesWith32600(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg := h.recv(t)
-	if msg.Error == nil || msg.Error.Code != codeInvalidRequest {
+	if msg.Error == nil || msg.Error.Code != jsonrpc.CodeInvalidRequest {
 		t.Fatalf("response = %+v, want invalid request", msg)
 	}
 }
@@ -1498,15 +1499,15 @@ func TestServer_emptyPromptRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg := h.recv(t)
-	if msg.Error == nil || msg.Error.Code != codeInvalidParams {
-		t.Fatalf("response = %+v, want %d empty prompt", msg, codeInvalidParams)
+	if msg.Error == nil || msg.Error.Code != jsonrpc.CodeInvalidParams {
+		t.Fatalf("response = %+v, want %d empty prompt", msg, jsonrpc.CodeInvalidParams)
 	}
 }
 
 // recvRequest waits for a specific server-initiated request, skipping
 // session/update notifications (a permission request is preceded by the
 // pending tool_call it belongs to).
-func (h *acpHarness) recvRequest(t *testing.T, method string) Message {
+func (h *acpHarness) recvRequest(t *testing.T, method string) jsonrpc.Message {
 	t.Helper()
 	for i := 0; i < 8; i++ {
 		msg := h.recv(t)
@@ -1515,7 +1516,7 @@ func (h *acpHarness) recvRequest(t *testing.T, method string) Message {
 		}
 	}
 	t.Fatalf("did not receive %s", method)
-	return Message{}
+	return jsonrpc.Message{}
 }
 
 // reply sends a client response for a server-initiated request.
@@ -1524,7 +1525,7 @@ func (h *acpHarness) reply(id json.RawMessage, result any) error {
 	if err != nil {
 		return err
 	}
-	out, err := json.Marshal(Message{JSONRPC: "2.0", ID: id, Result: data})
+	out, err := json.Marshal(jsonrpc.Message{JSONRPC: "2.0", ID: id, Result: data})
 	if err != nil {
 		return err
 	}
@@ -1534,10 +1535,10 @@ func (h *acpHarness) reply(id json.RawMessage, result any) error {
 
 // replyError sends a client error response for a server-initiated request.
 func (h *acpHarness) replyError(id json.RawMessage, code int, message string) error {
-	out, err := json.Marshal(Message{
+	out, err := json.Marshal(jsonrpc.Message{
 		JSONRPC: "2.0",
 		ID:      id,
-		Error:   &RPCError{Code: code, Message: message},
+		Error:   &jsonrpc.Error{Code: code, Message: message},
 	})
 	if err != nil {
 		return err
@@ -1731,7 +1732,7 @@ func TestServer_multimodalPromptBlocksRejected(t *testing.T) {
 				t.Fatal(err)
 			}
 			msg := h.recv(t)
-			if msg.Error == nil || msg.Error.Code != codeInvalidParams {
+			if msg.Error == nil || msg.Error.Code != jsonrpc.CodeInvalidParams {
 				t.Fatalf("%s prompt response = %+v, want invalid params", blockType, msg)
 			}
 			if !strings.Contains(msg.Error.Message, blockType) {
@@ -2335,7 +2336,7 @@ func TestServer_questionElicitationGarbageCapability(t *testing.T) {
 // events emitted during a prompt turn; a client without the cap gets
 // the plain text fallback.
 func TestServer_compactionCapabilityGated(t *testing.T) {
-	run := func(t *testing.T, initCaps string) []Message {
+	run := func(t *testing.T, initCaps string) []jsonrpc.Message {
 		sess := &fakeSession{id: "sess-test"}
 		sess.mu.Lock()
 		sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
@@ -2356,7 +2357,7 @@ func TestServer_compactionCapabilityGated(t *testing.T) {
 		if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"go"}]}`, sid)); err != nil {
 			t.Fatal(err)
 		}
-		var updates []Message
+		var updates []jsonrpc.Message
 		for i := 0; i < 16; i++ {
 			msg := h.recv(t)
 			if msg.Method == "" && msg.Error == nil {
@@ -2591,11 +2592,11 @@ func TestServer_batchRequestRejectedAsArray(t *testing.T) {
 		t.Fatal(err)
 	}
 	line := h.recvRaw(t)
-	var responses []Message
+	var responses []jsonrpc.Message
 	if err := json.Unmarshal([]byte(line), &responses); err != nil {
 		t.Fatalf("batch response is not an array: %v (%s)", err, line)
 	}
-	if len(responses) != 1 || string(responses[0].ID) != "1" || responses[0].Error == nil || responses[0].Error.Code != codeInvalidRequest {
+	if len(responses) != 1 || string(responses[0].ID) != "1" || responses[0].Error == nil || responses[0].Error.Code != jsonrpc.CodeInvalidRequest {
 		t.Fatalf("batch response = %+v", responses)
 	}
 }
@@ -2669,7 +2670,7 @@ func TestServer_setConfigOptionSwitchesApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 	rejected := h.recv(t)
-	if rejected.Error == nil || rejected.Error.Code != codeInvalidParams {
+	if rejected.Error == nil || rejected.Error.Code != jsonrpc.CodeInvalidParams {
 		t.Fatalf("unknown approval value response = %+v, want invalid params", rejected)
 	}
 	if got := sess.ApprovalMode(); got != "allow" {
@@ -2709,7 +2710,7 @@ func TestServer_setConfigOptionSwitchesAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	rejected := h.recv(t)
-	if rejected.Error == nil || rejected.Error.Code != codeInvalidParams {
+	if rejected.Error == nil || rejected.Error.Code != jsonrpc.CodeInvalidParams {
 		t.Fatalf("unknown agent response = %+v, want invalid params", rejected)
 	}
 	if sess.PersonaName() != "plan" {

@@ -3,6 +3,7 @@ package acp
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"testing"
 )
 
@@ -15,7 +16,7 @@ func TestNotifyWakeWritesExtensionNotification(t *testing.T) {
 
 	s.notifyWake("sess-1", "watch fired: ci is green")
 
-	var msg Message
+	var msg jsonrpc.Message
 	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &msg); err != nil {
 		t.Fatalf("decode notification: %v (%q)", err, out.String())
 	}

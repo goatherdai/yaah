@@ -190,11 +190,11 @@ curl -i -H 'Accept: text/event-stream' http://127.0.0.1:7333/mcp
 
 yaah responded but the response was missing `id`. JSON-RPC requires the
 response to echo the request id even when it's `0`. Some MCP clients send
-`initialize` with `id: 0`. If the server's `JSONRPCMessage.ID` field still has
-the `omitempty` tag, the response will silently drop the id and the client will
-hang waiting for it.
-
-Fix is in `internal/mcp/framing.go`: `ID int64 \`json:"id"\`` (no omitempty).
+`initialize` with `id: 0`. The id lives in `internal/jsonrpc/message.go`:
+`Message.ID` is a `json.RawMessage` echoed verbatim, so a numeric id (0
+included) is non-empty raw bytes and the `omitempty` tag cannot drop it. If
+a client still hangs, check that the server copies `msg.ID` into the
+response verbatim (`internal/mcp/server.go`) rather than re-marshaling it.
 Rebuild after any change there.
 
 ### Old binary lacks the server command

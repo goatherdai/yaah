@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"github.com/goatherdai/yaah/internal/permissions"
 )
 
@@ -33,7 +34,7 @@ func permissionID(n int) string { return fmt.Sprintf("%d", n) }
 
 // resolvePending routes a client response to the waiting request by
 // id, if any is pending. Responses for unknown ids are dropped.
-func (s *Server) resolvePending(msg Message) {
+func (s *Server) resolvePending(msg jsonrpc.Message) {
 	key := s.canonicalID(msg.ID)
 	s.mu.Lock()
 	ch, ok := s.pendingReq[key]
@@ -148,7 +149,7 @@ func (s *Server) requestPermission(
 			s.logf("marshal update: %v", err)
 			return
 		}
-		c.write(Message{
+		c.write(jsonrpc.Message{
 			JSONRPC: "2.0",
 			Method:  "session/update",
 			Params:  rawOf(updateEnvelope{SessionID: sessionID, Update: raw}),

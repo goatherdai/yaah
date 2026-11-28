@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"io"
 	"net"
 	"net/http"
@@ -388,7 +389,7 @@ func (h *HTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	responses := make([]JSONRPCMessage, 0, len(messages))
+	responses := make([]jsonrpc.Message, 0, len(messages))
 	for _, msg := range messages {
 		if isInitialize(msg) && wantSession == "" {
 			sid := newSessionID()
@@ -398,10 +399,10 @@ func (h *HTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// `initialize` is a request even when sent with id=0 (some
-		// MCP clients do this in the legacy HTTP+SSE transport). All
-		// other methods with id=0 are treated as notifications
-		// per the JSON-RPC convention.
-		if msg.ID == nil && !isInitialize(msg) {
+		// MCP clients do this in the legacy HTTP+SSE transport). id 0
+		// is a valid request id for every method; only id-less
+		// messages are notifications.
+		if msg.IsNotification() && !isInitialize(msg) {
 			if _, derr := h.server.dispatch(r.Context(), msg); derr != nil {
 				fmt.Fprintf(os.Stderr, "mcp notification dispatch error: %v\n", derr)
 			}
@@ -409,7 +410,7 @@ func (h *HTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 		}
 
 		result, rpcErr := h.server.dispatch(r.Context(), msg)
-		resp := JSONRPCMessage{
+		resp := jsonrpc.Message{
 			JSONRPC: "2.0",
 			ID:      msg.ID,
 		}
@@ -463,17 +464,17 @@ func (h *HTTPServer) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 // decodeRequest parses the request body as either a single JSON-RPC
 // message or a batch (array) of them.
-func decodeRequest(body []byte) ([]JSONRPCMessage, error) {
+func decodeRequest(body []byte) ([]jsonrpc.Message, error) {
 	trimmed := skipWhitespace(body)
 	if len(trimmed) == 0 || trimmed[0] == '{' {
-		var msg JSONRPCMessage
+		var msg jsonrpc.Message
 		if err := json.Unmarshal(body, &msg); err != nil {
 			return nil, fmt.Errorf("decode single JSON-RPC message: %w", err)
 		}
-		return []JSONRPCMessage{msg}, nil
+		return []jsonrpc.Message{msg}, nil
 	}
 	if trimmed[0] == '[' {
-		var batch []JSONRPCMessage
+		var batch []jsonrpc.Message
 		if err := json.Unmarshal(body, &batch); err != nil {
 			return nil, fmt.Errorf("decode JSON-RPC batch: %w", err)
 		}
@@ -517,7 +518,7 @@ func hasJSONPrefix(s string) bool {
 	return true
 }
 
-func isInitialize(msg JSONRPCMessage) bool {
+func isInitialize(msg jsonrpc.Message) bool {
 	return msg.Method == "initialize"
 }
 
@@ -567,7 +568,7 @@ func (h *HTTPServer) unregisterStream(sid string) {
 // session's open SSE stream, if any. It is a no-op when no stream
 // is open. Returns an error if the stream is open but the write
 // fails; the caller can ignore it.
-func (h *HTTPServer) pushToStream(sid string, resp JSONRPCMessage) error {
+func (h *HTTPServer) pushToStream(sid string, resp jsonrpc.Message) error {
 	h.mu.RLock()
 	stream, ok := h.streams[sid]
 	h.mu.RUnlock()

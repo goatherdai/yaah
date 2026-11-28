@@ -3,13 +3,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"io"
 	"testing"
 )
 
 // writeMsg writes a newline-delimited JSON-RPC message to w.
 // It marshals the message, appends a newline, and writes both.
-func writeMsg(t *testing.T, w io.Writer, msg JSONRPCMessage) {
+func writeMsg(t *testing.T, w io.Writer, msg jsonrpc.Message) {
 	t.Helper()
 	body, err := json.Marshal(msg)
 	if err != nil {
@@ -24,9 +25,9 @@ func writeMsg(t *testing.T, w io.Writer, msg JSONRPCMessage) {
 }
 
 // readMsg reads one newline-delimited JSON-RPC message from r.
-func readMsg(t *testing.T, r io.Reader) JSONRPCMessage {
+func readMsg(t *testing.T, r io.Reader) jsonrpc.Message {
 	t.Helper()
-	reader := NewNewlineReader(r)
+	reader := jsonrpc.NewNewlineReader(r)
 	msg, err := reader.ReadMessage()
 	if err != nil {
 		t.Fatalf("read message: %v", err)
@@ -57,16 +58,16 @@ func TestInitialize(t *testing.T) {
 	in, out, cancel := startServer(t, srv)
 	defer cancel()
 
-	writeMsg(t, in, JSONRPCMessage{
+	writeMsg(t, in, jsonrpc.Message{
 		JSONRPC: "2.0",
-		ID:      int64Ptr(1),
+		ID:      json.RawMessage("1"),
 		Method:  "initialize",
 		Params:  json.RawMessage(`{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}`),
 	})
 
 	resp := readMsg(t, out)
 
-	if resp.ID == nil || *resp.ID != 1 {
+	if id, ok := resp.IDInt(); !ok || id != 1 {
 		t.Errorf("response ID = %v, want 1", resp.ID)
 	}
 	if resp.Error != nil {
@@ -122,9 +123,9 @@ func TestToolsList(t *testing.T) {
 	in, out, cancel := startServer(t, srv)
 	defer cancel()
 
-	writeMsg(t, in, JSONRPCMessage{
+	writeMsg(t, in, jsonrpc.Message{
 		JSONRPC: "2.0",
-		ID:      int64Ptr(1),
+		ID:      json.RawMessage("1"),
 		Method:  "tools/list",
 	})
 
@@ -194,16 +195,16 @@ func TestToolsCall(t *testing.T) {
 	in, out, cancel := startServer(t, srv)
 	defer cancel()
 
-	writeMsg(t, in, JSONRPCMessage{
+	writeMsg(t, in, jsonrpc.Message{
 		JSONRPC: "2.0",
-		ID:      int64Ptr(1),
+		ID:      json.RawMessage("1"),
 		Method:  "tools/call",
 		Params:  json.RawMessage(`{"name":"greet","arguments":{"name":"World"}}`),
 	})
 
 	resp := readMsg(t, out)
 
-	if resp.ID == nil || *resp.ID != 1 {
+	if id, ok := resp.IDInt(); !ok || id != 1 {
 		t.Errorf("response ID = %v, want 1", resp.ID)
 	}
 	if resp.Error != nil {
@@ -246,9 +247,9 @@ func TestToolsCallError(t *testing.T) {
 	in, out, cancel := startServer(t, srv)
 	defer cancel()
 
-	writeMsg(t, in, JSONRPCMessage{
+	writeMsg(t, in, jsonrpc.Message{
 		JSONRPC: "2.0",
-		ID:      int64Ptr(1),
+		ID:      json.RawMessage("1"),
 		Method:  "tools/call",
 		Params:  json.RawMessage(`{"name":"failing","arguments":{}}`),
 	})
@@ -292,16 +293,16 @@ func TestToolsCallUnknownTool(t *testing.T) {
 	in, out, cancel := startServer(t, srv)
 	defer cancel()
 
-	writeMsg(t, in, JSONRPCMessage{
+	writeMsg(t, in, jsonrpc.Message{
 		JSONRPC: "2.0",
-		ID:      int64Ptr(7),
+		ID:      json.RawMessage("7"),
 		Method:  "tools/call",
 		Params:  json.RawMessage(`{"name":"nope","arguments":{}}`),
 	})
 
 	resp := readMsg(t, out)
 
-	if resp.ID == nil || *resp.ID != 7 {
+	if id, ok := resp.IDInt(); !ok || id != 7 {
 		t.Errorf("response ID = %v, want 7", resp.ID)
 	}
 	if resp.Error != nil {
@@ -337,15 +338,15 @@ func TestUnknownMethod(t *testing.T) {
 	in, out, cancel := startServer(t, srv)
 	defer cancel()
 
-	writeMsg(t, in, JSONRPCMessage{
+	writeMsg(t, in, jsonrpc.Message{
 		JSONRPC: "2.0",
-		ID:      int64Ptr(1),
+		ID:      json.RawMessage("1"),
 		Method:  "bogus/do_stuff",
 	})
 
 	resp := readMsg(t, out)
 
-	if resp.ID == nil || *resp.ID != 1 {
+	if id, ok := resp.IDInt(); !ok || id != 1 {
 		t.Errorf("response ID = %v, want 1", resp.ID)
 	}
 	if resp.Error == nil {
@@ -371,21 +372,21 @@ func TestNotification(t *testing.T) {
 	defer cancel()
 
 	// Send a notification (no ID means notification)
-	writeMsg(t, in, JSONRPCMessage{
+	writeMsg(t, in, jsonrpc.Message{
 		JSONRPC: "2.0",
 		Method:  "notifications/initialized",
 	})
 
 	// Send a ping request that should produce a response
-	writeMsg(t, in, JSONRPCMessage{
+	writeMsg(t, in, jsonrpc.Message{
 		JSONRPC: "2.0",
-		ID:      int64Ptr(42),
+		ID:      json.RawMessage("42"),
 		Method:  "ping",
 	})
 
 	// Read one response — should be the ping, not the notification
 	resp := readMsg(t, out)
-	if resp.ID == nil || *resp.ID != 42 {
+	if id, ok := resp.IDInt(); !ok || id != 42 {
 		t.Errorf("response ID = %v, want 42 (notification should not produce a response)", resp.ID)
 	}
 	if resp.Error != nil {
@@ -402,9 +403,9 @@ func TestPing(t *testing.T) {
 	in, out, cancel := startServer(t, srv)
 	defer cancel()
 
-	writeMsg(t, in, JSONRPCMessage{
+	writeMsg(t, in, jsonrpc.Message{
 		JSONRPC: "2.0",
-		ID:      int64Ptr(1),
+		ID:      json.RawMessage("1"),
 		Method:  "ping",
 	})
 
@@ -438,9 +439,9 @@ func TestToolsCallMissingParams(t *testing.T) {
 	defer cancel()
 
 	// Send tools/call with nil params
-	writeMsg(t, in, JSONRPCMessage{
+	writeMsg(t, in, jsonrpc.Message{
 		JSONRPC: "2.0",
-		ID:      int64Ptr(1),
+		ID:      json.RawMessage("1"),
 		Method:  "tools/call",
 	})
 
@@ -507,14 +508,14 @@ func TestFullHandshake(t *testing.T) {
 
 	// Step 1: initialize
 	t.Log("step 1: initialize")
-	writeMsg(t, inWriter, JSONRPCMessage{
+	writeMsg(t, inWriter, jsonrpc.Message{
 		JSONRPC: "2.0",
-		ID:      int64Ptr(1),
+		ID:      json.RawMessage("1"),
 		Method:  "initialize",
 		Params:  json.RawMessage(`{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0"}}`),
 	})
 	resp := readMsg(t, outReader)
-	if resp.ID == nil || *resp.ID != 1 {
+	if id, ok := resp.IDInt(); !ok || id != 1 {
 		t.Fatalf("initialize: response ID = %v, want 1", resp.ID)
 	}
 	if resp.Error != nil {
@@ -523,20 +524,20 @@ func TestFullHandshake(t *testing.T) {
 
 	// Step 2: initialized notification (no response expected)
 	t.Log("step 2: notifications/initialized")
-	writeMsg(t, inWriter, JSONRPCMessage{
+	writeMsg(t, inWriter, jsonrpc.Message{
 		JSONRPC: "2.0",
 		Method:  "notifications/initialized",
 	})
 
 	// Step 3: tools/list
 	t.Log("step 3: tools/list")
-	writeMsg(t, inWriter, JSONRPCMessage{
+	writeMsg(t, inWriter, jsonrpc.Message{
 		JSONRPC: "2.0",
-		ID:      int64Ptr(2),
+		ID:      json.RawMessage("2"),
 		Method:  "tools/list",
 	})
 	resp = readMsg(t, outReader)
-	if resp.ID == nil || *resp.ID != 2 {
+	if id, ok := resp.IDInt(); !ok || id != 2 {
 		t.Fatalf("tools/list: response ID = %v, want 2", resp.ID)
 	}
 	if resp.Error != nil {
@@ -559,14 +560,14 @@ func TestFullHandshake(t *testing.T) {
 
 	// Step 4: tools/call
 	t.Log("step 4: tools/call")
-	writeMsg(t, inWriter, JSONRPCMessage{
+	writeMsg(t, inWriter, jsonrpc.Message{
 		JSONRPC: "2.0",
-		ID:      int64Ptr(3),
+		ID:      json.RawMessage("3"),
 		Method:  "tools/call",
 		Params:  json.RawMessage(`{"name":"reverse","arguments":{"input":"hello"}}`),
 	})
 	resp = readMsg(t, outReader)
-	if resp.ID == nil || *resp.ID != 3 {
+	if id, ok := resp.IDInt(); !ok || id != 3 {
 		t.Fatalf("tools/call: response ID = %v, want 3", resp.ID)
 	}
 	if resp.Error != nil {

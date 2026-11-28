@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"io"
 	"log/slog"
 	"net/http"
@@ -123,28 +124,19 @@ func (c *HTTPClient) Close() error {
 // roundTrip implements rpcTransport for the HTTP transport. Each POST
 // carries one request and returns its response, so correlation is
 // inherent to the round-trip.
-func (c *HTTPClient) roundTrip(ctx context.Context, id int64, method string, params json.RawMessage) (*JSONRPCMessage, error) {
-	return c.post(ctx, JSONRPCMessage{
-		JSONRPC: "2.0",
-		ID:      &id,
-		Method:  method,
-		Params:  params,
-	})
+func (c *HTTPClient) roundTrip(ctx context.Context, id int64, method string, params json.RawMessage) (*jsonrpc.Message, error) {
+	return c.post(ctx, jsonrpc.NewRequest(id, method, params))
 }
 
 // notify implements rpcTransport for the HTTP transport. Notifications
 // expect 202 Accepted (no body).
 func (c *HTTPClient) notify(ctx context.Context, method string, params json.RawMessage) error {
-	_, err := c.post(ctx, JSONRPCMessage{
-		JSONRPC: "2.0",
-		Method:  method,
-		Params:  params,
-	})
+	_, err := c.post(ctx, jsonrpc.NewNotification(method, params))
 	return err
 }
 
 // post sends one JSON-RPC message and returns the response message.
-func (c *HTTPClient) post(ctx context.Context, msg JSONRPCMessage) (*JSONRPCMessage, error) {
+func (c *HTTPClient) post(ctx context.Context, msg jsonrpc.Message) (*jsonrpc.Message, error) {
 	body, err := json.Marshal(msg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -186,7 +178,7 @@ func (c *HTTPClient) post(ctx context.Context, msg JSONRPCMessage) (*JSONRPCMess
 
 	// Handle 202 Accepted (notification acknowledged, no body)
 	if resp.StatusCode == http.StatusAccepted {
-		return &JSONRPCMessage{JSONRPC: "2.0"}, nil
+		return &jsonrpc.Message{JSONRPC: "2.0"}, nil
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -194,7 +186,7 @@ func (c *HTTPClient) post(ctx context.Context, msg JSONRPCMessage) (*JSONRPCMess
 	}
 
 	// Try parsing as JSON-RPC response
-	var result JSONRPCMessage
+	var result jsonrpc.Message
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		// Some servers return SSE streams — try parsing the first event
 		return parseSSEFirstEvent(respBody)
@@ -204,12 +196,12 @@ func (c *HTTPClient) post(ctx context.Context, msg JSONRPCMessage) (*JSONRPCMess
 }
 
 // parseSSEFirstEvent extracts the first JSON-RPC message from an SSE stream.
-func parseSSEFirstEvent(data []byte) (*JSONRPCMessage, error) {
+func parseSSEFirstEvent(data []byte) (*jsonrpc.Message, error) {
 	lines := bytes.Split(data, []byte("\n"))
 	for _, line := range lines {
 		if bytes.HasPrefix(line, []byte("data: ")) {
 			payload := bytes.TrimPrefix(line, []byte("data: "))
-			var msg JSONRPCMessage
+			var msg jsonrpc.Message
 			if err := json.Unmarshal(payload, &msg); err == nil {
 				return &msg, nil
 			}
