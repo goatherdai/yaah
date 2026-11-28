@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.230.0](https://github.com/goatherdai/yaah/compare/v0.229.2...v0.230.0) (2026-11-28)
+
+
+### Features
+
+* **textclip:** single owner for UTF-8-safe bounded cuts ([#478](https://github.com/goatherdai/yaah/issues/478)) ([c01805a](https://github.com/goatherdai/yaah/commit/c01805a887180b55b37f4f5b2b4f3169c86e70ab))
+
 ## [0.229.2](https://github.com/goatherdai/yaah/compare/v0.229.1...v0.229.2) (2026-11-28)
 
 
