@@ -186,7 +186,7 @@ func TestRequestClient_ErrorResponsePreservesCode(t *testing.T) {
 	s := newRequestTestServer()
 	c := requestTestConnection(s, func(req jsonrpc.Message) {
 		s.resolvePending(jsonrpc.Message{JSONRPC: "2.0", ID: req.ID,
-			Error: &RPCError{Code: -32000, jsonrpc.Message: "refused"}})
+			Error: &jsonrpc.Error{Code: -32000, Message: "refused"}})
 	})
 
 	resp, outcome, err := s.requestClient(context.Background(), c, "test/method", nil, clientRequestOptions{})
@@ -197,7 +197,7 @@ func TestRequestClient_ErrorResponsePreservesCode(t *testing.T) {
 	if !errors.As(resp.err, &clientErr) {
 		t.Fatalf("error = %T, want *clientRequestError", resp.err)
 	}
-	if clientErr.Code != -32000 || clientErr.jsonrpc.Message != "refused" {
+	if clientErr.Code != -32000 || clientErr.Message != "refused" {
 		t.Fatalf("client error = %+v", clientErr)
 	}
 }
