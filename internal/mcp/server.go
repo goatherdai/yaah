@@ -26,7 +26,6 @@ type Server struct {
 	name    string
 	version string
 	tools   []ServerToolDef
-	reader  messageReader
 	writer  messageWriter
 }
 
@@ -45,8 +44,8 @@ func (s *Server) AddTool(def ServerToolDef) {
 
 // Serve reads JSON-RPC messages from in, handles them, and writes responses
 // to out. It blocks until the input stream is closed (EOF) or the context is
-// cancelled. Framing is auto-detected from the first inbound message:
-// Content-Length (MCP spec default) or newline-delimited JSON.
+// cancelled. Framing is auto-detected from the first inbound message —
+// Content-Length or newline-delimited JSON — and mirrored on output.
 //
 // Reading happens in a dedicated goroutine so context cancellation is honored
 // promptly even while blocked waiting for the next stdin line. On cancellation
@@ -54,7 +53,6 @@ func (s *Server) AddTool(def ServerToolDef) {
 // process is expected to exit shortly after Serve returns.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	detector := jsonrpc.NewAutoDetectReader(in)
-	s.reader = detector
 
 	type readResult struct {
 		msg jsonrpc.Message
