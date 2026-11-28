@@ -48,8 +48,11 @@ func TestScrollbarPressGrabsThumb(t *testing.T) {
 	if act != tview.MouseConsumed || ev != nil {
 		t.Fatalf("press on thumb not consumed: act=%v ev=%v", act, ev)
 	}
-	if ui.scrollDrag != thumbY-geom.ThumbStart {
-		t.Fatalf("grab distance = %d, want %d", ui.scrollDrag, thumbY-geom.ThumbStart)
+	if ui.scrollDrag == nil {
+		t.Fatalf("press on the thumb did not arm a drag")
+	}
+	if ui.scrollDrag.y != thumbY {
+		t.Fatalf("drag anchor row = %d, want the press row %d", ui.scrollDrag.y, thumbY)
 	}
 
 	// A move without the button held ends the drag and passes through.
@@ -57,7 +60,7 @@ func TestScrollbarPressGrabsThumb(t *testing.T) {
 	if act != tview.MouseMove || ev == nil {
 		t.Fatalf("buttonless move during drag should pass through: act=%v", act)
 	}
-	if ui.scrollDrag >= 0 {
+	if ui.scrollDrag != nil {
 		t.Fatalf("drag did not end on the buttonless move")
 	}
 }
@@ -152,12 +155,12 @@ func TestScrollbarPageClicks(t *testing.T) {
 	}
 
 	// A press in the content columns is not the scrollbar's business.
-	ui.scrollDrag = -1
+	ui.scrollDrag = nil
 	act, ev = pressAt(ui, x-1, y)
 	if act != tview.MouseLeftDown || ev == nil {
 		t.Fatalf("content press should pass through: act=%v", act)
 	}
-	if ui.scrollDrag >= 0 {
+	if ui.scrollDrag != nil {
 		t.Fatalf("content press must not start a drag")
 	}
 }
@@ -188,7 +191,7 @@ func TestScrollbarFitsContentPressPassesThrough(t *testing.T) {
 	if ui.tr.UserScrolled() {
 		t.Fatalf("fits-content press marked the view user-scrolled")
 	}
-	if ui.scrollDrag >= 0 {
+	if ui.scrollDrag != nil {
 		t.Fatalf("fits-content press armed a drag")
 	}
 }
@@ -206,7 +209,7 @@ func TestScrollbarStaleDragHealsOnPress(t *testing.T) {
 	if _, ev := pressAt(ui, x, geom.ThumbStart); ev != nil {
 		t.Fatalf("press on thumb not consumed")
 	}
-	if ui.scrollDrag < 0 {
+	if ui.scrollDrag == nil {
 		t.Fatalf("press did not arm the drag")
 	}
 
@@ -215,7 +218,7 @@ func TestScrollbarStaleDragHealsOnPress(t *testing.T) {
 	if _, ev := pressAt(ui, x-1, y); ev == nil {
 		t.Fatalf("content press should pass through")
 	}
-	if ui.scrollDrag >= 0 {
+	if ui.scrollDrag != nil {
 		t.Fatalf("content press left a stale drag armed")
 	}
 
@@ -228,5 +231,70 @@ func TestScrollbarStaleDragHealsOnPress(t *testing.T) {
 	}
 	if got := ui.pane.Offset(); got != before {
 		t.Fatalf("healed drag still scrolled the viewport: %d -> %d", before, got)
+	}
+}
+
+// TestScrollbarGrabReleaseKeepsFollow pins the tail-follow contract: a
+// press and release on the thumb at the live tail — no drag motion —
+// must not mark the view user-scrolled, so later appends keep
+// following the tail instead of stranding the viewport behind.
+func TestScrollbarGrabReleaseKeepsFollow(t *testing.T) {
+	ui := gateApp()
+	sim := setupSim(t, ui)
+	x, _ := scrollbarTestSetup(t, ui, sim)
+
+	geom, _ := ui.pane.ScrollbarGeom()
+	if _, ev := pressAt(ui, x, geom.ThumbStart); ev != nil {
+		t.Fatalf("press on thumb not consumed")
+	}
+	if ui.scrollDrag == nil {
+		t.Fatalf("press did not arm a drag")
+	}
+	ui.paneMouseCapture(tview.MouseLeftUp, tcell.NewEventMouse(x, geom.ThumbStart, 0, tcell.ModNone))
+	if ui.scrollDrag != nil {
+		t.Fatalf("release did not end the drag")
+	}
+	if ui.tr.UserScrolled() {
+		t.Fatalf("press/release on the tail thumb marked the view user-scrolled")
+	}
+
+	// Streaming appends still follow: the viewport sits at the bottom.
+	for i := 0; i < 20; i++ {
+		ui.appendMessage("later message")
+	}
+	ui.refreshMessages()
+	ui.Root.Draw(sim)
+	if !ui.pane.AtBottom() {
+		t.Fatalf("view stranded behind the tail after a no-op grab: offset %d", ui.pane.Offset())
+	}
+}
+
+// TestScrollbarDragNoLurchOnGrab pins the sub-row anchor: pressing the
+// thumb and moving within the grab row is a no-op — the viewport must
+// not jump a quantum to the integer-rounded position on the first
+// pointer motion.
+func TestScrollbarDragNoLurchOnGrab(t *testing.T) {
+	ui := gateApp()
+	sim := setupSim(t, ui)
+	x, _ := scrollbarTestSetup(t, ui, sim)
+
+	geom, _ := ui.pane.ScrollbarGeom()
+	// Park the viewport mid-transcript so a quantum jump would show.
+	ui.tr.SetScrolled(true)
+	ui.pane.ScrollTo(ui.pane.Offset() / 2)
+	ui.Root.Draw(sim)
+	geom, _ = ui.pane.ScrollbarGeom()
+	grabY := geom.ThumbStart + geom.ThumbSize/2
+	before := ui.pane.Offset()
+
+	if _, ev := pressAt(ui, x, grabY); ev != nil {
+		t.Fatalf("press on thumb not consumed")
+	}
+	// Move within the same row: the anchor holds, nothing moves.
+	if _, ev := dragTo(ui, x, grabY); ev != nil {
+		t.Fatalf("same-row move not consumed")
+	}
+	if got := ui.pane.Offset(); got != before {
+		t.Fatalf("same-row grab move lurched the viewport %d -> %d", before, got)
 	}
 }

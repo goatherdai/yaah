@@ -99,10 +99,10 @@ type App struct {
 	tr   *transcript.Model
 	pane *transcript.Pane
 
-	// scrollDrag is the scrollbar thumb's grab distance (pointer row
-	// minus thumb top) while a thumb drag is active; negative when no
-	// drag is in progress. UI-goroutine only (scrollbar_input.go).
-	scrollDrag int
+	// scrollDrag is the live thumb-drag anchor while a scrollbar drag
+	// is active; nil when none is. UI-goroutine only
+	// (scrollbar_input.go).
+	scrollDrag *thumbDrag
 
 	Banner     *tview.TextView
 	Input      *tview.TextArea
@@ -291,7 +291,6 @@ func New(version string) *App {
 		thumb = tcell.GetColor(t.Theme.Heading)
 	}
 	t.pane.SetScrollbarColors(track, thumb)
-	t.scrollDrag = -1
 	t.buildUI()
 	return t
 }

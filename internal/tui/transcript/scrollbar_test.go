@@ -130,49 +130,44 @@ func TestScrollbarPaint(t *testing.T) {
 	}
 }
 
-// TestScrollToThumb pins the drag seam's mapping: the ends are exact
-// (track top → first row, track bottom → last row), interior track
-// rows land on their quantum — a coarse thumb cannot represent every
-// offset, so row k maps to floor(k·span/(H−T)) — and values beyond
-// the track's ends clamp.
-func TestScrollToThumb(t *testing.T) {
+// TestScrollToThumbExactInverseMap pins the thumb↔offset maps as exact
+// inverses while the offset range is at least the thumb's travel (the
+// normal session shape): drawing the offset the drag lands on puts the
+// thumb back on the pointer's row. Both ends stay exact regardless of
+// the ratio — offset 0 draws on the track's top row (so the seam still
+// backfills), the last offset on its bottom row.
+func TestScrollToThumbExactInverseMap(t *testing.T) {
 	_, p := scrollbarTestPane(t, 50)
 	p.Model().SetScrolled(true)
 	rows := len(p.Model().Rows())
 	h := 10
 	span := rows - h
 	g, _ := p.ScrollbarGeom()
+	q := g.H - g.ThumbSize
 
-	p.ScrollToThumb(g.Y)
-	if got := p.Offset(); got != 0 {
-		t.Fatalf("ScrollToThumb at track top = %d, want 0", got)
-	}
-	p.ScrollToThumb(g.Y + g.H - 1)
-	if got := p.Offset(); got != span {
-		t.Fatalf("ScrollToThumb at track bottom = %d, want %d", got, span)
-	}
-	for rel := 0; rel <= g.H-g.ThumbSize; rel++ {
-		p.ScrollToThumb(g.Y + rel)
-		want := rel * span / (g.H - g.ThumbSize)
-		if got := p.Offset(); got != want {
-			t.Fatalf("ScrollToThumb at track row %d = %d, want %d", rel, got, want)
+	for rel := 0; rel <= q; rel++ {
+		offset := rel * span / q
+		p.ScrollTo(offset)
+		got, _ := p.ScrollbarGeom()
+		if want := g.Y + rel; got.ThumbStart != want {
+			t.Fatalf("offset %d (drag row %d) draws its thumb on row %d, want %d", offset, rel, got.ThumbStart, want)
 		}
 	}
-	p.ScrollToThumb(-100)
-	if got := p.Offset(); got != 0 {
-		t.Fatalf("ScrollToThumb above the track = %d, want 0", got)
+
+	p.ScrollTo(0)
+	if got, _ := p.ScrollbarGeom(); got.ThumbStart != g.Y {
+		t.Fatalf("offset 0 draws off the track's top row")
 	}
-	p.ScrollToThumb(1000)
-	if got := p.Offset(); got != span {
-		t.Fatalf("ScrollToThumb below the track = %d, want %d", got, span)
+	p.ScrollTo(span)
+	if got, _ := p.ScrollbarGeom(); got.ThumbStart != g.Y+q {
+		t.Fatalf("last offset draws off the track's bottom row")
 	}
 }
 
-// TestScrollToThumbOneRowViewport pins the degenerate drag: a 1-row
+// TestScrollbarGeomOneRowViewport pins the degenerate draw: a 1-row
 // viewport over overflowing content clamps the thumb to the whole
-// track, which has no representable positions — ScrollToThumb must be
-// a no-op, not a divide-by-zero.
-func TestScrollToThumbOneRowViewport(t *testing.T) {
+// track, and the geometry stays divide-by-zero-free.
+func TestScrollbarGeomOneRowViewport(t *testing.T) {
 	_, p := scrollbarTestPane(t, 50)
 	p.SetRect(0, 0, 11, 1)
 	p.Model().SetScrolled(true)
@@ -181,9 +176,8 @@ func TestScrollToThumbOneRowViewport(t *testing.T) {
 	if !ok || g.H != 1 || g.ThumbSize != 1 {
 		t.Fatalf("1-row viewport geometry = (ok=%v h=%d size=%d), want full-track thumb", ok, g.H, g.ThumbSize)
 	}
-	p.ScrollToThumb(g.Y)
-	if got := p.Offset(); got != 5 {
-		t.Fatalf("no-position drag moved the viewport to %d, want it pinned at 5", got)
+	if g.ThumbStart != g.Y {
+		t.Fatalf("1-row viewport thumb start = %d, want the track's only row", g.ThumbStart)
 	}
 }
 

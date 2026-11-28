@@ -59,7 +59,14 @@ func (p *Pane) ScrollbarGeom() (g ScrollbarGeom, ok bool) {
 		g.ThumbSize = h
 	default:
 		g.ThumbSize = max(1, h*h/rows)
-		g.ThumbStart = y + p.offset*(h-g.ThumbSize)/span
+		// The thumb's row is the ceiling of offset·q/span (q the
+		// thumb's travel, span the offset range): the exact inverse
+		// of the drag's floor map (rows→offset via floor(rel·span/q)),
+		// so a dragged thumb lands on the row under the pointer — both
+		// ends stay exact (offset 0 draws on the track's top row, the
+		// last offset on its bottom row), and no divide-by-zero is
+		// possible: q can be 0, the divisor is always span.
+		g.ThumbStart = y + (p.offset*(h-g.ThumbSize)+span-1)/span
 	}
 	return g, true
 }
@@ -70,30 +77,6 @@ func (p *Pane) ScrollbarGeom() (g ScrollbarGeom, ok bool) {
 func (p *Pane) trackX(w int) int {
 	x, _, _, _ := p.GetInnerRect()
 	return x + w - 1
-}
-
-// ScrollToThumb moves the viewport so the thumb's top row lands on sy
-// (screen space): the drag path's absolute positioning. Values outside
-// the track clamp to its ends.
-func (p *Pane) ScrollToThumb(sy int) {
-	g, ok := p.ScrollbarGeom()
-	if !ok {
-		return
-	}
-	rel := clamp(sy-g.Y, 0, g.H-g.ThumbSize)
-	span := len(p.model.Rows()) - g.H
-	if span <= 0 {
-		p.offset = 0
-		return
-	}
-	// A thumb that fills the track (content fits, or a 1-row viewport
-	// over any overflow) has no representable positions: the drag is a
-	// no-op, never a divide-by-zero.
-	if g.H == g.ThumbSize {
-		return
-	}
-	p.offset = rel * span / (g.H - g.ThumbSize)
-	p.ClampOffset()
 }
 
 // drawScrollbar paints the track column: the trough in the track style
@@ -111,15 +94,4 @@ func (p *Pane) drawScrollbar(screen tcell.Screen, g ScrollbarGeom) {
 		}
 		screen.SetContent(g.X, sy, ch, nil, style)
 	}
-}
-
-// clamp constrains v to [lo, hi].
-func clamp(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }
