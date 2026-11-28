@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.228.2](https://github.com/goatherdai/yaah/compare/v0.228.1...v0.228.2) (2026-11-28)
+
+
+### Bug Fixes
+
+* **tui:** attribute dropped tool updates and honour end-before-start (yaah-77f1 slice A, child 2) ([#469](https://github.com/goatherdai/yaah/issues/469)) ([d32a30a](https://github.com/goatherdai/yaah/commit/d32a30af6854cafe0e483d2dd2a38cba9ea64bbd))
+
 ## [0.228.1](https://github.com/goatherdai/yaah/compare/v0.228.0...v0.228.1) (2026-11-28)
 
 
