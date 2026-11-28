@@ -223,9 +223,12 @@ func RecordTUIQueueEvent(ctx context.Context, eventType, outcome string, depth i
 }
 
 // RecordTUIRefresh records refresh count, duration, cadence, and queue depth.
-// RecordTUIToolOrphan counts one tool-block orphan: kind is
-// "unmatched_end" (an end event arrived with no block to receive it) or
-// "swept" (a still-Running block sealed by the turn-end sweep).
+// RecordTUIToolOrphan counts one tool-block orphan, by how the end event met
+// the transcript: "unmatched_end" (an end arrived with no block to receive
+// it), "swept" (a still-Running block sealed by the turn-end sweep),
+// "late_end" (an end healed a block the sweep had already sealed as
+// interrupted) and "duplicate_end" (an end met a block that was already
+// terminal; nothing was overwritten).
 func RecordTUIToolOrphan(ctx context.Context, kind string) {
 	if tuiToolOrphans == nil {
 		return

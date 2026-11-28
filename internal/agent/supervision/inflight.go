@@ -9,6 +9,7 @@ package supervision
 
 import (
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -29,7 +30,7 @@ type inflightEntry struct {
 // snapshot builder reads it through the registry's InFlightCalls.
 type InFlightTable struct {
 	mu   sync.Mutex
-	open map[int64]inflightEntry
+	open map[string]inflightEntry
 	// now stamps a Start. A field, not a direct time.Now call, so a test
 	// can pin the clock.
 	now func() time.Time
@@ -45,25 +46,26 @@ func newInFlightTable(now func() time.Time) *InFlightTable {
 	return &InFlightTable{now: now}
 }
 
-// Start records a call whose execution has begun. The args are the start
-// event's abbreviated text, clipped here with the snapshot's existing args
-// cap: the table stores bounded text or nothing.
-func (t *InFlightTable) Start(id int64, name, args string, at time.Time) {
+// Start records a call whose execution has begun, keyed by its identity (see
+// inFlightKey). The args are the start event's abbreviated text, clipped here
+// with the snapshot's existing args cap: the table stores bounded text or
+// nothing.
+func (t *InFlightTable) Start(key, name, args string, at time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.open == nil {
-		t.open = make(map[int64]inflightEntry)
+		t.open = make(map[string]inflightEntry)
 	}
-	t.open[id] = inflightEntry{name: name, args: clipLine(args, maxSnapshotArgsBytes), startedAt: at}
+	t.open[key] = inflightEntry{name: name, args: clipLine(args, maxSnapshotArgsBytes), startedAt: at}
 }
 
-// End removes the call whose execution returned. Removing an ID that never
+// End removes the call whose execution returned. Removing a key that never
 // started, or already ended, is a no-op: an end without its start carries
 // no information a snapshot could have shown anyway.
-func (t *InFlightTable) End(id int64) {
+func (t *InFlightTable) End(key string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.open, id)
+	delete(t.open, key)
 }
 
 // Clear drops every open call. The registry calls it when a run's loop
@@ -103,8 +105,8 @@ func (t *InFlightTable) Entries(now time.Time) []supervisionapi.InFlightCall {
 }
 
 // Observe feeds one loop event into the table: a ToolStartEvent opens a
-// call, the matching ToolEndEvent (same per-execution ID) closes it, and
-// everything else is ignored. The broker delivers HandleEvent sequentially
+// call, the matching ToolEndEvent (same identity, see inFlightKey) closes it,
+// and everything else is ignored. The broker delivers HandleEvent sequentially
 // on its forwarder goroutine, so Observe never runs concurrently with
 // itself; every method still takes the mutex, because Entries is read from
 // the snapshot's caller. Bounded by construction: args are clipped at
@@ -114,8 +116,20 @@ func (t *InFlightTable) Entries(now time.Time) []supervisionapi.InFlightCall {
 func (t *InFlightTable) Observe(ev events.Event) {
 	switch e := ev.(type) {
 	case *events.ToolStartEvent:
-		t.Start(e.ID, e.Name, e.Args, t.now())
+		t.Start(inFlightKey(e.Key, e.ID), e.Name, e.Args, t.now())
 	case *events.ToolEndEvent:
-		t.End(e.ID)
+		t.End(inFlightKey(e.Key, e.ID))
 	}
+}
+
+// inFlightKey is the identity an in-flight entry is keyed by: the session-unique
+// key the event carries (yaah-77f1). The run-scoped ordinal restarts at 1 on
+// every prompt, so keying on it alone let a later run's start replace an
+// earlier run's open call and a later end close the wrong one; it survives only
+// as the fallback for an event that carries no key.
+func inFlightKey(key string, id int64) string {
+	if key != "" {
+		return key
+	}
+	return "t" + strconv.FormatInt(id, 10)
 }

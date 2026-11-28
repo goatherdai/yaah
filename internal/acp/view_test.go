@@ -547,3 +547,117 @@ func TestView_fallbackSubAgentIDsDoNotCollide(t *testing.T) {
 		t.Fatalf("fallback ids = %v, want two distinct start/end pairs", ids)
 	}
 }
+
+// TestView_toolCallIDCarriesTheSessionKey pins that a tool_call and its
+// matching update are correlated by the event's session-unique Key, not by the
+// run-scoped ID: two prompts of one session reuse the same ordinal, and keying
+// on it made a later prompt's update address an earlier prompt's call
+// (yaah-77f1).
+func TestView_toolCallIDCarriesTheSessionKey(t *testing.T) {
+	var got []any
+	v := NewView()
+	send := captureUpdate(&got)
+
+	// Both prompts' first call: the same ordinal, a different key.
+	v.SendTo("s", send, &agent.ToolStartEvent{Key: "turn-a.1", ID: 1, Name: "bash", Args: `{"command":"ls"}`})
+	v.SendTo("s", send, &agent.ToolEndEvent{Key: "turn-a.1", ID: 1, Name: "bash", Args: `{"command":"ls"}`, Result: "a\n"})
+	v.SendTo("s", send, &agent.ToolStartEvent{Key: "turn-b.1", ID: 1, Name: "bash", Args: `{"command":"pwd"}`})
+	v.SendTo("s", send, &agent.ToolEndEvent{Key: "turn-b.1", ID: 1, Name: "bash", Args: `{"command":"pwd"}`, Result: "b\n"})
+
+	if len(got) != 4 {
+		t.Fatalf("updates = %d, want 4", len(got))
+	}
+	ids := make([]string, 0, len(got))
+	for _, u := range got {
+		m := decodeUpdate(t, u)
+		id, _ := m["toolCallId"].(string)
+		ids = append(ids, id)
+	}
+	// Within a prompt the call and its update share one id...
+	if ids[0] != ids[1] || ids[2] != ids[3] {
+		t.Fatalf("ids = %v, want each call/update pair to share its id", ids)
+	}
+	// ...and across prompts the reused ordinal cannot make them collide.
+	if ids[0] == ids[2] {
+		t.Fatalf("both prompts' first call = %q; the run ordinal leaked into the id", ids[0])
+	}
+	if ids[0] != "turn-a.1" || ids[2] != "turn-b.1" {
+		t.Fatalf("ids = %v, want the events' session keys", ids)
+	}
+}
+
+// TestView_toolCallIDKeyBeatsARepeatedProviderCallID pins the ordering the
+// second review round asked for: a provider call id repeats across prompts
+// because providers regenerate "call_1" per response, so the session key must
+// win over it — not merely over the run-scoped ordinal. A provider id is still
+// used when an event carries no key at all (yaah-77f1).
+func TestView_toolCallIDKeyBeatsARepeatedProviderCallID(t *testing.T) {
+	var got []any
+	v := NewView()
+	send := captureUpdate(&got)
+
+	v.SendTo("s", send, &agent.ToolStartEvent{Key: "turn-a.1", ID: 1, CallID: "call_1", Name: "bash"})
+	v.SendTo("s", send, &agent.ToolStartEvent{Key: "turn-b.1", ID: 1, CallID: "call_1", Name: "bash"})
+	v.SendTo("s", send, &agent.ToolStartEvent{ID: 3, CallID: "call_7", Name: "bash"})
+
+	if len(got) != 3 {
+		t.Fatalf("updates = %d, want 3", len(got))
+	}
+	ids := make([]string, 0, 3)
+	for _, u := range got {
+		m := decodeUpdate(t, u)
+		id, _ := m["toolCallId"].(string)
+		ids = append(ids, id)
+	}
+	if ids[0] == ids[1] {
+		t.Fatalf("two prompts sharing provider call id call_1 gave one toolCallId %q", ids[0])
+	}
+	if ids[0] != "turn-a.1" || ids[1] != "turn-b.1" {
+		t.Fatalf("ids = %v, want each event's session key", ids)
+	}
+	if ids[2] != "call_7" {
+		t.Fatalf("id for an event with no key = %q, want the provider call id", ids[2])
+	}
+}
+
+// TestView_announcedCallKeepsItsProviderID pins the permission path's
+// correlation: the approval middleware creates the client row under the
+// provider call id before the dispatch emits ToolStartEvent (and before any
+// Key exists), and ACP cannot rename a row. The execution pair must therefore
+// reuse the announced id — rendering it under Key instead leaves the pending
+// row dangling and opens a duplicate (yaah-77f1 review 4).
+func TestView_announcedCallKeepsItsProviderID(t *testing.T) {
+	var got []any
+	v := NewView()
+	send := captureUpdate(&got)
+
+	// The permission request announced the row as call_1.
+	v.Announce("call_1")
+
+	v.SendTo("s", send, &agent.ToolStartEvent{Key: "turn-a.1", ID: 1, CallID: "call_1", Name: "bash"})
+	v.SendTo("s", send, &agent.ToolEndEvent{Key: "turn-a.1", ID: 1, CallID: "call_1", Name: "bash", Result: "ok\n"})
+
+	// An unannounced call in the same turn still correlates on its key.
+	v.SendTo("s", send, &agent.ToolStartEvent{Key: "turn-a.2", ID: 2, CallID: "call_2", Name: "bash"})
+
+	if len(got) != 3 {
+		t.Fatalf("updates = %d, want 3", len(got))
+	}
+	first := decodeUpdate(t, got[0])
+	second := decodeUpdate(t, got[1])
+	third := decodeUpdate(t, got[2])
+
+	if id, _ := first["toolCallId"].(string); id != "call_1" {
+		t.Fatalf("announced start rendered under %q, want the announced call_1", id)
+	}
+	// The start must convert the announced row, not create a second one.
+	if kind, _ := first["sessionUpdate"].(string); kind != UpdateToolCallUpdate {
+		t.Fatalf("announced start sessionUpdate = %q, want %q (it must update the announced row)", kind, UpdateToolCallUpdate)
+	}
+	if id, _ := second["toolCallId"].(string); id != "call_1" {
+		t.Fatalf("announced end rendered under %q, want the announced call_1", id)
+	}
+	if id, _ := third["toolCallId"].(string); id != "turn-a.2" {
+		t.Fatalf("unannounced start rendered under %q, want its session key", id)
+	}
+}

@@ -14,8 +14,8 @@ func TestHandleEvent_DoesNotBlock(t *testing.T) {
 	events := []agent.Event{
 		&agent.ThinkingEvent{Text: "thinking..."},
 		&agent.FlushEvent{Content: "flush"},
-		&agent.ToolStartEvent{ID: 1, Name: "read", Args: `{"file":"test.go"}`},
-		&agent.ToolEndEvent{ID: 1, Name: "read", Args: `{"file":"test.go"}`, Result: "ok", Duration: time.Millisecond},
+		&agent.ToolStartEvent{Key: "run1.1", ID: 1, Name: "read", Args: `{"file":"test.go"}`},
+		&agent.ToolEndEvent{Key: "run1.1", ID: 1, Name: "read", Args: `{"file":"test.go"}`, Result: "ok", Duration: time.Millisecond},
 		&agent.SubAgentStartEvent{SubAgentID: "sub-1", Role: "analyst", Model: "claude", Prompt: "analyze", World: "worktree"},
 		&agent.SubAgentEndEvent{SubAgentID: "sub-1", Role: "analyst", Duration: time.Second, World: "worktree"},
 		&agent.EscalationEvent{Summary: "test escalation"},
@@ -148,6 +148,7 @@ func TestHandleEvent_ToolError(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		ui.HandleEvent(&agent.ToolEndEvent{
+			Key:      "run1.1",
 			ID:       1,
 			Name:     "read",
 			Args:     `{"file":"test.go"}`,
@@ -162,5 +163,22 @@ func TestHandleEvent_ToolError(t *testing.T) {
 		// Success.
 	case <-time.After(2 * time.Second):
 		t.Fatal("ToolEndEvent with error blocked")
+	}
+}
+
+// TestToolBlockKey pins both halves of the block identity: a keyed event uses
+// its session key, and a keyless one falls back to the run ordinal (the
+// pre-yaah-77f1 behaviour) instead of opening an empty-key block that any
+// later keyless end could settle.
+func TestToolBlockKey(t *testing.T) {
+	if got := toolBlockKey("turn-a.1", 1); got != "turn-a.1" {
+		t.Fatalf("keyed event = %q, want the session key", got)
+	}
+	if got := toolBlockKey("", 7); got != "7" {
+		t.Fatalf("keyless event = %q, want the run ordinal rendered", got)
+	}
+	// A start and its end must agree, or the block never settles.
+	if start, end := toolBlockKey("", 3), toolBlockKey("", 3); start != end {
+		t.Fatalf("keyless pair disagreed: %q vs %q", start, end)
 	}
 }

@@ -94,8 +94,8 @@ All events use a single `sseWireEvent` struct with a `type` discriminator:
 | `token` | Agent → Browser | Streaming token delta |
 | `thinking` | Agent → Browser | Reasoning/thinking text |
 | `flush` | Agent → Browser | Streaming segment complete; commit to message list |
-| `tool.start` | Agent → Browser | Tool execution begins (name, args, tool_id, summary) |
-| `tool.end` | Agent → Browser | Tool execution completes (name, result, ms, error, summary) |
+| `tool.start` | Agent → Browser | Tool execution begins (name, args, tool_key, tool_id, summary) |
+| `tool.end` | Agent → Browser | Tool execution completes (name, result, ms, error, summary, tool_key, tool_id) |
 | `subagent.start` | Agent → Browser | Sub-agent dispatch begins |
 | `subagent.end` | Agent → Browser | Sub-agent dispatch completes |
 | `done` | Agent → Browser | Agent loop finishes (response, error, context stats) |
@@ -186,7 +186,7 @@ The Alpine.js component (`x-data="yaah"`) manages all UI state:
 | `status` | `string` | Footer status text |
 | `ctx` | `number\|null` | Context window fill percentage |
 | `modal` | `object` | Current modal state (question or approval) |
-| `_tools` | `object` | Map of running tool messages keyed by `tool_id` |
+| `_tools` | `object` | Map of running tool messages keyed by `tool_key` (falling back to `tool_id`) |
 
 ### Message types in the chat log
 
@@ -204,13 +204,16 @@ Each message object has `id`, `role`, and role-specific fields:
 Tools are rendered inline in the chat log, not in a separate strip:
 
 1. **`tool.start`** → Creates a new tool message with `running: true`,
-   icon `⏳`, and the pre-execution summary. Registers it in `_tools[tool_id]`
-   for later update. The icon pulses via CSS animation.
+   icon `⏳`, and the pre-execution summary. Registers it in `_tools[tool_key]`
+   for later update. The relay emits `tool_key` on both frames
+   (`sseWireEvent.ToolKey`); `tool_id` is the run-scoped dispatch ordinal and
+   restarts at 1 on every prompt, so it is read only from a producer that
+   sends no key. The icon pulses via CSS animation.
 
 2. **Streaming** → `token` and `thinking` events continue to arrive; tool
    messages remain in the log below the streaming content.
 
-3. **`tool.end`** → Looks up the message in `_tools[tool_id]`, sets
+3. **`tool.end`** → Looks up the message in `_tools[tool_key]`, sets
    `running: false`, populates `result`, `duration` (formatted with `fmtMs`),
    `error`, and the post-execution `summary`. Icon changes to `✓` (success)
    or `✗` (error). On error, the tool auto-expands to show the result.

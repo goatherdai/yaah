@@ -87,7 +87,7 @@ func growSession(tb testing.TB, ui *App, turns int) {
 		for j := 0; j < 2; j++ {
 			id := fmt.Sprintf("%d-%d", i, j)
 			ui.AddToolStart(id, "bash", `{"command":"go test ./..."}`)
-			ui.AddToolEnd(id, "bash · go test", synthProse(fmt.Sprintf("tool %s", id), 8*1024))
+			ui.AddToolEnd(id, "bash · go test", synthProse(fmt.Sprintf("tool %s", id), 8*1024), 0)
 		}
 	}
 }

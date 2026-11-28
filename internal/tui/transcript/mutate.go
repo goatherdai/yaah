@@ -4,38 +4,123 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/goatherdai/yaah/internal/tui/components/toolblock"
 )
 
 // mutate.go — in-place item mutations, log rewrites, and search. Every
 // mutation that can change a painted item's row count bumps the item's
 // gen (invalidating its caches) and marks the model for a full repaint.
 
-// CompleteTool transitions the tool block with the given ID to its
-// completed state and reports whether a block was found.
-func (m *Model) CompleteTool(id, summary, result string) bool {
-	for i := range m.items {
-		if tb := m.items[i].ToolBlock; tb != nil && tb.ID() == id {
-			tb.Complete(summary, result)
-			m.items[i].gen++
-			m.dirty = dirtyFull
-			return true
-		}
-	}
-	return false
+// ToolEnd is the part of a tool's end event the transcript needs to settle a
+// block: what the block should show, and how long the call itself took.
+type ToolEnd struct {
+	Summary  string
+	Result   string
+	Duration time.Duration
+	// Error selects the block's terminal state: Error rather than Done.
+	Error bool
 }
 
-// FailTool transitions the tool block with the given ID to its error
-// state and reports whether a block was found.
-func (m *Model) FailTool(id, summary, err string) bool {
-	for i := range m.items {
-		if tb := m.items[i].ToolBlock; tb != nil && tb.ID() == id {
-			tb.Fail(summary, err)
-			m.items[i].gen++
-			m.dirty = dirtyFull
-			return true
+// Settlement classifies how one tool end event met the transcript's blocks.
+type Settlement int
+
+const (
+	// Settled: the end settled a Running block.
+	Settled Settlement = iota
+	// LateEnd: the end healed a block the turn-end sweep had already sealed
+	// as Interrupted.
+	LateEnd
+	// DuplicateEnd: the block was already terminal, so nothing was written.
+	DuplicateEnd
+	// UnmatchedEnd: no block carried the key; the end was stashed.
+	UnmatchedEnd
+)
+
+// unmatchedEndsLimit bounds the unmatched-end stash. Settlement failures are
+// evidence about ordering, so a few are kept for diagnosis; the counter at the
+// view layer is the durable signal, not this ring.
+const unmatchedEndsLimit = 8
+
+// UnmatchedToolEnd is an end event that settled no block, kept so a caller can
+// inspect the drift instead of only counting it.
+type UnmatchedToolEnd struct {
+	Key string
+	End ToolEnd
+}
+
+// SettleTool applies one tool end event to the block its key names. There is
+// one rule for every end, success or failure, in order:
+//
+//  1. the LAST Running block with the key settles — a later run's call is the
+//     live one, so an earlier block that happens to carry the same key is
+//     never settled by it;
+//  2. else an Interrupted block with the key heals (LateEnd): the turn-end
+//     sweep sealed it before its end arrived, and it now shows the real
+//     outcome, labelled with the event's own duration rather than the delay;
+//  3. else a block with the key is already terminal and is left untouched
+//     (DuplicateEnd): a second end never overwrites the first;
+//  4. else nothing matched, so the end is stashed (UnmatchedEnd).
+func (m *Model) SettleTool(key string, end ToolEnd) Settlement {
+	lastRunning, lastInterrupted, matched := -1, -1, false
+	for i := len(m.items) - 1; i >= 0; i-- {
+		tb := m.items[i].ToolBlock
+		if tb == nil || tb.ID() != key {
+			continue
+		}
+		matched = true
+		switch {
+		case tb.IsRunning() && lastRunning < 0:
+			lastRunning = i
+		case tb.S() == toolblock.Interrupted && lastInterrupted < 0:
+			lastInterrupted = i
 		}
 	}
-	return false
+
+	state := toolblock.Done
+	if end.Error {
+		state = toolblock.Error
+	}
+	switch {
+	case lastRunning >= 0:
+		m.sealTool(lastRunning, state, end)
+		return Settled
+	case lastInterrupted >= 0:
+		m.sealTool(lastInterrupted, state, end)
+		return LateEnd
+	case matched:
+		return DuplicateEnd
+	default:
+		m.stashUnmatchedEnd(key, end)
+		return UnmatchedEnd
+	}
+}
+
+// sealTool writes one settlement outcome into the block at index i and marks
+// the painted rows stale.
+func (m *Model) sealTool(i int, state toolblock.State, end ToolEnd) {
+	m.items[i].ToolBlock.Seal(state, end.Summary, end.Result, end.Duration)
+	m.items[i].gen++
+	m.dirty = dirtyFull
+}
+
+// stashUnmatchedEnd records an end that settled no block, dropping the oldest
+// once the ring is full.
+func (m *Model) stashUnmatchedEnd(key string, end ToolEnd) {
+	if len(m.unmatchedEnds) >= unmatchedEndsLimit {
+		copy(m.unmatchedEnds, m.unmatchedEnds[1:])
+		m.unmatchedEnds = m.unmatchedEnds[:len(m.unmatchedEnds)-1]
+	}
+	m.unmatchedEnds = append(m.unmatchedEnds, UnmatchedToolEnd{Key: key, End: end})
+}
+
+// UnmatchedEnds returns the end events settled by the UnmatchedEnd rule,
+// oldest first. It is diagnostic state, not a rendering input.
+func (m *Model) UnmatchedEnds() []UnmatchedToolEnd {
+	out := make([]UnmatchedToolEnd, len(m.unmatchedEnds))
+	copy(out, m.unmatchedEnds)
+	return out
 }
 
 // SweepRunningTools seals every still-Running tool block as

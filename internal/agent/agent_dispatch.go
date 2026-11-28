@@ -74,6 +74,10 @@ func (l *Loop) newDispatch(idx int, call types.ToolCall) *toolDispatch {
 // run executes the call end-to-end and delivers the result on results.
 func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	l := d.loop
+	// The call's session-unique identity, shared by the start and the end
+	// event below so a view can pair them and no later run's call can ever
+	// settle this one's block (yaah-77f1).
+	key := toolCallKey(ctx, d.toolID)
 	observability.RecordToolGoroutine(ctx, d.call.Function.Name, "spawned")
 
 	if err := d.acquire(ctx); err != nil {
@@ -84,7 +88,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 
 	if l.broker != nil {
 		observability.RecordToolGoroutine(ctx, d.call.Function.Name, "publish_start")
-		l.broker.PublishMustDeliver(&events.ToolStartEvent{ID: d.toolID, CallID: d.call.ID, Name: d.call.Function.Name, Args: d.abbreviated, RawArgs: d.call.Function.Arguments})
+		l.broker.PublishMustDeliver(&events.ToolStartEvent{Key: key, ID: d.toolID, CallID: d.call.ID, Name: d.call.Function.Name, Args: d.abbreviated, RawArgs: d.call.Function.Arguments})
 		observability.RecordToolGoroutine(ctx, d.call.Function.Name, "published")
 	}
 
@@ -221,6 +225,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 
 	if l.broker != nil {
 		evt := &events.ToolEndEvent{
+			Key:      key,
 			ID:       d.toolID,
 			CallID:   d.call.ID,
 			Name:     d.call.Function.Name,

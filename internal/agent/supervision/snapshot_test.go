@@ -555,8 +555,8 @@ func TestSnapshotter_InFlight(t *testing.T) {
 	}
 
 	start := time.Unix(1000, 0)
-	tbl.Start(1, "bash", `{"command":"go test ./..."}`, start)
-	tbl.Start(2, "edit", strings.Repeat("x", maxSnapshotArgsBytes+80), start.Add(time.Second))
+	tbl.Start("k1", "bash", `{"command":"go test ./..."}`, start)
+	tbl.Start("k2", "edit", strings.Repeat("x", maxSnapshotArgsBytes+80), start.Add(time.Second))
 
 	s := &Snapshotter{Runs: runs, Store: store, Now: func() time.Time { return start.Add(2 * time.Second) }}
 	a := s.Snapshot().Agents[0]
@@ -574,8 +574,8 @@ func TestSnapshotter_InFlight(t *testing.T) {
 	}
 
 	// On return the call disappears.
-	tbl.End(1)
-	tbl.End(2)
+	tbl.End("k1")
+	tbl.End("k2")
 	if a := s.Snapshot().Agents[0]; a.InFlight != nil {
 		t.Errorf("InFlight after both calls returned = %+v, want nil", a.InFlight)
 	}
@@ -583,7 +583,7 @@ func TestSnapshotter_InFlight(t *testing.T) {
 	// A finished scope shows none even with a call still open: the
 	// cancellation cut the call off, and the table went with the
 	// registration.
-	tbl.Start(3, "write", `{"filePath":"b.go"}`, start)
+	tbl.Start("k3", "write", `{"filePath":"b.go"}`, start)
 	runs.Unregister(scopeID)
 	a = s.Snapshot().Agents[0]
 	if a.StillRunning {
@@ -620,7 +620,7 @@ func TestSnapshotter_StaleGenerationHoldsNoInFlight(t *testing.T) {
 	if tbl == nil {
 		t.Fatal("the successor must expose its table")
 	}
-	tbl.Start(1, "bash", `{"command":"go test"}`, time.Unix(1000, 0))
+	tbl.Start("k1", "bash", `{"command":"go test"}`, time.Unix(1000, 0))
 
 	now := time.Unix(1002, 0)
 	s := &Snapshotter{Runs: runs, Now: func() time.Time { return now }}

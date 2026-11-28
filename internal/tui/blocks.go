@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"time"
 
 	"github.com/goatherdai/yaah/internal/observability"
 	"github.com/goatherdai/yaah/internal/tui/components/reasoning"
@@ -31,18 +32,18 @@ const (
 	orphanKindUnmatchedEnd = "unmatched_end"
 	// orphanKindSwept: a still-Running block sealed by the turn-end sweep.
 	orphanKindSwept = "swept"
+	// orphanKindLateEnd: an end event healed a block the turn-end sweep had
+	// already sealed as Interrupted — the event was merely late.
+	orphanKindLateEnd = "late_end"
+	// orphanKindDuplicateEnd: an end event met a block that was already
+	// terminal. Nothing was overwritten.
+	orphanKindDuplicateEnd = "duplicate_end"
 )
 
-// AddToolError finds a tool block in the transcript by ID and
-// transitions it to Error. An unmatched ID is counted as an orphan: the
-// event was dropped or reordered, and the counter makes the drift
-// visible instead of silently discarding it.
-func (t *App) AddToolError(id, summary, err string) {
-	if t.tr.FailTool(id, summary, err) {
-		t.markDirty()
-		return
-	}
-	observability.RecordTUIToolOrphan(context.Background(), orphanKindUnmatchedEnd)
+// AddToolError settles the block carrying key into its error state, and
+// counts how the end met the transcript (see transcript.SettleTool).
+func (t *App) AddToolError(key, summary, err string, dur time.Duration) {
+	t.settleToolBlock(key, transcript.ToolEnd{Summary: summary, Result: err, Duration: dur, Error: true})
 }
 
 // AddToolStart adds a tool block to the transcript.
@@ -54,15 +55,29 @@ func (t *App) AddToolStart(id, name, args string) {
 	t.markDirty()
 }
 
-// AddToolEnd updates a tool block in the transcript with its result.
+// AddToolEnd settles the block carrying key with the call's result.
 // The caller (proxy.go) is responsible for routing errors via AddToolError.
 // Tools may legitimately return empty results (e.g., successful delete with no output).
-func (t *App) AddToolEnd(id, summary, result string) {
-	if t.tr.CompleteTool(id, summary, result) {
+func (t *App) AddToolEnd(key, summary, result string, dur time.Duration) {
+	t.settleToolBlock(key, transcript.ToolEnd{Summary: summary, Result: result, Duration: dur})
+}
+
+// settleToolBlock applies one end event through the transcript's single
+// settlement rule and surfaces whatever it could not do: a healed or
+// duplicated end is real drift in the event stream and is counted, while a
+// settled block only needs its repaint scheduled.
+func (t *App) settleToolBlock(key string, end transcript.ToolEnd) {
+	switch t.tr.SettleTool(key, end) {
+	case transcript.Settled:
 		t.markDirty()
-		return
+	case transcript.LateEnd:
+		t.markDirty()
+		observability.RecordTUIToolOrphan(context.Background(), orphanKindLateEnd)
+	case transcript.DuplicateEnd:
+		observability.RecordTUIToolOrphan(context.Background(), orphanKindDuplicateEnd)
+	case transcript.UnmatchedEnd:
+		observability.RecordTUIToolOrphan(context.Background(), orphanKindUnmatchedEnd)
 	}
-	observability.RecordTUIToolOrphan(context.Background(), orphanKindUnmatchedEnd)
 }
 
 // SweepStuckToolBlocks seals every still-Running tool block at turn end:
