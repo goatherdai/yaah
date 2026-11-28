@@ -107,6 +107,18 @@ type ToolEndEvent struct {
 	Result   string        // truncated result
 	Duration time.Duration // execution duration
 	Error    string        // error message (empty on success)
+	// Outcome is the structured result — ok or error — so a consumer settles
+	// a block from a status instead of pattern-matching Result (yaah-77f1).
+	// The zero value is types.ToolOutcomeUnknown; cancelled and interrupted
+	// are not published here, because a call cancelled while queued has no
+	// end event yet (the never-started slice of yaah-77f1).
+	Outcome types.ToolOutcome
+	// Truncated reports whether Result fell under the loop's context-safety
+	// cap, and ResultBytes is the untruncated size it was cut from — both
+	// measured at the emit site, where the full text was still in hand. A
+	// consumer must not read a truncated Result as the tool's whole output.
+	Truncated   bool
+	ResultBytes int
 }
 
 func (*ToolEndEvent) eventMarker() {}

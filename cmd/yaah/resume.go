@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/goatherdai/yaah/internal/agent"
 	agentctx "github.com/goatherdai/yaah/internal/agent/context"
@@ -180,6 +181,13 @@ func restoreMessage(m memory.Message) types.Message {
 		ReasoningSignature: m.ReasoningSignature,
 		Name:               m.ToolName,
 		ToolCallID:         m.ToolCallID,
+		// Tool result outcome and timing, so a resumed transcript settles a
+		// block from the persisted status instead of guessing from the result
+		// text (yaah-77f1). An unrecognized outcome parses as unknown, and
+		// zero milliseconds means unmeasured — both fall back to the legacy
+		// rule, exactly as a pre-outcome row did.
+		Outcome:  types.ParseToolOutcome(m.Outcome),
+		Duration: time.Duration(m.DurationMs) * time.Millisecond,
 	}
 	if m.ToolCalls != "" {
 		json.Unmarshal([]byte(m.ToolCalls), &msg.ToolCalls)

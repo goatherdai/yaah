@@ -10,12 +10,15 @@ import (
 )
 
 // toolErrorPrefix is the exact lowercase prefix the agent loop writes for
-// normalized tool failures (internal/agent/agent_dispatch.go). Persisted
-// result rows carry no error flag, so this is a heuristic: a successful
-// command whose output starts with exactly "error: " is still misclassified.
-// Matching case-sensitively only avoids the broader false-positive class
-// ("ERROR:", leading whitespace). yaah-bmv3 tracks persisting an explicit
-// flag so replay can stop guessing.
+// normalized tool failures (internal/agent/agent_dispatch.go).
+//
+// It is the LEGACY fallback only: it decides a row whose persisted status is
+// unknown, i.e. one written before tool outcomes were persisted (yaah-bmv3).
+// Such a row still carries no error flag, so the prefix is the best evidence
+// available and a successful command whose output starts with exactly
+// "error: " stays misclassified there — exactly the pre-outcome behaviour
+// pre-existing sessions must keep. A row with a persisted status is never
+// classified by its text (see applyToolResult).
 const toolErrorPrefix = "error: "
 
 // tuiHistoryFromMessages projects a persisted conversation onto the
@@ -68,18 +71,8 @@ func tuiHistoryFromMessages(history []types.Message) []tui.HistoryItem {
 					Name: call.Function.Name,
 					Args: call.Function.Arguments,
 				}
-				if res, ok := results[call.ID]; ok {
-					hc.Result = res.Content
-					if strings.HasPrefix(res.Content, toolErrorPrefix) {
-						hc.Error = res.Content
-					} else {
-						hc.Summary = toolfmt.Summary(call.Function.Name, call.Function.Arguments, res.Content)
-					}
-				} else {
-					// Compaction may drop a result while keeping the call.
-					// Say so rather than implying a successful empty result.
-					hc.ResultMissing = true
-				}
+				res, ok := results[call.ID]
+				applyToolResult(&hc, res, ok)
 				item.ToolCalls = append(item.ToolCalls, hc)
 			}
 
@@ -90,4 +83,46 @@ func tuiHistoryFromMessages(history []types.Message) []tui.HistoryItem {
 		}
 	}
 	return items
+}
+
+// applyToolResult settles one restored call from its persisted result row.
+//
+// The persisted status is authoritative: a row carrying one is rendered from
+// it, never from the result text — a successful command may print
+// "error: ...", and a failure may print anything at all. A row whose status
+// is unknown predates the outcome column, so the documented legacy prefix
+// rule decides and that session renders exactly as it always did.
+//
+// A call with NO result row is interrupted: there is no status to read and,
+// structurally, the turn ended before a result existed for that call. It
+// must not be replayed as an implied success, so it carries no duration and
+// no summary.
+func applyToolResult(hc *tui.HistoryToolCall, res types.Message, found bool) {
+	if !found {
+		hc.Interrupted = true
+		return
+	}
+	hc.Result = res.Content
+	hc.Duration = res.Duration
+	switch res.Outcome {
+	case types.ToolOutcomeOK:
+		hc.Summary = toolfmt.Summary(hc.Name, hc.Args, res.Content)
+	case types.ToolOutcomeError:
+		hc.Error = res.Content
+	case types.ToolOutcomeInterrupted, types.ToolOutcomeCancelled:
+		// Neither is written by the engine today (see types.ToolOutcome):
+		// a cancelled call lands here only once the never-started slice
+		// publishes its events. Both mean "did not run to a result", and the
+		// live view has no separate cancelled glyph, so they project onto the
+		// Interrupted state rather than inventing one.
+		hc.Interrupted = true
+	case types.ToolOutcomeUnknown:
+		// Legacy row: no status was persisted, so the prefix rule decides
+		// exactly as it did before the outcome column existed.
+		if strings.HasPrefix(res.Content, toolErrorPrefix) {
+			hc.Error = res.Content
+		} else {
+			hc.Summary = toolfmt.Summary(hc.Name, hc.Args, res.Content)
+		}
+	}
 }

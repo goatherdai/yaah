@@ -12,9 +12,9 @@ import (
 // embedded in a background goroutine so the caller is not blocked.
 func (d *DB) AddMessage(m Message) error {
 	res, err := d.sql.Exec(
-		`INSERT INTO messages (session_id, idx, role, content, reasoning_content, reasoning_signature, tool_name, tool_call_id, tool_calls, ts, id, trace_id, turn_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO messages (session_id, idx, role, content, reasoning_content, reasoning_signature, tool_name, tool_call_id, tool_calls, ts, id, trace_id, turn_id, outcome, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(session_id, idx) DO NOTHING`,
-		m.SessionID, m.Idx, m.Role, m.Content, m.ReasoningContent, m.ReasoningSignature, m.ToolName, m.ToolCallID, m.ToolCalls, m.Timestamp, m.ID, m.TraceID, m.TurnID,
+		m.SessionID, m.Idx, m.Role, m.Content, m.ReasoningContent, m.ReasoningSignature, m.ToolName, m.ToolCallID, m.ToolCalls, m.Timestamp, m.ID, m.TraceID, m.TurnID, m.Outcome, m.DurationMs,
 	)
 	if err != nil {
 		return err
@@ -154,7 +154,7 @@ func (d *DB) DeleteMessagesFrom(sessionID string, fromIdx int) error {
 // GetMessages returns all messages for a session.
 func (d *DB) GetMessages(sessionID string) ([]Message, error) {
 	rows, err := d.sql.Query(`
-		SELECT session_id, idx, role, content, COALESCE(reasoning_content, ''), COALESCE(reasoning_signature, ''), COALESCE(tool_name, ''), COALESCE(tool_call_id, ''), COALESCE(tool_calls, ''), ts, COALESCE(id, ''), COALESCE(trace_id, ''), COALESCE(turn_id, '')
+		SELECT session_id, idx, role, content, COALESCE(reasoning_content, ''), COALESCE(reasoning_signature, ''), COALESCE(tool_name, ''), COALESCE(tool_call_id, ''), COALESCE(tool_calls, ''), ts, COALESCE(id, ''), COALESCE(trace_id, ''), COALESCE(turn_id, ''), COALESCE(outcome, ''), COALESCE(duration_ms, 0)
 		FROM messages
 		WHERE session_id = ?
 		ORDER BY idx
@@ -167,7 +167,7 @@ func (d *DB) GetMessages(sessionID string) ([]Message, error) {
 	var results []Message
 	for rows.Next() {
 		var m Message
-		if err := rows.Scan(&m.SessionID, &m.Idx, &m.Role, &m.Content, &m.ReasoningContent, &m.ReasoningSignature, &m.ToolName, &m.ToolCallID, &m.ToolCalls, &m.Timestamp, &m.ID, &m.TraceID, &m.TurnID); err != nil {
+		if err := rows.Scan(&m.SessionID, &m.Idx, &m.Role, &m.Content, &m.ReasoningContent, &m.ReasoningSignature, &m.ToolName, &m.ToolCallID, &m.ToolCalls, &m.Timestamp, &m.ID, &m.TraceID, &m.TurnID, &m.Outcome, &m.DurationMs); err != nil {
 			return nil, err
 		}
 		results = append(results, m)
@@ -193,7 +193,7 @@ func (d *DB) CountMessages() (int, error) {
 func (d *DB) SearchMessages(query string, limit int) ([]Message, error) {
 	safeQuery := sanitizeFTSQuery(query)
 	rows, err := d.sql.Query(`
-		SELECT m.session_id, m.idx, m.role, m.content, COALESCE(m.reasoning_content, ''), COALESCE(m.reasoning_signature, ''), COALESCE(m.tool_name, ''), COALESCE(m.tool_call_id, ''), COALESCE(m.tool_calls, ''), m.ts, COALESCE(m.id, ''), COALESCE(m.trace_id, ''), COALESCE(m.turn_id, '')
+		SELECT m.session_id, m.idx, m.role, m.content, COALESCE(m.reasoning_content, ''), COALESCE(m.reasoning_signature, ''), COALESCE(m.tool_name, ''), COALESCE(m.tool_call_id, ''), COALESCE(m.tool_calls, ''), m.ts, COALESCE(m.id, ''), COALESCE(m.trace_id, ''), COALESCE(m.turn_id, ''), COALESCE(m.outcome, ''), COALESCE(m.duration_ms, 0)
 		FROM messages m
 		JOIN messages_fts ON messages_fts.rowid = m.rowid
 		WHERE messages_fts MATCH ?
@@ -208,7 +208,7 @@ func (d *DB) SearchMessages(query string, limit int) ([]Message, error) {
 	var results []Message
 	for rows.Next() {
 		var m Message
-		if err := rows.Scan(&m.SessionID, &m.Idx, &m.Role, &m.Content, &m.ReasoningContent, &m.ReasoningSignature, &m.ToolName, &m.ToolCallID, &m.ToolCalls, &m.Timestamp, &m.ID, &m.TraceID, &m.TurnID); err != nil {
+		if err := rows.Scan(&m.SessionID, &m.Idx, &m.Role, &m.Content, &m.ReasoningContent, &m.ReasoningSignature, &m.ToolName, &m.ToolCallID, &m.ToolCalls, &m.Timestamp, &m.ID, &m.TraceID, &m.TurnID, &m.Outcome, &m.DurationMs); err != nil {
 			return nil, err
 		}
 		results = append(results, m)

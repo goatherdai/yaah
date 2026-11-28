@@ -132,7 +132,7 @@ func (m *ApprovalMiddleware) PostModel(ctx context.Context, msg *types.Message, 
 		}
 		m.emitDeny(name, args, errMsg)
 		step.SynthesizedResults = append(step.SynthesizedResults,
-			types.ToolResultMsg(tc.ID, name, errMsg))
+			types.ToolFailedMsg(tc.ID, name, errMsg))
 	}
 	msg.ToolCalls = filtered
 	return step, nil

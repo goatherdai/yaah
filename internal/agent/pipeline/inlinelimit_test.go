@@ -30,6 +30,12 @@ func TestInlineLimitMiddleware_TruncatesAndSynthesizes(t *testing.T) {
 	if step.SynthesizedResults[0].ToolCallID != "2" || step.SynthesizedResults[0].Role != "tool" {
 		t.Errorf("synthesized result = %+v, want tool message for call 2", step.SynthesizedResults[0])
 	}
+	// A synthesized row carries its outcome explicitly: the call never ran,
+	// and an unknown status would let the resume projection read its text
+	// and show it as a success (yaah-77f1).
+	if got := step.SynthesizedResults[0].Outcome; got != types.ToolOutcomeError {
+		t.Errorf("synthesized outcome = %q, want %q", got, types.ToolOutcomeError)
+	}
 }
 
 func TestInlineLimitMiddleware_ZeroIsUnlimited(t *testing.T) {

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/goatherdai/yaah/internal/tui/components/reasoning"
 	"github.com/goatherdai/yaah/internal/tui/components/toolblock"
@@ -22,14 +23,28 @@ const (
 
 // HistoryToolCall is one tool call from a restored assistant row, paired
 // with its result (when the conversation contains one).
+//
+// The outcome fields are settled by the driver from the persisted status, not
+// from the result text: Error is a persisted failure and Interrupted a call
+// known to have produced no result.
 type HistoryToolCall struct {
-	ID            string
-	Name          string
-	Args          string
-	Summary       string
-	Result        string
-	Error         string
-	ResultMissing bool // no result row survived compaction
+	ID      string
+	Name    string
+	Args    string
+	Summary string
+	Result  string
+	// Error is the persisted failure text; non-empty means the call failed
+	// and the block renders in the live view's Error state.
+	Error string
+	// Interrupted marks a call that produced no result — the turn ended
+	// before one existed, so there is nothing to summarize. It renders the
+	// live view's Interrupted state instead of implying a successful empty
+	// result.
+	Interrupted bool
+	// Duration is the measured execution time. Zero means no measurement
+	// (a row persisted before durations, or an interrupted call), which
+	// renders as no duration rather than 0ms.
+	Duration time.Duration
 }
 
 // HistoryItem is one visible row of a conversation being restored into the
@@ -77,22 +92,30 @@ func (t *App) restoreHistory() {
 				// block and leave its own stuck as Running (yaah-77f1).
 				id := "history-tool-" + strconv.Itoa(i) + "-" + strconv.Itoa(j)
 				tb := toolblock.New(id, call.Name, call.Args, t.Theme)
-				if call.Error != "" {
+				switch {
+				case call.Error != "":
 					// Match the live path (proxy.go): the failed block carries
 					// the tool name, not the computed result summary.
 					tb.Fail(call.Name+" \u274C", call.Error)
-				} else {
+				case call.Interrupted:
+					// The live view's terminal state for a call whose result
+					// never arrived. There is no summary to show and no
+					// success to imply.
+					tb.Interrupt()
+				default:
 					summary := call.Summary
 					if summary == "" {
 						summary = call.Name
 					}
-					if call.ResultMissing {
-						summary += " (result not retained)"
-					}
 					tb.Complete(summary, call.Result)
 				}
-				// A restored row has no timing data; do not claim 0ms.
-				tb.SetDurationLabel("\u2014")
+				// A measured duration is rendered exactly as a live block
+				// renders it; a row without one must not claim 0ms.
+				if call.Duration > 0 {
+					tb.SetDurationLabel(toolblock.DurationLabel(call.Duration))
+				} else {
+					tb.SetDurationLabel("\u2014")
+				}
 				t.tr.Append(transcript.ToolItem(tb))
 			}
 		}

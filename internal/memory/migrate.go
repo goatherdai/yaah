@@ -76,6 +76,13 @@ func (d *DB) migrate() error {
 		id                TEXT DEFAULT '',
 		trace_id          TEXT DEFAULT '',
 		turn_id           TEXT DEFAULT '',
+		-- outcome / duration_ms: a tool result's structured status and
+		-- measured duration, so a replay decides an outcome from data
+		-- rather than from the result text (yaah-77f1). Additive with
+		-- zero-value defaults: rows written before the columns read as
+		-- unknown / unmeasured.
+		outcome           TEXT DEFAULT '',
+		duration_ms       INTEGER DEFAULT 0,
 		PRIMARY KEY (session_id, idx)
 	);
 
@@ -374,6 +381,12 @@ func (d *DB) migrate() error {
 		{"messages", "reasoning_signature", "ALTER TABLE messages ADD COLUMN reasoning_signature TEXT DEFAULT ''"},
 		{"messages", "trace_id", "ALTER TABLE messages ADD COLUMN trace_id TEXT DEFAULT ''"},
 		{"messages", "turn_id", "ALTER TABLE messages ADD COLUMN turn_id TEXT DEFAULT ''"},
+		// Tool result outcome and duration (yaah-77f1). Additive with
+		// zero-value defaults — pre-outcome rows read as unknown status and
+		// no measurement, which is exactly the legacy behaviour — so no
+		// backfill and no schema-version bump is needed.
+		{"messages", "outcome", "ALTER TABLE messages ADD COLUMN outcome TEXT DEFAULT ''"},
+		{"messages", "duration_ms", "ALTER TABLE messages ADD COLUMN duration_ms INTEGER DEFAULT 0"},
 		{"sessions", "system_prompt", "ALTER TABLE sessions ADD COLUMN system_prompt TEXT DEFAULT ''"},
 		{"sessions", "compacted_summary", "ALTER TABLE sessions ADD COLUMN compacted_summary TEXT DEFAULT ''"},
 		{"memory", "embedding", "ALTER TABLE memory ADD COLUMN embedding BLOB"},

@@ -1372,7 +1372,7 @@ Events published during streaming and tool execution:
 | `ThinkingEvent` | Each reasoning/thinking delta | `Text string` |
 | `FlushEvent` | Model finishes a streaming segment | `Content string` |
 | `ToolStartEvent` | Before tool execution | `Key string` (session-unique call identity); `ID int64` (run-scoped ordinal, not an identity); `Name, Args string` |
-| `ToolEndEvent` | After tool execution | `Key string`; `ID int64` (run-scoped ordinal, not an identity); `Name, Args, Result, Error string`; `Duration time.Duration` |
+| `ToolEndEvent` | After tool execution | `Key string`; `ID int64` (run-scoped ordinal, not an identity); `Name, Args, Result, Error string`; `Duration time.Duration`; `Outcome types.ToolOutcome` (structured status, ok or error; zero value = unknown); `Truncated bool` (the cutter's verdict); `ResultBytes int` (untruncated size) |
 | `SubAgentStartEvent` | Sub-agent begins | `SubAgentID, Role, Model, Prompt string` |
 | `SubAgentEndEvent` | Sub-agent completes | `SubAgentID, Role, Model, Prompt, Error, Result string`; `Duration time.Duration` |
 | `DoneEvent` | Agent loop finishes | `Response, Error, FinishReason, ResponseModel string`; `ContextTokens, ContextWindow, LastPromptTokens, LastPromptTokensInclusive int`; `Usage` |
@@ -1420,7 +1420,7 @@ Concrete event types (all pointer receivers for clean nil checks in type switche
 | `ThinkingEvent` | Reasoning/thinking text (DeepSeek R1, Claude) |
 | `FlushEvent` | Streaming segment complete; content should be committed to the message list |
 | `ToolStartEvent` | Tool execution begins (name + args) |
-| `ToolEndEvent` | Tool execution completes (name, args, result, duration, error) |
+| `ToolEndEvent` | Tool execution completes (name, args, result, duration, error, structured outcome, truncation metadata) |
 | `SubAgentStartEvent` | Sub-agent dispatch begins (role, model, prompt) |
 | `SubAgentEndEvent` | Sub-agent dispatch completes (role, duration, error) |
 | `EscalationEvent` | Sub-agent raises a structured escalation (severity, summary, detail, suggestion) |

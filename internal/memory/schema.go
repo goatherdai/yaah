@@ -201,6 +201,17 @@ type Message struct {
 	Timestamp          int64  `json:"ts"`
 	TraceID            string `json:"trace_id,omitempty"`
 	TurnID             string `json:"turn_id,omitempty"`
+	// Outcome is the structured result of the tool call this row answers
+	// ("ok" / "error" / "cancelled" / "interrupted"; see types.ToolOutcome
+	// for the vocabulary). Empty — the zero value — means no outcome was
+	// recorded: a row written before the column existed. Stored as text so
+	// the column reads without a code change.
+	Outcome string `json:"outcome,omitempty"`
+	// DurationMs is the measured execution time of the tool call this row
+	// answers, in milliseconds; 0 means unmeasured (a pre-column row, or an
+	// interval under 1ms). Never rendered as 0ms — see the resume
+	// projection.
+	DurationMs int64 `json:"duration_ms,omitempty"`
 }
 
 // DB is the yaah persistent database.

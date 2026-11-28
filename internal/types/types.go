@@ -4,7 +4,10 @@
 // format, which is the de-facto standard across providers.
 package types
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Message represents a single chat message in the agent's internal
 // conversation history. It is NOT the wire format sent to providers — see
@@ -24,6 +27,16 @@ type Message struct {
 	ToolCallID         string        `json:"tool_call_id,omitempty"`
 	Name               string        `json:"name,omitempty"`
 	CacheControl       *CacheControl `json:"cache_control,omitempty"`
+	// Outcome is the structured result of the tool call this row answers
+	// (role "tool" only). It is engine bookkeeping, never provider wire
+	// data, so it is excluded from marshalling; the zero value is
+	// ToolOutcomeUnknown (a call whose outcome was not recorded).
+	Outcome ToolOutcome `json:"-"`
+	// Duration is the measured execution time of the tool call this row
+	// answers (role "tool" only). Zero means unmeasured — either a row
+	// written before durations were persisted or an interval under the
+	// persisted resolution — and must render as "no data", never as 0ms.
+	Duration time.Duration `json:"-"`
 }
 
 // CacheControl marks a message for Anthropic prompt caching.

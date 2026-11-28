@@ -156,9 +156,15 @@ func (p *SessionPersister) newMessage(msg types.Message, idx int) memory.Message
 		ToolName:           toolName,
 		ToolCallID:         msg.ToolCallID,
 		ToolCalls:          toolCallsJSON,
-		Timestamp:          time.Now().Unix(),
-		TraceID:            p.traceID,
-		TurnID:             p.turnID,
+		// Tool result outcome and timing: the persisted status a replay reads
+		// instead of inferring failure from the result text (yaah-77f1), and
+		// the measured duration it renders. Only tool rows carry them; an
+		// empty outcome / zero duration means "not recorded".
+		Outcome:    string(msg.Outcome),
+		DurationMs: msg.Duration.Milliseconds(),
+		Timestamp:  time.Now().Unix(),
+		TraceID:    p.traceID,
+		TurnID:     p.turnID,
 	}
 }
 

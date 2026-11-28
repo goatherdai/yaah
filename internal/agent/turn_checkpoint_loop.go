@@ -66,6 +66,33 @@ func (l *Loop) checkpointTurn(ctx context.Context, messages []types.Message) {
 	l.State.TurnCheckpoints = append(l.State.TurnCheckpoints, id)
 }
 
+// rehydrateOutcomes copies the recorded tool outcome and duration from the
+// live conversation onto a decoded snapshot of itself, matching tool results
+// by ToolCallID. A Message's JSON form never carries them (they are engine
+// state, not wire data), so without this a restored conversation would
+// re-persist every earlier tool result as unknown on the next Rebase and the
+// resume projection would fall back to reading its text (yaah-77f1). A row
+// with no live counterpart, or whose live row recorded nothing, is left as
+// decoded.
+func rehydrateOutcomes(restored, live []types.Message) {
+	recorded := make(map[string]types.Message, len(live))
+	for _, m := range live {
+		if m.Role == "tool" && m.ToolCallID != "" && m.Outcome.Known() {
+			recorded[m.ToolCallID] = m
+		}
+	}
+	for i := range restored {
+		m := &restored[i]
+		if m.Role != "tool" || m.ToolCallID == "" || m.Outcome.Known() {
+			continue
+		}
+		if src, ok := recorded[m.ToolCallID]; ok {
+			m.Outcome = src.Outcome
+			m.Duration = src.Duration
+		}
+	}
+}
+
 // restoreLastTurnCheckpoint rewinds the workspace and conversation to
 // the most recent turn checkpoint, then appends guidance as a user
 // message so the model retries from the rewound state. It reports
@@ -113,6 +140,7 @@ func (l *Loop) restoreLastTurnCheckpoint(ctx context.Context, messages *[]types.
 		if err := json.Unmarshal(snap, &restored); err != nil {
 			slog.Debug("turn_checkpoint: snapshot decode failed; keeping conversation", "id", id, "err", err)
 		} else {
+			rehydrateOutcomes(restored, *messages)
 			*messages = restored
 		}
 	}
