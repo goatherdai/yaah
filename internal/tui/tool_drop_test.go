@@ -382,3 +382,104 @@ func TestDroppedTurnEndReconciliationIsCounted(t *testing.T) {
 		t.Fatalf("dropped_sweep = %d, want 1 (counts: %v)", got, counts)
 	}
 }
+
+// TestLostEndSealsAStartThatLandsAfterTheSweep pins the case the sweep cannot
+// reach on its own: the end's UI update was dropped while its start was still in
+// flight, so at turn end there is no block to seal. The record must survive the
+// sweep and be consumed by the late start, which creates the block terminal —
+// otherwise the start creates a Running block after the turn's only sweep and it
+// keeps a permanent chevron.
+func TestLostEndSealsAStartThatLandsAfterTheSweep(t *testing.T) {
+	ui, stop := newQueuedApp(t)
+	defer stop()
+
+	// 1. The end's update cannot be scheduled: counted, and its key recorded.
+	restore := saturate(t, ui)
+	ui.HandleEvent(&agent.ToolEndEvent{
+		Key: "run1.1", ID: 1, Name: "read", Args: `{"path":"a"}`,
+		Result: "the-result", Duration: time.Millisecond,
+	})
+	restore()
+
+	// 2. The turn ends. No block exists yet, so the sweep seals nothing — but it
+	// must keep the record for the start that has not landed.
+	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
+	var stashed int
+	probe := make(chan struct{})
+	ui.queueUpdate(func() {
+		stashed = len(ui.tr.UnmatchedEnds())
+		close(probe)
+	})
+	<-probe
+	if stashed != 0 {
+		t.Fatalf("the dropped end was stashed (%d entries), want the lost record path", stashed)
+	}
+
+	// 3. The start finally lands and must create the block terminal.
+	ui.HandleEvent(&agent.ToolStartEvent{Key: "run1.1", ID: 1, Name: "read", Args: `{"path":"a"}`})
+	waitForUI(t, ui, func() bool { return len(toolBlocks(ui, "run1.1")) == 1 },
+		"the late start created no block")
+
+	var state toolblock.State
+	waitForUI(t, ui, func() bool {
+		blocks := toolBlocks(ui, "run1.1")
+		if len(blocks) != 1 {
+			return false
+		}
+		state = blocks[0].S()
+		return true
+	}, "the late block could not be read")
+
+	if state == toolblock.Running {
+		t.Fatal("a start whose end was dropped landed after the turn's only sweep and was left Running: permanent chevron")
+	}
+	if n := runningToolBlocks(ui); n != 0 {
+		t.Fatalf("still-Running blocks = %d, want 0", n)
+	}
+
+	counts := ui.toolOrphanCounts()
+	if got := counts[orphanKindDroppedEnd]; got != 1 {
+		t.Fatalf("dropped_end = %d, want 1 (counts: %v)", got, counts)
+	}
+	if got := counts[orphanKindSwept]; got != 0 {
+		t.Fatalf("the sweep claimed a loss it never observed: swept = %d", got)
+	}
+}
+
+// TestFallbackKeyedEndIsNotStashed pins the other half of the no-clear rule. The
+// stash now survives the sweep, which is safe only because a key is
+// session-unique; a keyless event falls back to the run-scoped ordinal, which
+// repeats every prompt, so its end is discarded instead of hoarded.
+func TestFallbackKeyedEndIsNotStashed(t *testing.T) {
+	ui, stop := newQueuedApp(t)
+	defer stop()
+
+	// A keyless end: its block key is the run-scoped ordinal, which repeats
+	// every prompt. Counted as unmatched, but taken back out of the stash.
+	ui.HandleEvent(&agent.ToolEndEvent{
+		ID: 1, Name: "read", Args: `{"path":"a"}`, Result: "out", Duration: time.Millisecond,
+	})
+	waitForUI(t, ui, func() bool {
+		return len(ui.tr.UnmatchedEnds()) == 0 && ui.toolOrphanCounts()[orphanKindUnmatchedEnd] == 1
+	}, "a fallback-keyed end was hoarded in the stash (an ordinal repeats every prompt, so it could settle another turn's start)")
+
+	// The next turn reuses ordinal 1: its block must not inherit that end.
+	ui.HandleEvent(&agent.ToolStartEvent{ID: 1, Name: "read", Args: `{"path":"a"}`})
+	waitForUI(t, ui, func() bool {
+		blocks := toolBlocks(ui, "1")
+		return len(blocks) == 1 && blocks[0].IsRunning()
+	}, "a fallback-keyed block was settled by an end from another turn")
+
+	// A session-unique key is still stashed, so a merely-late start heals.
+	var stashed int
+	probe := make(chan struct{})
+	ui.queueUpdate(func() {
+		ui.AddToolEnd("turn-a.2", "read", "out", time.Millisecond)
+		stashed = len(ui.tr.UnmatchedEnds())
+		close(probe)
+	})
+	<-probe
+	if stashed != 1 {
+		t.Fatalf("stashed ends for a unique key = %d, want 1", stashed)
+	}
+}

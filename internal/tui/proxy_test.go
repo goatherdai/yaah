@@ -171,14 +171,16 @@ func TestHandleEvent_ToolError(t *testing.T) {
 // pre-yaah-77f1 behaviour) instead of opening an empty-key block that any
 // later keyless end could settle.
 func TestToolBlockKey(t *testing.T) {
-	if got := toolBlockKey("turn-a.1", 1); got != "turn-a.1" {
-		t.Fatalf("keyed event = %q, want the session key", got)
+	if got, unique := toolBlockKey("turn-a.1", 1); got != "turn-a.1" || !unique {
+		t.Fatalf("keyed event = (%q, %v), want the session key and uniqueness", got, unique)
 	}
-	if got := toolBlockKey("", 7); got != "7" {
-		t.Fatalf("keyless event = %q, want the run ordinal rendered", got)
+	if got, unique := toolBlockKey("", 7); got != "7" || unique {
+		t.Fatalf("keyless event = (%q, %v), want the run ordinal and NOT uniqueness", got, unique)
 	}
 	// A start and its end must agree, or the block never settles.
-	if start, end := toolBlockKey("", 3), toolBlockKey("", 3); start != end {
+	start, _ := toolBlockKey("", 3)
+	end, _ := toolBlockKey("", 3)
+	if start != end {
 		t.Fatalf("keyless pair disagreed: %q vs %q", start, end)
 	}
 }

@@ -229,9 +229,10 @@ func RecordTUIQueueEvent(ctx context.Context, eventType, outcome string, depth i
 //     merely-late start can still create the block settled.
 //   - "dropped_start": a tool start's UI update could never be scheduled, so
 //     no block was ever created for that call.
-//   - "dropped_end": a tool end's UI update could never be scheduled. The
-//     block is still sealed by the turn-end sweep, but the loss is attributed
-//     here, where it was observed.
+//   - "dropped_end": a tool end's UI update could never be scheduled. The loss
+//     is attributed here, where it was observed. Whichever seam reaches the
+//     block seals it: the turn-end sweep if the block exists by then, otherwise
+//     AddToolStart, which creates the late block terminal from the record.
 //   - "duplicate_end": an end met a block that was already terminal.
 //   - "late_end": an end healed a block the sweep had sealed as interrupted.
 //   - "swept": a still-Running block sealed by the turn-end sweep. After the

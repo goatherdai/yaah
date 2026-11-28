@@ -108,3 +108,18 @@ func TestSweepRunningTools_MarksDirty(t *testing.T) {
 		t.Fatalf("swept block still painted with the running chevron: %q", m.PaintedText())
 	}
 }
+
+// TestClearDropsTheUnmatchedEndStash pins that a cleared transcript takes the
+// stash with it: the entries name blocks that no longer exist, and the sweep no
+// longer clears them, so nothing else would.
+func TestClearDropsTheUnmatchedEndStash(t *testing.T) {
+	th := colors.NewDarkTheme()
+	m, _ := settleFixture(&th, "run1.1")
+	if got := m.SettleTool("run2.1", ToolEnd{Summary: "early", Result: "out"}); got != UnmatchedEnd {
+		t.Fatalf("SettleTool for a missing block = %v, want UnmatchedEnd", got)
+	}
+	m.Clear()
+	if n := len(m.UnmatchedEnds()); n != 0 {
+		t.Fatalf("stashed ends after Clear = %d, want 0", n)
+	}
+}

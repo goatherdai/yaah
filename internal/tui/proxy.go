@@ -16,17 +16,22 @@ import (
 	"github.com/goatherdai/yaah/internal/tui/transcript"
 )
 
-// toolBlockKey picks the id a tool block is keyed on. The event's
-// session-unique Key is authoritative; a keyless event (a legacy or test
-// dispatch) falls back to the run-scoped ordinal, matching the pre-yaah-77f1
-// behaviour rather than opening an empty-key block that any later keyless end
-// could settle. The other views carry the same fallback (acp.toolCallIDFor,
-// the web wire's tool_id), so the TUI is not the lone exception.
-func toolBlockKey(key string, id int64) string {
+// toolBlockKey picks the id a tool block is keyed on, and reports whether that
+// id identifies the call for the whole session. The event's session-unique Key
+// is authoritative; a keyless event (a legacy or test dispatch) falls back to
+// the run-scoped ordinal, matching the pre-yaah-77f1 behaviour rather than
+// opening an empty-key block that any later keyless end could settle. The other
+// views carry the same fallback (acp.toolCallIDFor, the web wire's tool_id), so
+// the TUI is not the lone exception.
+//
+// The second return value is load-bearing for settlement: a fallback key is an
+// ordinal that restarts at 1 on every prompt, so nothing may be stashed under it
+// for a later start to find (see settleToolEnd).
+func toolBlockKey(key string, id int64) (string, bool) {
 	if key != "" {
-		return key
+		return key, true
 	}
-	return strconv.FormatInt(id, 10)
+	return strconv.FormatInt(id, 10), false
 }
 
 func (t *App) HandleEvent(event agent.Event) {
@@ -54,7 +59,7 @@ func (t *App) HandleEvent(event agent.Event) {
 		// prompt), so keying on it alone made a later prompt's call
 		// settle an earlier prompt's block (yaah-77f1). A dropped update
 		// is counted below: the block it would have created never exists.
-		key := toolBlockKey(e.Key, e.ID)
+		key, _ := toolBlockKey(e.Key, e.ID)
 		scheduled := t.queueUpdateCritical(func() {
 			t.pendingTool = e.Name
 			if e.Name == "delegate" {
@@ -73,25 +78,38 @@ func (t *App) HandleEvent(event agent.Event) {
 	case *agent.ToolEndEvent:
 		// The same key the start used: a dropped end is recorded under it so
 		// the turn-end sweep can attribute the block it could not settle.
-		key := toolBlockKey(e.Key, e.ID)
+		key, unique := toolBlockKey(e.Key, e.ID)
 		scheduled := t.queueUpdateCritical(func() {
 			t.pendingTool = ""
 			if e.Name == "delegate" {
 				return
 			}
 			if e.Error != "" {
-				t.AddToolError(key, e.Name+" \u274C", e.Error, e.Duration)
+				t.settleToolEnd(key, transcript.ToolEnd{
+					Summary:  e.Name + " \u274C",
+					Result:   e.Error,
+					Duration: e.Duration,
+					Error:    true,
+				}, unique)
 			} else {
-				t.AddToolEnd(key, toolfmt.Summary(e.Name, e.Args, e.Result), e.Result, e.Duration)
+				t.settleToolEnd(key, transcript.ToolEnd{
+					Summary:  toolfmt.Summary(e.Name, e.Args, e.Result),
+					Result:   e.Result,
+					Duration: e.Duration,
+				}, unique)
 			}
 			t.restoreActivity()
 		})
 		if !scheduled && e.Name != "delegate" {
 			// The end will never be applied. Count it as the drop it is
-			// and remember the key, so the turn-end sweep seals the
-			// block (never a permanent chevron) without claiming the
-			// loss as its own.
-			t.recordLostToolEnd(key)
+			// and remember the key, so the turn-end sweep — or, if the
+			// start is still in flight, AddToolStart — seals the block
+			// (never a permanent chevron) without claiming the loss as
+			// its own. A fallback key names no single turn's call, so it
+			// is counted but not recorded.
+			if unique {
+				t.recordLostToolEnd(key)
+			}
 			t.recordToolOrphan(orphanKindDroppedEnd)
 		}
 	case *agent.SubAgentStartEvent:

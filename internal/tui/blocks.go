@@ -44,9 +44,10 @@ const (
 	// scheduled, so no block was ever created for the call.
 	orphanKindDroppedStart = "dropped_start"
 	// orphanKindDroppedEnd: a tool end event's UI update could not be
-	// scheduled. The block is still sealed by the turn-end sweep (a block
-	// must never render a permanent chevron), but the loss is attributed
-	// here, where it was observed, not to the sweep.
+	// scheduled. The loss is attributed here, where it was observed, not to
+	// the sweep. The block is sealed by whichever seam reaches it: the sweep,
+	// if the block exists at turn end; otherwise AddToolStart, when the
+	// start lands after the sweep, creates it terminal from this record.
 	orphanKindDroppedEnd = "dropped_end"
 	// orphanKindDroppedSweep: the DoneEvent's turn-end reconciliation could
 	// not be scheduled. Nothing sweeps this turn, so any still-Running block
@@ -107,6 +108,21 @@ func (t *App) recordLostToolEnd(key string) {
 	t.lostEnds = append(t.lostEnds, key)
 }
 
+// takeLostToolEnd reports whether key's end event was recorded as lost,
+// removing that record. It is consumed by AddToolStart when the start lands
+// after the turn-end sweep, so the block is created terminal instead of Running.
+func (t *App) takeLostToolEnd(key string) bool {
+	t.lostEndsMu.Lock()
+	defer t.lostEndsMu.Unlock()
+	for i, k := range t.lostEnds {
+		if k == key {
+			t.lostEnds = append(t.lostEnds[:i], t.lostEnds[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
 // takeLostToolEnds returns and clears the recorded lost ends. The sweep is the
 // turn boundary: a loss recorded before it belongs to a block the sweep is
 // about to seal, and a later sweep must not re-attribute it.
@@ -127,7 +143,7 @@ func (t *App) takeLostToolEnds() map[string]bool {
 // AddToolError settles the block carrying key into its error state, and
 // counts how the end met the transcript (see transcript.SettleTool).
 func (t *App) AddToolError(key, summary, err string, dur time.Duration) {
-	t.settleToolBlock(key, transcript.ToolEnd{Summary: summary, Result: err, Duration: dur, Error: true})
+	t.settleToolEnd(key, transcript.ToolEnd{Summary: summary, Result: err, Duration: dur, Error: true}, true)
 }
 
 // AddToolStart adds a tool block to the transcript.
@@ -148,6 +164,12 @@ func (t *App) AddToolStart(key, name, args string) {
 			state = toolblock.Error
 		}
 		tb.Seal(state, end.Summary, end.Result, end.Duration)
+	} else if t.takeLostToolEnd(key) {
+		// The end was dropped, not merely late: no result survives to render,
+		// but this start landed after the turn's only sweep, so nothing else
+		// will ever seal it. Create it terminal instead of Running — a Running
+		// block would keep its chevron for the rest of the session.
+		tb.Interrupt()
 	}
 	t.tr.Append(transcript.ToolItem(tb))
 	t.markDirty()
@@ -157,14 +179,20 @@ func (t *App) AddToolStart(key, name, args string) {
 // The caller (proxy.go) is responsible for routing errors via AddToolError.
 // Tools may legitimately return empty results (e.g., successful delete with no output).
 func (t *App) AddToolEnd(key, summary, result string, dur time.Duration) {
-	t.settleToolBlock(key, transcript.ToolEnd{Summary: summary, Result: result, Duration: dur})
+	t.settleToolEnd(key, transcript.ToolEnd{Summary: summary, Result: result, Duration: dur}, true)
 }
 
 // settleToolBlock applies one end event through the transcript's single
 // settlement rule and surfaces whatever it could not do: a healed or
 // duplicated end is real drift in the event stream and is counted, while a
 // settled block only needs its repaint scheduled.
-func (t *App) settleToolBlock(key string, end transcript.ToolEnd) {
+// settleToolEnd applies one tool end. unique reports whether key identifies the
+// call for the session (a key minted from the event's Key) or is the run-scoped
+// ordinal fallback used for a keyless event. Only a unique key may be stashed
+// for a start that has not arrived yet: the sweep no longer clears the stash, so
+// a fallback key — an ordinal that restarts at 1 on every prompt — could settle
+// a later turn's start, which is precisely the corruption the key exists to end.
+func (t *App) settleToolEnd(key string, end transcript.ToolEnd, unique bool) {
 	switch t.tr.SettleTool(key, end) {
 	case transcript.Settled:
 		t.markDirty()
@@ -174,6 +202,11 @@ func (t *App) settleToolBlock(key string, end transcript.ToolEnd) {
 	case transcript.DuplicateEnd:
 		t.recordToolOrphan(orphanKindDuplicateEnd)
 	case transcript.UnmatchedEnd:
+		if !unique {
+			// SettleTool stashed it; take it straight back. Nothing may hoard
+			// an end whose identity cannot tell two turns apart.
+			t.tr.TakeUnmatchedEnd(key)
+		}
 		t.recordToolOrphan(orphanKindUnmatchedEnd)
 	}
 }
@@ -190,6 +223,22 @@ func (t *App) settleToolBlock(key string, end transcript.ToolEnd) {
 func (t *App) SweepStuckToolBlocks() int {
 	lost := t.takeLostToolEnds()
 	sealed := t.tr.SweepRunningTools()
+
+	sealedSet := make(map[string]bool, len(sealed))
+	for _, key := range sealed {
+		sealedSet[key] = true
+	}
+	// A lost end whose block does not exist yet is NOT settled here: its start
+	// is still in flight (the same saturated-queue reordering this file has to
+	// tolerate elsewhere), so the record goes back and AddToolStart consumes it
+	// when that start lands. Dropping it would leave the late start to create a
+	// Running block after the turn's only sweep — the permanent chevron.
+	for key := range lost {
+		if !sealedSet[key] {
+			t.recordLostToolEnd(key)
+		}
+	}
+
 	if len(sealed) == 0 {
 		return 0
 	}

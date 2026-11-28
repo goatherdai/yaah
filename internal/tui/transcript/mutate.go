@@ -160,7 +160,11 @@ func (m *Model) TakeUnmatchedEnd(key string) (ToolEnd, bool) {
 // sweep of the turn has already run — a permanent chevron, and the end's
 // result discarded. What protects a later turn from an earlier turn's stashed
 // end is the KEY: it is session-unique (yaah-77f1), so a next turn's start can
-// never match it. The stash stays bounded by unmatchedEndsLimit.
+// never match it. An event that carries no key has no such guarantee — its
+// fallback id is the run-scoped ordinal — so such an end is never stashed in the
+// first place (App.settleToolEnd takes it straight back out); the stash therefore
+// only ever holds entries a later turn cannot match. It stays bounded by
+// unmatchedEndsLimit, and Model.Clear drops it with the log.
 func (m *Model) SweepRunningTools() []string {
 	sealed := make([]string, 0, 4)
 	for i := range m.items {
@@ -261,6 +265,9 @@ func (m *Model) CollapseCompacted(boundary int) {
 // Clear empties the log. The window is stale the moment the log empties:
 // recompute at the next repaint.
 func (m *Model) Clear() {
+	// The stash names blocks that are about to vanish, so it goes with them —
+	// a later start must not be settled by an end from a cleared log.
+	m.unmatchedEnds = nil
 	m.items = nil
 	m.promptIdxs = nil
 	m.userScrolled = false
