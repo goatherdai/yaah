@@ -140,7 +140,7 @@ func (s *Server) dispatch(ctx context.Context, msg jsonrpc.Message) (json.RawMes
 		return json.RawMessage(`{}`), nil
 	default:
 		return nil, &jsonrpc.Error{
-			Code:    -32601,
+			Code:    jsonrpc.CodeMethodNotFound,
 			Message: fmt.Sprintf("Method not found: %s", msg.Method),
 		}
 	}
@@ -177,7 +177,7 @@ func (s *Server) handleInitialize(params json.RawMessage) (json.RawMessage, *jso
 	}
 	data, err := json.Marshal(result)
 	if err != nil {
-		return nil, &jsonrpc.Error{Code: -32603, Message: "internal error"}
+		return nil, &jsonrpc.Error{Code: jsonrpc.CodeInternal, Message: "internal error"}
 	}
 	return data, nil
 }
@@ -208,7 +208,7 @@ func (s *Server) handleToolsList() (json.RawMessage, *jsonrpc.Error) {
 	}{Tools: tools}
 	data, err := json.Marshal(result)
 	if err != nil {
-		return nil, &jsonrpc.Error{Code: -32603, Message: "internal error"}
+		return nil, &jsonrpc.Error{Code: jsonrpc.CodeInternal, Message: "internal error"}
 	}
 	return data, nil
 }
@@ -229,7 +229,7 @@ func (s *Server) handleToolsCall(ctx context.Context, params json.RawMessage) (j
 
 	var p toolsCallParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &jsonrpc.Error{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: "invalid params: " + err.Error()}
 	}
 
 	// Find the tool by name

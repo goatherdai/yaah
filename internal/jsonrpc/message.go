@@ -67,10 +67,17 @@ func NewNotification(method string, params json.RawMessage) Message {
 // response.
 func (m Message) IsNotification() bool { return len(m.ID) == 0 }
 
-// IDInt decodes a numeric id. The second return is false for absent ids and
-// for string ids — a caller correlating responses by number (the MCP
-// client's pending map) treats those as unroutable rather than as id 0.
+// IDInt decodes a numeric id. The second return is false for absent ids,
+// for the raw `null` id (spec parse-error responses carry it), and for
+// string ids — a caller correlating responses by number (the MCP client's
+// pending map) treats those as unroutable rather than as id 0. The null
+// guard is load-bearing: unmarshaling `null` into an int is a documented
+// no-op, so without it a parse-error response would masquerade as a
+// correlated response for id 0.
 func (m Message) IDInt() (int64, bool) {
+	if len(m.ID) == 0 || string(m.ID) == "null" {
+		return 0, false
+	}
 	var id int64
 	if err := json.Unmarshal(m.ID, &id); err != nil {
 		return 0, false

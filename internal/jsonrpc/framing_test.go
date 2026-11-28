@@ -41,13 +41,15 @@ func TestNewNotificationHasNoID(t *testing.T) {
 }
 
 func TestIDIntRejectsStringAndAbsentIDs(t *testing.T) {
-	msg := Message{ID: json.RawMessage(`"abc"`)}
-	if _, ok := msg.IDInt(); ok {
-		t.Error("string id must not decode as numeric")
-	}
-	msg = Message{}
-	if _, ok := msg.IDInt(); ok {
-		t.Error("absent id must not decode as numeric")
+	for name, raw := range map[string]string{
+		"string id": `"abc"`,
+		"absent id": ``,
+		"null id":   `null`,
+	} {
+		msg := Message{ID: json.RawMessage(raw)}
+		if _, ok := msg.IDInt(); ok {
+			t.Errorf("%s: id must not decode as numeric", name)
+		}
 	}
 }
 
