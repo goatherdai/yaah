@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.228.3](https://github.com/goatherdai/yaah/compare/v0.228.2...v0.228.3) (2026-11-28)
+
+
+### Code Refactoring
+
+* **tui:** replace tool-loss state with one per-turn ledger (yaah-ol3r) ([#471](https://github.com/goatherdai/yaah/issues/471)) ([2d04396](https://github.com/goatherdai/yaah/commit/2d043968627c6f7720dd6096907e3befe6dcff00))
+
 ## [0.228.2](https://github.com/goatherdai/yaah/compare/v0.228.1...v0.228.2) (2026-11-28)
 
 
