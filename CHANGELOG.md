@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.229.2](https://github.com/goatherdai/yaah/compare/v0.229.1...v0.229.2) (2026-11-28)
+
+
+### Code Refactoring
+
+* **acp:** unify outbound client request lifecycle ([#477](https://github.com/goatherdai/yaah/issues/477)) ([ab1c750](https://github.com/goatherdai/yaah/commit/ab1c7506679e50c02304b3c9ccf79f6dbf7d0d7b))
+
+
+### Tests
+
+* **agent:** make the outcome fixture outlast the coarsest CI clock (yaah-9pch) ([#481](https://github.com/goatherdai/yaah/issues/481)) ([2b8a8af](https://github.com/goatherdai/yaah/commit/2b8a8af31b9d8f7ce5097fa1aade26e76e170951))
+
 ## [0.229.1](https://github.com/goatherdai/yaah/compare/v0.229.0...v0.229.1) (2026-11-28)
 
 
