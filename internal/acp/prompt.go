@@ -11,11 +11,12 @@ import (
 	"github.com/goatherdai/yaah/internal/agent"
 	"github.com/goatherdai/yaah/internal/agent/subagent"
 	"github.com/goatherdai/yaah/internal/control"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 )
 
 // handleCancel cancels the in-flight turn if it belongs to the given
 // session, ignoring malformed params — cancel is idempotent.
-func (s *Server) handleCancel(msg Message) {
+func (s *Server) handleCancel(msg jsonrpc.Message) {
 	var p CancelParams
 	if len(msg.Params) > 0 {
 		_ = json.Unmarshal(msg.Params, &p)
@@ -48,7 +49,7 @@ func (s *Server) handleCancel(msg Message) {
 // untouched — the axes are independent.
 func (s *Server) handleSetMode(
 	ctx context.Context,
-	msg Message,
+	msg jsonrpc.Message,
 	sendUpdate updateSender,
 	respOK func(id json.RawMessage, result any),
 	respErr func(id json.RawMessage, code int, message string),
@@ -56,16 +57,16 @@ func (s *Server) handleSetMode(
 	var p SetModeParams
 	if len(msg.Params) > 0 {
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, "invalid params: "+err.Error())
 			return
 		}
 	}
 	if p.SessionID == "" {
-		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "sessionId is required")
 		return
 	}
 	if !validSessionMode(p.ModeID) {
-		respErr(msg.ID, codeInvalidParams,
+		respErr(msg.ID, jsonrpc.CodeInvalidParams,
 			fmt.Sprintf("unknown modeId %q (available: %s, %s)", p.ModeID, SessionModeBuild, SessionModePlan))
 		return
 	}
@@ -73,7 +74,7 @@ func (s *Server) handleSetMode(
 	st, ok := s.sessions[p.SessionID]
 	s.mu.Unlock()
 	if !ok {
-		respErr(msg.ID, codeInvalidParams, "unknown session id")
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "unknown session id")
 		return
 	}
 	if st.sess.Mode() == p.ModeID {
@@ -102,7 +103,7 @@ func (s *Server) handleSetMode(
 // the session's effective persona and its current mode-axis posture.
 func (s *Server) handleSetAgent(
 	ctx context.Context,
-	msg Message,
+	msg jsonrpc.Message,
 	sendUpdate updateSender,
 	respOK func(id json.RawMessage, result any),
 	respErr func(id json.RawMessage, code int, message string),
@@ -110,33 +111,33 @@ func (s *Server) handleSetAgent(
 	var p SetAgentParams
 	if len(msg.Params) > 0 {
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, "invalid params: "+err.Error())
 			return
 		}
 	}
 	if p.SessionID == "" {
-		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "sessionId is required")
 		return
 	}
 	name := strings.TrimSpace(p.Agent)
 	if name == "" {
-		respErr(msg.ID, codeInvalidParams, "agent is required")
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "agent is required")
 		return
 	}
 	s.mu.Lock()
 	st, ok := s.sessions[p.SessionID]
 	s.mu.Unlock()
 	if !ok {
-		respErr(msg.ID, codeInvalidParams, "unknown session id")
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "unknown session id")
 		return
 	}
 	if _, resolvable := subagent.ResolvePersona(name); !resolvable {
-		respErr(msg.ID, codeInvalidParams,
+		respErr(msg.ID, jsonrpc.CodeInvalidParams,
 			fmt.Sprintf("%q is not a primary-capable agent (%s)", name, subagent.PersonaMissReason(name)))
 		return
 	}
 	if err := st.sess.SetPersona(name); err != nil {
-		respErr(msg.ID, codeInvalidParams, err.Error())
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, err.Error())
 		return
 	}
 	// A client that changed the persona must hear the config selector
@@ -172,7 +173,7 @@ func (s *Server) modelCatalog(ctx context.Context) []ModelOption {
 // requires. ctx bounds the model-catalog wait as in session/new.
 func (s *Server) handleSetConfigOption(
 	ctx context.Context,
-	msg Message,
+	msg jsonrpc.Message,
 	sendUpdate updateSender,
 	respOK func(id json.RawMessage, result any),
 	respErr func(id json.RawMessage, code int, message string),
@@ -180,19 +181,19 @@ func (s *Server) handleSetConfigOption(
 	var p SetConfigOptionParams
 	if len(msg.Params) > 0 {
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, "invalid params: "+err.Error())
 			return
 		}
 	}
 	if p.SessionID == "" {
-		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "sessionId is required")
 		return
 	}
 	s.mu.Lock()
 	st, ok := s.sessions[p.SessionID]
 	s.mu.Unlock()
 	if !ok {
-		respErr(msg.ID, codeInvalidParams, "unknown session id (call session/new first)")
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "unknown session id (call session/new first)")
 		return
 	}
 	catalog := s.modelCatalog(ctx)
@@ -212,18 +213,18 @@ func (s *Server) handleSetConfigOption(
 		// path agreeing on the refusal wording.
 		advertised := sessionConfigOptions(catalog, st.sess)
 		if !configOptionHasValue(advertised, ConfigOptionAgentID, p.Value) {
-			respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unknown value %q for configId %q", p.Value, p.ConfigID))
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, fmt.Sprintf("unknown value %q for configId %q", p.Value, p.ConfigID))
 			return
 		}
 		if err := st.sess.SetPersona(p.Value); err != nil {
-			respErr(msg.ID, codeInvalidParams, err.Error())
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, err.Error())
 			return
 		}
 		pushUpdate()
 		respOK(msg.ID, echo())
 	case ConfigOptionModeID:
 		if !validSessionMode(p.Value) {
-			respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unknown mode %q (available: %s, %s)", p.Value, SessionModeBuild, SessionModePlan))
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, fmt.Sprintf("unknown mode %q (available: %s, %s)", p.Value, SessionModeBuild, SessionModePlan))
 			return
 		}
 		// The mode axis: read-only vs full, independent of the persona
@@ -237,11 +238,11 @@ func (s *Server) handleSetConfigOption(
 		// The approval axis: the posture dangerous calls meet. Validate
 		// against the advertised options so an unknown value never lands.
 		if !configOptionHasValue(sessionConfigOptions(catalog, st.sess), ConfigOptionApprovalID, p.Value) {
-			respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unknown value %q for configId %q", p.Value, p.ConfigID))
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, fmt.Sprintf("unknown value %q for configId %q", p.Value, p.ConfigID))
 			return
 		}
 		if err := st.sess.SetApprovalMode(p.Value); err != nil {
-			respErr(msg.ID, codeInvalidParams, err.Error())
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, err.Error())
 			return
 		}
 		s.logf("session %s: approval set to %s", st.id, p.Value)
@@ -253,25 +254,25 @@ func (s *Server) handleSetConfigOption(
 		// discovery no longer reports, and re-selecting it must stay valid.
 		advertised := sessionConfigOptions(catalog, st.sess)
 		if !configOptionHasValue(advertised, ConfigOptionModelID, p.Value) {
-			respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unknown value %q for configId %q", p.Value, p.ConfigID))
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, fmt.Sprintf("unknown value %q for configId %q", p.Value, p.ConfigID))
 			return
 		}
 		provider, model, split := splitModelValue(p.Value)
 		if !split {
-			respErr(msg.ID, codeInvalidParams, fmt.Sprintf("invalid value %q: want \"<provider>/<model>\"", p.Value))
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, fmt.Sprintf("invalid value %q: want \"<provider>/<model>\"", p.Value))
 			return
 		}
 		if !st.sess.SetModel(provider, model) {
 			// SetModel refuses-and-warns internally (unusable provider):
 			// surface the refusal, not a confirmation of a switch that
 			// did not land.
-			respErr(msg.ID, codeInvalidParams, fmt.Sprintf("cannot switch to %q: provider %q is not usable by this session", p.Value, provider))
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, fmt.Sprintf("cannot switch to %q: provider %q is not usable by this session", p.Value, provider))
 			return
 		}
 		s.logf("session %s: model set to %s/%s", st.id, provider, model)
 		respOK(msg.ID, echo())
 	default:
-		respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unsupported configId %q (supported: %s, %s, %s, %s)", p.ConfigID, ConfigOptionAgentID, ConfigOptionModeID, ConfigOptionApprovalID, ConfigOptionModelID))
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, fmt.Sprintf("unsupported configId %q (supported: %s, %s, %s, %s)", p.ConfigID, ConfigOptionAgentID, ConfigOptionModeID, ConfigOptionApprovalID, ConfigOptionModelID))
 	}
 }
 
@@ -306,7 +307,7 @@ func translateCommandPrompt(st *sessionState, prompt string) string {
 // different sessions may run concurrently; a second prompt on the same
 // session is rejected as busy.
 func (s *Server) handlePrompt(
-	msg Message,
+	msg jsonrpc.Message,
 	rootCtx context.Context,
 	c *connection,
 	sendUpdate updateSender,
@@ -316,21 +317,21 @@ func (s *Server) handlePrompt(
 	var p PromptParams
 	if len(msg.Params) > 0 {
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			respErr(msg.ID, jsonrpc.CodeInvalidParams, "invalid params: "+err.Error())
 			return
 		}
 	}
 	if p.SessionID == "" {
-		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "sessionId is required")
 		return
 	}
 	promptText, renderErr := renderPrompt(p.Prompt)
 	if renderErr != nil {
-		respErr(msg.ID, codeInvalidParams, renderErr.Error())
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, renderErr.Error())
 		return
 	}
 	if promptText == "" {
-		respErr(msg.ID, codeInvalidParams, "prompt must contain at least one non-empty content block")
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "prompt must contain at least one non-empty content block")
 		return
 	}
 
@@ -343,7 +344,7 @@ func (s *Server) handlePrompt(
 	if !ok {
 		s.mu.Unlock()
 		cancel()
-		respErr(msg.ID, codeInvalidParams, "unknown session id (call session/new first)")
+		respErr(msg.ID, jsonrpc.CodeInvalidParams, "unknown session id (call session/new first)")
 		return
 	}
 	if st.run != nil && st.run.cancel != nil {

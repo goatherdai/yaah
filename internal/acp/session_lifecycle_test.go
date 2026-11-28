@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/goatherdai/yaah/internal/agent"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -43,7 +44,7 @@ func wireStore(h *acpHarness, pages [][]SessionInfo, deleted *[]string) {
 }
 
 // listResult decodes a session/list result.
-func listResult(t *testing.T, msg Message) ListSessionsResult {
+func listResult(t *testing.T, msg jsonrpc.Message) ListSessionsResult {
 	t.Helper()
 	if msg.Error != nil {
 		t.Fatalf("session/list error: %+v", msg.Error)
@@ -145,8 +146,8 @@ func TestServer_sessionResumeAttachesWithoutReplay(t *testing.T) {
 		if msg.Error == nil {
 			t.Fatalf("expected invalid-params error, got result %s", msg.Result)
 		}
-		if msg.Error.Code != codeInvalidParams {
-			t.Fatalf("error code = %d, want %d", msg.Error.Code, codeInvalidParams)
+		if msg.Error.Code != jsonrpc.CodeInvalidParams {
+			t.Fatalf("error code = %d, want %d", msg.Error.Code, jsonrpc.CodeInvalidParams)
 		}
 	})
 
@@ -157,7 +158,7 @@ func TestServer_sessionResumeAttachesWithoutReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 		msg := h.recv(t)
-		if msg.Error == nil || msg.Error.Code != codeInvalidParams {
+		if msg.Error == nil || msg.Error.Code != jsonrpc.CodeInvalidParams {
 			t.Fatalf("expected invalid params for missing sessionId, got %+v", msg)
 		}
 	})
@@ -255,7 +256,7 @@ func TestServer_sessionListPagingAndFilterValidation(t *testing.T) {
 			t.Fatal(err)
 		}
 		msg := h.recv(t)
-		if msg.Error == nil || msg.Error.Code != codeInvalidParams {
+		if msg.Error == nil || msg.Error.Code != jsonrpc.CodeInvalidParams {
 			t.Fatalf("expected invalid params for garbage cursor, got %+v", msg)
 		}
 	})
@@ -268,7 +269,7 @@ func TestServer_sessionListPagingAndFilterValidation(t *testing.T) {
 			t.Fatal(err)
 		}
 		msg := h.recv(t)
-		if msg.Error == nil || msg.Error.Code != codeInvalidParams {
+		if msg.Error == nil || msg.Error.Code != jsonrpc.CodeInvalidParams {
 			t.Fatalf("expected invalid params for relative cwd, got %+v", msg)
 		}
 	})
@@ -280,7 +281,7 @@ func TestServer_sessionListPagingAndFilterValidation(t *testing.T) {
 			t.Fatal(err)
 		}
 		msg := h.recv(t)
-		if msg.Error == nil || msg.Error.Code != codeMethodNotFound || !strings.Contains(msg.Error.Message, "not available") {
+		if msg.Error == nil || msg.Error.Code != jsonrpc.CodeMethodNotFound || !strings.Contains(msg.Error.Message, "not available") {
 			t.Fatalf("expected method-not-found availability error without wiring, got %+v", msg)
 		}
 	})
@@ -349,7 +350,7 @@ func TestServer_sessionCloseCancelsInFlightAndFrees(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg := h.recv(t)
-	if msg.Error == nil || msg.Error.Code != codeInvalidParams {
+	if msg.Error == nil || msg.Error.Code != jsonrpc.CodeInvalidParams {
 		t.Fatalf("expected invalid params closing a retired session, got %+v", msg)
 	}
 }
@@ -477,7 +478,7 @@ func TestServer_sessionDeleteUnwiredHasNoSideEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg := h.recv(t)
-	if msg.Error == nil || msg.Error.Code != codeMethodNotFound || !strings.Contains(msg.Error.Message, "not available") {
+	if msg.Error == nil || msg.Error.Code != jsonrpc.CodeMethodNotFound || !strings.Contains(msg.Error.Message, "not available") {
 		t.Fatalf("expected method-not-found availability error, got %+v", msg)
 	}
 	if n := sess.closedCount(); n != 0 {

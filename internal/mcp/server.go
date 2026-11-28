@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"io"
 )
 
@@ -58,7 +59,7 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	s.reader = detector
 
 	type readResult struct {
-		msg JSONRPCMessage
+		msg jsonrpc.Message
 		err error
 	}
 	msgCh := make(chan readResult)
@@ -88,15 +89,15 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 			// Lazily create the writer once framing is known.
 			if s.writer == nil {
 				if detector.framed {
-					s.writer = NewFramedWriter(out)
+					s.writer = jsonrpc.NewFramedWriter(out)
 				} else {
-					s.writer = NewNewlineWriter(out)
+					s.writer = jsonrpc.NewNewlineWriter(out)
 				}
 			}
 
 			msg := r.msg
-			// Notifications have no ID field (nil pointer after unmarshal).
-			isNotification := msg.ID == nil
+			// Notifications carry no id (empty raw id after unmarshal).
+			isNotification := msg.IsNotification()
 
 			result, rpcErr := s.dispatch(ctx, msg)
 
@@ -105,7 +106,7 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 				continue
 			}
 
-			resp := JSONRPCMessage{
+			resp := jsonrpc.Message{
 				JSONRPC: "2.0",
 				ID:      msg.ID,
 			}
@@ -125,7 +126,7 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 // dispatch routes a JSON-RPC message to the appropriate handler based on
 // the method field. It returns either a result (as raw JSON) or a
 // JSON-RPC error.
-func (s *Server) dispatch(ctx context.Context, msg JSONRPCMessage) (json.RawMessage, *JSONRPCError) {
+func (s *Server) dispatch(ctx context.Context, msg jsonrpc.Message) (json.RawMessage, *jsonrpc.Error) {
 	switch msg.Method {
 	case "initialize":
 		return s.handleInitialize(msg.Params)
@@ -138,7 +139,7 @@ func (s *Server) dispatch(ctx context.Context, msg JSONRPCMessage) (json.RawMess
 	case "ping":
 		return json.RawMessage(`{}`), nil
 	default:
-		return nil, &JSONRPCError{
+		return nil, &jsonrpc.Error{
 			Code:    -32601,
 			Message: fmt.Sprintf("Method not found: %s", msg.Method),
 		}
@@ -151,7 +152,7 @@ func (s *Server) dispatch(ctx context.Context, msg JSONRPCMessage) (json.RawMess
 // the client omits one. This matches the behavior of
 // @modelcontextprotocol/sdk servers and keeps the wire compatible
 // with clients that request newer protocol revisions.
-func (s *Server) handleInitialize(params json.RawMessage) (json.RawMessage, *JSONRPCError) {
+func (s *Server) handleInitialize(params json.RawMessage) (json.RawMessage, *jsonrpc.Error) {
 	const defaultVersion = "2024-11-05"
 	version := defaultVersion
 	if len(params) > 0 {
@@ -176,7 +177,7 @@ func (s *Server) handleInitialize(params json.RawMessage) (json.RawMessage, *JSO
 	}
 	data, err := json.Marshal(result)
 	if err != nil {
-		return nil, &JSONRPCError{Code: -32603, Message: "internal error"}
+		return nil, &jsonrpc.Error{Code: -32603, Message: "internal error"}
 	}
 	return data, nil
 }
@@ -189,7 +190,7 @@ type toolEntry struct {
 }
 
 // handleToolsList returns the list of registered tool definitions.
-func (s *Server) handleToolsList() (json.RawMessage, *JSONRPCError) {
+func (s *Server) handleToolsList() (json.RawMessage, *jsonrpc.Error) {
 	tools := make([]toolEntry, len(s.tools))
 	for i, t := range s.tools {
 		schema := t.InputSchema
@@ -207,7 +208,7 @@ func (s *Server) handleToolsList() (json.RawMessage, *JSONRPCError) {
 	}{Tools: tools}
 	data, err := json.Marshal(result)
 	if err != nil {
-		return nil, &JSONRPCError{Code: -32603, Message: "internal error"}
+		return nil, &jsonrpc.Error{Code: -32603, Message: "internal error"}
 	}
 	return data, nil
 }
@@ -221,14 +222,14 @@ type toolsCallParams struct {
 // handleToolsCall finds the named tool and invokes its handler, returning
 // a content result. If the handler returns an error, it is reported in the
 // content with isError: true rather than as a JSON-RPC error.
-func (s *Server) handleToolsCall(ctx context.Context, params json.RawMessage) (json.RawMessage, *JSONRPCError) {
+func (s *Server) handleToolsCall(ctx context.Context, params json.RawMessage) (json.RawMessage, *jsonrpc.Error) {
 	if params == nil {
 		return s.makeToolError("missing params"), nil
 	}
 
 	var p toolsCallParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &JSONRPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &jsonrpc.Error{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 
 	// Find the tool by name
@@ -279,7 +280,7 @@ type serverDetectReader struct {
 	framed   bool
 }
 
-func (d *serverDetectReader) ReadMessage() (JSONRPCMessage, error) {
+func (d *serverDetectReader) ReadMessage() (jsonrpc.Message, error) {
 	if d.delegate != nil {
 		return d.delegate.ReadMessage()
 	}
@@ -287,13 +288,13 @@ func (d *serverDetectReader) ReadMessage() (JSONRPCMessage, error) {
 	// false EOF when a slow client hasn't sent data yet.
 	peek, err := d.reader.Peek(1)
 	if err != nil {
-		return JSONRPCMessage{}, err
+		return jsonrpc.Message{}, err
 	}
 	if peek[0] == '{' {
-		d.delegate = NewNewlineReader(d.reader)
+		d.delegate = jsonrpc.NewNewlineReader(d.reader)
 	} else {
 		d.framed = true
-		d.delegate = NewFramedReader(d.reader)
+		d.delegate = jsonrpc.NewFramedReader(d.reader)
 	}
 	return d.delegate.ReadMessage()
 }

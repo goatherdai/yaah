@@ -1,10 +1,15 @@
+// Package mcp implements the Model Context Protocol (MCP) client for yaah.
+// MCP servers are spawned as child processes and communicate over stdio
+// using JSON-RPC 2.0 (wire types and framing live in internal/jsonrpc).
+// yaah discovers tools from MCP servers and makes them available to the
+// agent alongside built-in tools.
 package mcp
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"io"
 	"log/slog"
 	"os"
@@ -62,7 +67,7 @@ type Client struct {
 	// pending maps in-flight request IDs to their response channels.
 	// The read loop routes responses here; interleaved server
 	// notifications no longer corrupt a concurrent call (review B13).
-	pending sync.Map // int64 -> chan *JSONRPCMessage (buffered 1)
+	pending sync.Map // int64 -> chan *jsonrpc.Message (buffered 1)
 
 	writeMu sync.Mutex // serialises writer access
 	mu      sync.Mutex // guards tools/closed/initialized
@@ -75,12 +80,12 @@ type Client struct {
 
 // messageWriter is the interface satisfied by both FramedWriter and NewlineWriter.
 type messageWriter interface {
-	WriteMessage(msg JSONRPCMessage) error
+	WriteMessage(msg jsonrpc.Message) error
 }
 
 // messageReader is the interface satisfied by both FramedReader and NewlineReader.
 type messageReader interface {
-	ReadMessage() (JSONRPCMessage, error)
+	ReadMessage() (jsonrpc.Message, error)
 }
 
 // NewClient creates a new MCP client from a manifest.
@@ -149,16 +154,16 @@ func (c *Client) readLoop() {
 	}
 }
 
-// dispatch routes one inbound message. Responses (non-nil id) resolve
+// dispatch routes one inbound message. Responses (numeric id) resolve
 // the matching pending call; notifications go to their handlers.
-func (c *Client) dispatch(msg JSONRPCMessage) {
-	if msg.ID != nil {
-		chAny, ok := c.pending.LoadAndDelete(*msg.ID)
-		if !ok {
-			slog.Debug("mcp: response for unknown request id", "server", c.name, "id", *msg.ID)
+func (c *Client) dispatch(msg jsonrpc.Message) {
+	if id, ok := msg.IDInt(); ok {
+		chAny, found := c.pending.LoadAndDelete(id)
+		if !found {
+			slog.Debug("mcp: response for unknown request id", "server", c.name, "id", id)
 			return
 		}
-		ch := chAny.(chan *JSONRPCMessage)
+		ch := chAny.(chan *jsonrpc.Message)
 		ch <- &msg
 		return
 	}
@@ -168,7 +173,7 @@ func (c *Client) dispatch(msg JSONRPCMessage) {
 // handleNotification processes server-initiated notifications. Only
 // tools/list_changed has an effect (re-fetch tools); the rest are
 // logged and dropped.
-func (c *Client) handleNotification(msg JSONRPCMessage) {
+func (c *Client) handleNotification(msg jsonrpc.Message) {
 	switch msg.Method {
 	case "notifications/tools/list_changed":
 		slog.Debug("mcp: tools changed, re-fetching", "server", c.name)
@@ -201,9 +206,9 @@ func (c *Client) failAllPending(cause error) {
 		if _, ok := c.pending.LoadAndDelete(key); !ok {
 			return true // already claimed by dispatch
 		}
-		ch := value.(chan *JSONRPCMessage)
+		ch := value.(chan *jsonrpc.Message)
 		select {
-		case ch <- &JSONRPCMessage{Error: &JSONRPCError{Code: -32000, Message: "mcp server connection lost: " + cause.Error()}}:
+		case ch <- &jsonrpc.Message{Error: &jsonrpc.Error{Code: -32000, Message: "mcp server connection lost: " + cause.Error()}}:
 		default:
 			// Unreachable after a successful claim (buffered 1, single
 			// claimed sender); guard against blocking Close regardless.
@@ -216,7 +221,7 @@ func (c *Client) failAllPending(cause error) {
 // waiter, write the request, and wait for the read loop to route the
 // response (or the context to end). Requests are serialized on writeMu;
 // responses may interleave freely — correlation is by id (B13).
-func (c *Client) roundTrip(ctx context.Context, id int64, method string, params json.RawMessage) (*JSONRPCMessage, error) {
+func (c *Client) roundTrip(ctx context.Context, id int64, method string, params json.RawMessage) (*jsonrpc.Message, error) {
 	c.mu.Lock()
 	closed := c.closed
 	c.mu.Unlock()
@@ -224,17 +229,12 @@ func (c *Client) roundTrip(ctx context.Context, id int64, method string, params 
 		return nil, fmt.Errorf("client closed")
 	}
 
-	ch := make(chan *JSONRPCMessage, 1)
+	ch := make(chan *jsonrpc.Message, 1)
 	c.pending.Store(id, ch)
 	defer c.pending.Delete(id)
 
 	c.writeMu.Lock()
-	err := c.writer.WriteMessage(JSONRPCMessage{
-		JSONRPC: "2.0",
-		ID:      &id,
-		Method:  method,
-		Params:  params,
-	})
+	err := c.writer.WriteMessage(jsonrpc.NewRequest(id, method, params))
 	c.writeMu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("send %s: %w", method, err)
@@ -253,11 +253,7 @@ func (c *Client) roundTrip(ctx context.Context, id int64, method string, params 
 func (c *Client) notify(_ context.Context, method string, params json.RawMessage) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	return c.writer.WriteMessage(JSONRPCMessage{
-		JSONRPC: "2.0",
-		Method:  method,
-		Params:  params,
-	})
+	return c.writer.WriteMessage(jsonrpc.NewNotification(method, params))
 }
 
 // SetStderr sets the writer for MCP server stderr output.
@@ -273,61 +269,21 @@ func (c *Client) SetStderr(w io.Writer) {
 // default to newline, the spec-compliant mode.
 func newWriter(w io.Writer, framing string) messageWriter {
 	if framing == "framed" {
-		return NewFramedWriter(w)
+		return jsonrpc.NewFramedWriter(w)
 	}
-	return NewNewlineWriter(w)
+	return jsonrpc.NewNewlineWriter(w)
 }
 
-// newReader returns a reader that auto-detects framing on the first message.
-// Spec-compliant servers send "{json}\n" (newline mode). LSP-style servers
-// send "Content-Length: N\r\n\r\n{json}" (framed mode). We peek the first
-// non-whitespace byte: '{' means newline, anything else means framed.
+// newReader returns a reader for the configured framing mode; an empty
+// setting auto-detects on the first message (see jsonrpc.AutoDetectReader).
 func newReader(r io.Reader, framing string) messageReader {
 	if framing == "newline" {
-		return NewNewlineReader(r)
+		return jsonrpc.NewNewlineReader(r)
 	}
 	if framing == "framed" {
-		return NewFramedReader(r)
+		return jsonrpc.NewFramedReader(r)
 	}
-	return &autoDetectReader{reader: bufio.NewReader(r), framed: nil}
-}
-
-// autoDetectReader peeks the first non-whitespace byte of the first message
-// to decide between Content-Length and newline framing, then delegates to
-// the appropriate reader for all subsequent messages.
-type autoDetectReader struct {
-	reader *bufio.Reader
-	framed messageReader
-}
-
-func (a *autoDetectReader) ReadMessage() (JSONRPCMessage, error) {
-	if a.framed != nil {
-		return a.framed.ReadMessage()
-	}
-	// Consume leading whitespace until the first meaningful byte — the
-	// previous 16-byte peek returned EOF on streams that began with
-	// more whitespace than the peek window (review B13).
-	for {
-		b, err := a.reader.ReadByte()
-		if err != nil {
-			return JSONRPCMessage{}, err
-		}
-		switch b {
-		case ' ', '\t', '\r', '\n':
-			continue
-		case '{':
-			if err := a.reader.UnreadByte(); err != nil {
-				return JSONRPCMessage{}, err
-			}
-			a.framed = NewNewlineReader(a.reader)
-		default:
-			if err := a.reader.UnreadByte(); err != nil {
-				return JSONRPCMessage{}, err
-			}
-			a.framed = NewFramedReader(a.reader)
-		}
-		return a.framed.ReadMessage()
-	}
+	return jsonrpc.NewAutoDetectReader(r)
 }
 
 // Initialize performs the MCP initialize handshake and fetches tools.

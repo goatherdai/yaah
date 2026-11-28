@@ -48,6 +48,7 @@ yaah/
 │   ├── janitor/                # dispatch-residue classifier + reclaimer: trace lifecycle + registry + filesystem
 │   ├── janitor/                # dispatch-residue classifier: trace lifecycle + registry + filesystem
 │   ├── jobs/                   # background sub-agent jobs + I/O contract
+│   ├── jsonrpc/                 # shared JSON-RPC 2.0 wire types + framing (mcp, acp)
 │   ├── mcp/                    # MCP client + server (stdio + HTTP)
 │   ├── memory/                 # SQLite sessions, memory, FTS5, embeddings
 │   ├── observability/          # OpenTelemetry tracing + span buffer

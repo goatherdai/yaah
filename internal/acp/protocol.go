@@ -22,33 +22,11 @@ import (
 )
 
 // === JSON-RPC 2.0 wire types ===
-
-// Message is a JSON-RPC 2.0 request, response, or notification. ID is
-// kept raw so responses echo the peer's ID exactly (number vs string).
-type Message struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *RPCError       `json:"error,omitempty"`
-}
-
-// RPCError is a JSON-RPC 2.0 error object.
-type RPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-// Standard JSON-RPC error codes plus ACP-era custom range codes.
-const (
-	codeParseError     = -32700
-	codeInvalidRequest = -32600
-	codeMethodNotFound = -32601
-	codeInvalidParams  = -32602
-	codeBusy           = -32002 // no prompt turn may overlap; retry after it ends
-	codeInternal       = -32603
-)
+//
+// The wire types (Message, Error) and the reserved error codes live in
+// internal/jsonrpc, shared with the MCP surface. codeBusy is ACP's own
+// server-defined code: no prompt turn may overlap; retry after it ends.
+const codeBusy = -32002
 
 // === initialize ===
 

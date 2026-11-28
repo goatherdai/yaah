@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"log/slog"
 	"sync/atomic"
 )
@@ -21,7 +22,7 @@ const maxToolListPages = 100
 // both transports: stdio (persistent stream + pending map) and HTTP
 // (one round-trip per request).
 type rpcTransport interface {
-	roundTrip(ctx context.Context, id int64, method string, params json.RawMessage) (*JSONRPCMessage, error)
+	roundTrip(ctx context.Context, id int64, method string, params json.RawMessage) (*jsonrpc.Message, error)
 	// notify sends a notification; no response is expected.
 	notify(ctx context.Context, method string, params json.RawMessage) error
 }
@@ -36,7 +37,7 @@ type rpcCore struct {
 
 // call sends a request and returns the response, surfacing JSON-RPC
 // errors as Go errors.
-func (c *rpcCore) call(ctx context.Context, method string, params any) (*JSONRPCMessage, error) {
+func (c *rpcCore) call(ctx context.Context, method string, params any) (*jsonrpc.Message, error) {
 	id := c.nextID.Add(1)
 	var raw json.RawMessage
 	if params != nil {

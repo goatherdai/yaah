@@ -3,6 +3,7 @@ package acp
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,7 +42,7 @@ func TestServer_handleWorkflowList(t *testing.T) {
 	t.Run("empty page is an empty array", func(t *testing.T) {
 		s := NewServer(func(BuildOptions) (Session, error) { return nil, fmt.Errorf("not used") }, "test", nil, nil)
 		s.ListWorkflows = func(string) ([]WorkflowInfo, error) { return nil, nil }
-		msg := Message{ID: json.RawMessage("1")}
+		msg := jsonrpc.Message{ID: json.RawMessage("1")}
 		var result json.RawMessage
 		var errCode int
 		var errMsg string
@@ -72,7 +73,7 @@ func TestServer_handleWorkflowList(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		msg := Message{ID: json.RawMessage("1"), Params: params}
+		msg := jsonrpc.Message{ID: json.RawMessage("1"), Params: params}
 		var result json.RawMessage
 		s.handleWorkflowList(msg,
 			func(_ json.RawMessage, r any) { result, _ = json.Marshal(r) },
@@ -86,13 +87,13 @@ func TestServer_handleWorkflowList(t *testing.T) {
 	t.Run("malformed cwd is invalid params", func(t *testing.T) {
 		s := NewServer(func(BuildOptions) (Session, error) { return nil, fmt.Errorf("not used") }, "test", nil, nil)
 		s.ListWorkflows = func(string) ([]WorkflowInfo, error) { return nil, nil }
-		msg := Message{ID: json.RawMessage("1"), Params: json.RawMessage(`{"cwd":"relative"}`)}
+		msg := jsonrpc.Message{ID: json.RawMessage("1"), Params: json.RawMessage(`{"cwd":"relative"}`)}
 		var errCode int
 		s.handleWorkflowList(msg,
 			func(_ json.RawMessage, _ any) {},
 			func(_ json.RawMessage, c int, _ string) { errCode = c },
 		)
-		if errCode != codeInvalidParams {
+		if errCode != jsonrpc.CodeInvalidParams {
 			t.Fatalf("relative cwd not invalid params: got %d", errCode)
 		}
 	})
@@ -100,13 +101,13 @@ func TestServer_handleWorkflowList(t *testing.T) {
 	t.Run("callback error is internal", func(t *testing.T) {
 		s := NewServer(func(BuildOptions) (Session, error) { return nil, fmt.Errorf("not used") }, "test", nil, nil)
 		s.ListWorkflows = func(string) ([]WorkflowInfo, error) { return nil, fmt.Errorf("boom") }
-		msg := Message{ID: json.RawMessage("1")}
+		msg := jsonrpc.Message{ID: json.RawMessage("1")}
 		var errCode int
 		s.handleWorkflowList(msg,
 			func(_ json.RawMessage, _ any) {},
 			func(_ json.RawMessage, c int, _ string) { errCode = c },
 		)
-		if errCode != codeInternal {
+		if errCode != jsonrpc.CodeInternal {
 			t.Fatalf("callback error not internal: got %d", errCode)
 		}
 	})

@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"github.com/goatherdai/yaah/internal/tools"
 )
 
@@ -159,7 +160,7 @@ func (w *clientWorkspace) WriteFile(ctx context.Context, path string, data []byt
 // model nothing and invites an identical retry (yaah-c688).
 func clientWriteError(path string, err error) error {
 	var reqErr *clientRequestError
-	if errors.As(err, &reqErr) && reqErr.Code == codeInternal {
+	if errors.As(err, &reqErr) && reqErr.Code == jsonrpc.CodeInternal {
 		return fmt.Errorf("client write %s: the ACP client refused the write (JSON-RPC %d: %s); the target may be outside the client's workspace — keep writes inside the workspace or use .scratch/", path, reqErr.Code, reqErr.Message)
 	}
 	return fmt.Errorf("client write %s: %w", path, err)

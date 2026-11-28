@@ -17,6 +17,7 @@ import (
 
 	"github.com/goatherdai/yaah/internal/agent"
 	"github.com/goatherdai/yaah/internal/control"
+	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"github.com/goatherdai/yaah/internal/tools"
 	"github.com/goatherdai/yaah/internal/types"
 	"github.com/goatherdai/yaah/internal/worldinfo"
@@ -327,7 +328,7 @@ func (c *connection) notify(method string, params any) {
 		c.logf("marshal params: %v", err)
 		return
 	}
-	c.write(Message{JSONRPC: "2.0", Method: method, Params: data})
+	c.write(jsonrpc.Message{JSONRPC: "2.0", Method: method, Params: data})
 }
 
 // sendRequest writes a JSON-RPC request with the given numeric ID.
@@ -337,7 +338,7 @@ func (c *connection) sendRequest(id int, method string, params any) {
 		c.logf("marshal params: %v", err)
 		return
 	}
-	c.write(Message{
+	c.write(jsonrpc.Message{
 		JSONRPC: "2.0",
 		ID:      json.RawMessage(fmt.Sprintf("%d", id)),
 		Method:  method,
@@ -378,7 +379,7 @@ func (s *Server) Run(ctx context.Context) error {
 			s.logf("marshal update: %v", err)
 			return
 		}
-		c.write(Message{
+		c.write(jsonrpc.Message{
 			JSONRPC: "2.0",
 			Method:  "session/update",
 			Params:  rawOf(updateEnvelope{SessionID: sessionID, Update: raw}),
@@ -389,17 +390,17 @@ func (s *Server) Run(ctx context.Context) error {
 	s.mu.Unlock()
 
 	respErr := func(id json.RawMessage, code int, message string) {
-		c.write(Message{
+		c.write(jsonrpc.Message{
 			JSONRPC: "2.0",
 			ID:      id,
-			Error:   &RPCError{Code: code, Message: message},
+			Error:   &jsonrpc.Error{Code: code, Message: message},
 		})
 	}
 	respOK := func(id json.RawMessage, result any) {
 		if result == nil {
 			result = json.RawMessage("{}")
 		}
-		c.write(Message{
+		c.write(jsonrpc.Message{
 			JSONRPC: "2.0",
 			ID:      id,
 			Result:  rawOf(result),
@@ -469,44 +470,10 @@ func (s *Server) stopRun() {
 	}
 }
 
-// batchUnsupportedResponses builds per-request invalid-request errors for a
-// JSON-RPC batch. Notifications get no response; an empty or malformed batch
-// gets one id:null error.
-func batchUnsupportedResponses(raw []byte) []Message {
-	const message = "JSON-RPC batches are not supported by this ACP server"
-	invalid := func(id json.RawMessage) Message {
-		if len(id) == 0 {
-			id = json.RawMessage("null")
-		}
-		return Message{
-			JSONRPC: "2.0",
-			ID:      id,
-			Error:   &RPCError{Code: codeInvalidRequest, Message: message},
-		}
-	}
-	var items []json.RawMessage
-	if err := json.Unmarshal(raw, &items); err != nil {
-		return []Message{invalid(nil)}
-	}
-	if len(items) == 0 {
-		return []Message{invalid(nil)}
-	}
-	out := make([]Message, 0, len(items))
-	for _, item := range items {
-		var entry struct {
-			ID json.RawMessage `json:"id"`
-		}
-		if err := json.Unmarshal(item, &entry); err != nil {
-			out = append(out, invalid(nil))
-			continue
-		}
-		if len(entry.ID) == 0 {
-			continue
-		}
-		out = append(out, invalid(entry.ID))
-	}
-	return out
-}
+// batchUnsupportedMessage is the wire-visible reason this server gives for
+// rejecting a JSON-RPC batch. The response-building logic is shared:
+// jsonrpc.BatchUnsupportedResponses.
+const batchUnsupportedMessage = "JSON-RPC batches are not supported by this ACP server"
 
 // dispatch reads and executes protocol messages until EOF.
 func (s *Server) dispatch(
@@ -536,17 +503,17 @@ func (s *Server) dispatch(
 			// Batches are not supported. Answer each request entry with
 			// its own invalid-request error (never a bare id:null), skip
 			// notification-only entries, and answer an empty batch once.
-			if responses := batchUnsupportedResponses([]byte(line)); len(responses) > 0 {
+			if responses := jsonrpc.BatchUnsupportedResponses([]byte(line), batchUnsupportedMessage); len(responses) > 0 {
 				c.write(responses)
 			}
 			continue
 		}
 
-		var msg Message
+		var msg jsonrpc.Message
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
 			s.logf("invalid JSON line: %v", err)
 			// JSON-RPC 2.0: a parse error is answered with id null.
-			respErr(json.RawMessage("null"), codeParseError, "parse error")
+			respErr(json.RawMessage("null"), jsonrpc.CodeParseError, "parse error")
 			continue
 		}
 		if msg.JSONRPC != "2.0" {
@@ -555,7 +522,7 @@ func (s *Server) dispatch(
 			if len(id) == 0 {
 				id = json.RawMessage("null")
 			}
-			respErr(id, codeInvalidRequest, "invalid request: jsonrpc must be \"2.0\"")
+			respErr(id, jsonrpc.CodeInvalidRequest, "invalid request: jsonrpc must be \"2.0\"")
 			continue
 		}
 
@@ -570,7 +537,7 @@ func (s *Server) dispatch(
 				if len(id) == 0 {
 					id = json.RawMessage("null")
 				}
-				respErr(id, codeInvalidRequest, "invalid request: method is required")
+				respErr(id, jsonrpc.CodeInvalidRequest, "invalid request: method is required")
 			}
 			continue
 		}
@@ -625,12 +592,12 @@ func (s *Server) dispatch(
 			var params AuthenticateParams
 			if len(msg.Params) > 0 {
 				if err := json.Unmarshal(msg.Params, &params); err != nil {
-					respErr(msg.ID, codeInvalidParams, "authenticate: invalid params: "+err.Error())
+					respErr(msg.ID, jsonrpc.CodeInvalidParams, "authenticate: invalid params: "+err.Error())
 					continue
 				}
 			}
 			if !validAuthMethod(params.MethodID) {
-				respErr(msg.ID, codeInvalidParams, "authenticate: unknown auth method: "+params.MethodID)
+				respErr(msg.ID, jsonrpc.CodeInvalidParams, "authenticate: unknown auth method: "+params.MethodID)
 				continue
 			}
 			// AuthenticateResponse carries only an optional _meta.
@@ -638,11 +605,11 @@ func (s *Server) dispatch(
 
 		case "logout":
 			if s.Logout == nil {
-				respErr(msg.ID, codeMethodNotFound, "logout is not supported")
+				respErr(msg.ID, jsonrpc.CodeMethodNotFound, "logout is not supported")
 				continue
 			}
 			if err := s.Logout(); err != nil {
-				respErr(msg.ID, codeInternal, "logout: "+err.Error())
+				respErr(msg.ID, jsonrpc.CodeInternal, "logout: "+err.Error())
 				continue
 			}
 			respOK(msg.ID, struct{}{})
@@ -681,7 +648,7 @@ func (s *Server) dispatch(
 			s.handleWorkflowList(msg, respOK, respErr)
 
 		default:
-			respErr(msg.ID, codeMethodNotFound, "method not found: "+msg.Method)
+			respErr(msg.ID, jsonrpc.CodeMethodNotFound, "method not found: "+msg.Method)
 		}
 	}
 }
