@@ -295,3 +295,25 @@ func TestSSEViewSetSessionMode(t *testing.T) {
 		t.Fatalf("header missing session mode: %s", buf.String())
 	}
 }
+
+// TestSSEView_ToolFramesCarryTheSessionKey pins the web wire contract: both
+// tool frames carry tool_key, the call's session-unique identity, so a client
+// cannot settle a previous prompt's row when tool_id is reused (yaah-77f1).
+func TestSSEView_ToolFramesCarryTheSessionKey(t *testing.T) {
+	buf := newSyncBuffer()
+	v := &sseView{w: buf}
+
+	v.HandleEvent(&agent.ToolStartEvent{Key: "turn-a.1", ID: 1, Name: "bash", Args: `{"command":"ls"}`})
+	v.HandleEvent(&agent.ToolEndEvent{Key: "turn-a.1", ID: 1, Name: "bash", Args: `{"command":"ls"}`, Result: "ok"})
+	v.HandleEvent(&agent.ToolStartEvent{Key: "turn-b.1", ID: 1, Name: "bash", Args: `{"command":"pwd"}`})
+
+	frames := buf.String()
+	for _, want := range []string{`"tool_key":"turn-a.1"`, `"tool_key":"turn-b.1"`} {
+		if !strings.Contains(frames, want) {
+			t.Fatalf("frames missing %s: %s", want, frames)
+		}
+	}
+	if got := strings.Count(frames, `"tool_key"`); got != 3 {
+		t.Fatalf("tool_key on %d frame(s), want 3 (two starts, one end): %s", got, frames)
+	}
+}

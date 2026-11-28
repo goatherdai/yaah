@@ -547,3 +547,41 @@ func TestView_fallbackSubAgentIDsDoNotCollide(t *testing.T) {
 		t.Fatalf("fallback ids = %v, want two distinct start/end pairs", ids)
 	}
 }
+
+// TestView_toolCallIDCarriesTheSessionKey pins that a tool_call and its
+// matching update are correlated by the event's session-unique Key, not by the
+// run-scoped ID: two prompts of one session reuse the same ordinal, and keying
+// on it made a later prompt's update address an earlier prompt's call
+// (yaah-77f1).
+func TestView_toolCallIDCarriesTheSessionKey(t *testing.T) {
+	var got []any
+	v := NewView()
+	send := captureUpdate(&got)
+
+	// Both prompts' first call: the same ordinal, a different key.
+	v.SendTo("s", send, &agent.ToolStartEvent{Key: "turn-a.1", ID: 1, Name: "bash", Args: `{"command":"ls"}`})
+	v.SendTo("s", send, &agent.ToolEndEvent{Key: "turn-a.1", ID: 1, Name: "bash", Args: `{"command":"ls"}`, Result: "a\n"})
+	v.SendTo("s", send, &agent.ToolStartEvent{Key: "turn-b.1", ID: 1, Name: "bash", Args: `{"command":"pwd"}`})
+	v.SendTo("s", send, &agent.ToolEndEvent{Key: "turn-b.1", ID: 1, Name: "bash", Args: `{"command":"pwd"}`, Result: "b\n"})
+
+	if len(got) != 4 {
+		t.Fatalf("updates = %d, want 4", len(got))
+	}
+	ids := make([]string, 0, len(got))
+	for _, u := range got {
+		m := decodeUpdate(t, u)
+		id, _ := m["toolCallId"].(string)
+		ids = append(ids, id)
+	}
+	// Within a prompt the call and its update share one id...
+	if ids[0] != ids[1] || ids[2] != ids[3] {
+		t.Fatalf("ids = %v, want each call/update pair to share its id", ids)
+	}
+	// ...and across prompts the reused ordinal cannot make them collide.
+	if ids[0] == ids[2] {
+		t.Fatalf("both prompts' first call = %q; the run ordinal leaked into the id", ids[0])
+	}
+	if ids[0] != "turn-a.1" || ids[2] != "turn-b.1" {
+		t.Fatalf("ids = %v, want the events' session keys", ids)
+	}
+}

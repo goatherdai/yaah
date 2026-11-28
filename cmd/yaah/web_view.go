@@ -106,11 +106,15 @@ type sseWireEvent struct {
 	Text    string `json:"text,omitempty"`
 	Content string `json:"content,omitempty"`
 
-	Name    string `json:"name,omitempty"`
-	Args    string `json:"args,omitempty"`
-	Result  string `json:"result,omitempty"`
-	Ms      int64  `json:"ms,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Args   string `json:"args,omitempty"`
+	Result string `json:"result,omitempty"`
+	Ms     int64  `json:"ms,omitempty"`
+	Error  string `json:"error,omitempty"`
+	// ToolKey is the call's session-unique identity: a client correlates a
+	// tool.end with its tool.start by it. ToolID is the run-scoped dispatch
+	// ordinal (it restarts at 1 on every prompt), kept for older consumers.
+	ToolKey string `json:"tool_key,omitempty"`
 	ToolID  int64  `json:"tool_id,omitempty"`
 	Summary string `json:"summary,omitempty"`
 
@@ -284,13 +288,13 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 		we = sseWireEvent{Type: "flush", Content: e.Content}
 	case *agent.ToolStartEvent:
 		we = sseWireEvent{
-			Type: "tool.start", ToolID: e.ID,
+			Type: "tool.start", ToolID: e.ID, ToolKey: e.Key,
 			Name: e.Name, Args: e.Args,
 			Summary: toolStartSummary(e.Name, e.Args),
 		}
 	case *agent.ToolEndEvent:
 		we = sseWireEvent{
-			Type: "tool.end", ToolID: e.ID,
+			Type: "tool.end", ToolID: e.ID, ToolKey: e.Key,
 			Name: e.Name, Args: e.Args,
 			Result: e.Result, Ms: e.Duration.Milliseconds(), Error: e.Error,
 			Summary: toolfmt.Summary(e.Name, e.Args, e.Result),

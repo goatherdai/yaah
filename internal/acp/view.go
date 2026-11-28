@@ -130,6 +130,22 @@ func (v *View) wasAnnounced(callID string) bool {
 // toolCallID renders the per-execution event ID as an ACP toolCallId.
 func toolCallID(id int64) string { return "t" + strconv.FormatInt(id, 10) }
 
+// toolCallIDFor renders the identifier a tool_call and its matching update are
+// correlated by. The event's session-unique Key wins over the legacy "t"+ID
+// fallback: ID is the run's dispatch ordinal and restarts at 1 on every
+// prompt, so keying on it made a later prompt's update address an earlier
+// prompt's call (yaah-77f1). A provider call id, when the model supplied one,
+// stays ahead of both so a client correlating on it is unaffected.
+func toolCallIDFor(key, callID string, id int64) string {
+	if callID != "" {
+		return callID
+	}
+	if key != "" {
+		return key
+	}
+	return toolCallID(id)
+}
+
 // SendTo converts evt to an update and passes it to send, tagging it
 // with the given session ID. Events with no ACP representation are
 // dropped.
@@ -163,10 +179,7 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 			Content:       textContent("\n"),
 		})
 	case *agent.ToolStartEvent:
-		callID := e.CallID
-		if callID == "" {
-			callID = toolCallID(e.ID)
-		}
+		callID := toolCallIDFor(e.Key, e.CallID, e.ID)
 		updateKind := UpdateToolCall
 		if v.wasAnnounced(callID) {
 			updateKind = UpdateToolCallUpdate
@@ -194,10 +207,7 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 		}
 		send(sessionID, call)
 	case *agent.ToolEndEvent:
-		callID := e.CallID
-		if callID == "" {
-			callID = toolCallID(e.ID)
-		}
+		callID := toolCallIDFor(e.Key, e.CallID, e.ID)
 		update := ToolCallUpdate{
 			SessionUpdate: UpdateToolCallUpdate,
 			ToolCallID:    callID,

@@ -587,6 +587,11 @@ document.addEventListener('alpine:init', () => {
         this.cmdOpen = false; this.searchClose()
       },
 
+      // toolKey is the call's session-unique identity. tool_id is the
+      // run-scoped ordinal and repeats across prompts, so keying on it made a
+      // later prompt's tool.end settle a previous prompt's row (yaah-77f1).
+      toolKey(d) { return d.tool_key != null ? d.tool_key : (d.tool_id != null ? d.tool_id : null) },
+
       onEvt(d) {
         switch (d.type) {
           case 'token':      this.stream += d.text; this.scroll(); break
@@ -596,10 +601,11 @@ document.addEventListener('alpine:init', () => {
             if (d.content) this.add('asst', d.content)
             this.scroll(); break
           case 'tool.start':
-            this.addTool(d.tool_id, d.name, d.args, d.summary);
+            this.addTool(this.toolKey(d), d.name, d.args, d.summary);
             this.scroll(); break
           case 'tool.end':
-            var tm = d.tool_id != null ? this._tools[d.tool_id] : null
+            var tk = this.toolKey(d)
+            var tm = tk != null ? this._tools[tk] : null
             if (tm) {
               tm.running = false
               tm.result = d.result || ''
@@ -607,7 +613,7 @@ document.addEventListener('alpine:init', () => {
               tm.error = d.error || ''
               tm.summary = d.summary || tm.summary
               if (d.error) tm.expanded = true
-              delete this._tools[d.tool_id]
+              delete this._tools[tk]
             }
             if (tm && d.error) { this.add('error', d.name + ': ' + d.error) }
             this.scroll(); break

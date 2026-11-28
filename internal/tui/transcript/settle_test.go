@@ -140,31 +140,72 @@ func TestSettleTool(t *testing.T) {
 	}
 }
 
-// TestSettleTool_ReusedKeyLeavesTheOlderBlockByteIdentical pins the property
-// the whole identity change exists for: when a later run's call arrives, the
-// earlier block's tag, result and duration are untouched — not exchanged with
-// the newer call's result (yaah-77f1).
-func TestSettleTool_ReusedKeyLeavesTheOlderBlockByteIdentical(t *testing.T) {
+// TestSettleTool_ReusedKeySettlesEachBlockInTurn pins the property the whole
+// identity change exists for: under the old counter identity a later run's
+// call reused a key, so two blocks shared one. Each end must still land on its
+// own block — the later run's end settles the LAST Running match, the earlier
+// run's own end settles the one before it, and neither block's tag, result or
+// duration is exchanged for the other's (yaah-77f1).
+func TestSettleTool_ReusedKeySettlesEachBlockInTurn(t *testing.T) {
 	th := colors.NewDarkTheme()
-	m, blocks := settleFixture(&th, "run1.1", "run2.1")
+	m, blocks := settleFixture(&th, "run1.1", "run1.1")
 	older, newer := blocks[0], blocks[1]
+	rc := colors.RenderCtx{Theme: &th, Width: 80}
 
-	// The first run's call settles normally.
+	// The second run's end arrives while both blocks are Running: the last
+	// Running block with the key is the newer one.
+	if got := m.SettleTool("run1.1", ToolEnd{Summary: "second", Result: "second result", Duration: 2 * time.Second}); got != Settled {
+		t.Fatalf("end for the newer block = %v, want Settled", got)
+	}
+	if newer.S() != toolblock.Done {
+		t.Fatalf("newer block state = %v, want Done", newer.S())
+	}
+	if older.S() != toolblock.Running {
+		t.Fatalf("older block state = %v, want Running: the newer run's end reached it", older.S())
+	}
+
+	// The first run's own end then settles what is still Running — the older
+	// block — even though its wall-clock time is later.
 	if got := m.SettleTool("run1.1", ToolEnd{Summary: "first", Result: "first result", Duration: time.Second}); got != Settled {
-		t.Fatalf("first settlement = %v, want Settled", got)
+		t.Fatalf("end for the older block = %v, want Settled", got)
 	}
-	before := older.RenderCtx(colors.RenderCtx{Theme: &th, Width: 80})
 
-	// Now a second run's call, whose block was keyed identically under the
-	// old counter identity, settles.
-	if got := m.SettleTool("run1.1", ToolEnd{Summary: "second", Result: "second result", Duration: 2 * time.Second}); got != DuplicateEnd {
-		t.Fatalf("end for a settled key = %v, want DuplicateEnd", got)
+	olderAfter, newerAfter := older.RenderCtx(rc), newer.RenderCtx(rc)
+	if !strings.Contains(olderAfter, "first") || strings.Contains(olderAfter, "second") {
+		t.Errorf("older block rendered %q, want only its own tag", olderAfter)
 	}
-	if newer.S() != toolblock.Running {
-		t.Errorf("newer block state = %v, want Running (it was keyed differently)", newer.S())
+	if !strings.Contains(newerAfter, "second") || strings.Contains(newerAfter, "first") {
+		t.Errorf("newer block rendered %q, want only its own tag", newerAfter)
 	}
-	if after := older.RenderCtx(colors.RenderCtx{Theme: &th, Width: 80}); after != before {
-		t.Errorf("the older block changed:\n before %q\n  after %q", before, after)
+	if !strings.Contains(olderAfter, "1.0s") {
+		t.Errorf("older block rendered %q, want its own 1.0s duration", olderAfter)
+	}
+	if !strings.Contains(newerAfter, "2.0s") {
+		t.Errorf("newer block rendered %q, want its own 2.0s duration", newerAfter)
+	}
+
+	// With nothing Running, a further end for the same key is a duplicate and
+	// changes neither block.
+	if got := m.SettleTool("run1.1", ToolEnd{Summary: "third", Result: "third result", Duration: 3 * time.Second}); got != DuplicateEnd {
+		t.Fatalf("end with no Running block = %v, want DuplicateEnd", got)
+	}
+	if got := older.RenderCtx(rc); got != olderAfter {
+		t.Errorf("a duplicate end changed the older block:\n before %q\n  after %q", olderAfter, got)
+	}
+	if got := newer.RenderCtx(rc); got != newerAfter {
+		t.Errorf("a duplicate end changed the newer block:\n before %q\n  after %q", newerAfter, got)
+	}
+
+	// Expanded, each block still reports its own call's result: the settlement
+	// exchanged nothing between the two blocks that shared a key.
+	older.Toggle()
+	newer.Toggle()
+	olderExp, newerExp := older.RenderCtx(rc), newer.RenderCtx(rc)
+	if !strings.Contains(olderExp, "first result") || strings.Contains(olderExp, "second result") {
+		t.Errorf("expanded older block = %q, want only its own result", olderExp)
+	}
+	if !strings.Contains(newerExp, "second result") || strings.Contains(newerExp, "first result") {
+		t.Errorf("expanded newer block = %q, want only its own result", newerExp)
 	}
 }
 
