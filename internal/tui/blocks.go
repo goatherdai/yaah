@@ -137,12 +137,6 @@ func (t *App) AddToolEnd(key, summary, result string, dur time.Duration) {
 }
 
 // settleToolEnd applies one end event through the transcript's single
-// settlement rule and surfaces whatever it could not do: a healed or
-// duplicated end is real drift in the event stream and is counted, while a
-// settled block only needs its repaint scheduled.
-//
-
-// settleToolEnd applies one end event through the transcript's single
 // settlement rule and surfaces whatever it could not do: a healed or duplicated
 // end is real drift in the event stream and is counted, while a settled block
 // only needs its repaint scheduled.
@@ -186,11 +180,26 @@ func (t *App) sweepTurn(gen uint64) int {
 	sealed := t.tr.SweepRunningTools()
 
 	for _, key := range sealed {
-		// Attribute to the drop when this turn's own record explains it, so a
-		// loss observed at the drop is not also claimed by the recovery. A
-		// record from an earlier turn never explains this one: attribution
-		// matches on the generation, not on the key alone.
-		if e, ok := entries[key]; ok && e.gen == gen && (e.endLost || e.startDropped) {
+		// Attribute to the drop when a record explains this seal, so a loss
+		// observed at the drop is not also claimed by the recovery.
+		//
+		// This turn's own record always explains it. A record from an EARLIER
+		// turn matters only when that turn's sweep never ran: its blocks were
+		// then never sealed, so the block being sealed now is that turn's,
+		// arriving late — counting it as swept as well would count one loss
+		// twice. If the earlier turn did sweep, its blocks were sealed then, so
+		// a seal now belongs to a later call and the stale record must not
+		// suppress it.
+		//
+		// The one case left imprecise is a keyless call (whose block key is the
+		// run-scoped ordinal) in two consecutive turns whose sweeps were both
+		// lost: the stale record may then name an earlier call than the block
+		// it suppresses. It costs one unreported swept count and never settles a
+		// block, which is the right side of the trade against reintroducing the
+		// per-key uniqueness flag (yaah-ol3r review).
+		if e, ok := entries[key]; ok && (e.endLost || e.startDropped) &&
+			(e.gen == gen || !t.ledger.didSweep(e.gen)) {
+			t.ledger.spend(e.gen, key)
 			continue
 		}
 		t.recordToolOrphan(orphanKindSwept)

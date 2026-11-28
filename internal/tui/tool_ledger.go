@@ -43,6 +43,14 @@ type toolLoss struct {
 type toolLedger struct {
 	mu      sync.Mutex
 	entries map[string]*toolLoss
+	// swept records which turns actually ran their sweep. A record from a turn
+	// whose sweep ran cannot explain a block sealed later — that turn's own
+	// sweep would have sealed it — so the stale record must not suppress the
+	// later attribution. A record from a turn whose sweep was LOST is the
+	// opposite case: the seal we are attributing now is that turn's block
+	// arriving late, and claiming it as swept would count one loss twice
+	// (yaah-ol3r review).
+	swept map[uint64]bool
 }
 
 // ledgerBackstop bounds the map when sweeps stop arriving altogether. It is a
@@ -52,7 +60,10 @@ type toolLedger struct {
 const ledgerBackstop = 512
 
 func newToolLedger() *toolLedger {
-	return &toolLedger{entries: make(map[string]*toolLoss)}
+	return &toolLedger{
+		entries: make(map[string]*toolLoss),
+		swept:   make(map[uint64]bool),
+	}
 }
 
 // entry returns the record for (gen, key), creating it when absent. A record
@@ -128,44 +139,77 @@ func (l *toolLedger) takeForStart(gen uint64, key string) (toolLoss, bool) {
 	return out, true
 }
 
-// closeTurn retires the entries the sweep for gen is responsible for, and returns
-// a snapshot of every entry at or below gen so the caller can attribute what it
-// seals without holding the lock.
+// closeTurn retires the entries the sweep for gen is responsible for, records
+// that gen was swept, and returns a snapshot of every entry at or below gen so
+// the caller can attribute what it seals without holding the lock.
 //
-// Retiring rules, one per state:
+// Retirement is deliberately conservative, because two paths can deliver work out
+// of order: the managed uiEventCh is FIFO, but the critical fallback runs its
+// closures through tview's QueueUpdate from their own goroutines
+// (internal/tui/event_queue.go), so a later turn's sweep can be delivered ahead
+// of an earlier turn's start that is still waiting in the managed queue. An entry
+// is therefore retired only when nothing can need it:
 //
-//   - gen  < gen: a previous turn's record. No start can still arrive for it —
-//     the UI queue is FIFO, so a start enqueued before this sweep has already
-//     run — and its loss, if any, was attributed by that turn's own sweep or
-//     never will be. Dropped here instead of suppressing this turn's attribution.
-//   - gen == gen, start not dropped, and something to hand to a start (an end,
-//     or news that the end was lost): KEPT. The sweep can run while a start from
-//     this same turn is still in flight (the critical fallback runs the
-//     reconciliation directly, ahead of a start still in the queue), and that
-//     start must create its block already settled — or already interrupted when
-//     the end was lost, which is the only thing that keeps it off a permanent
-//     chevron.
-//   - everything else at gen: spent. The start was itself dropped, so no block
-//     will exist to inherit anything, or nothing is known to hand over.
+//   - its start was dropped, so no block will ever exist to inherit anything;
+//   - or it holds neither an end nor news of a lost one, so there is nothing to
+//     hand over and nothing to explain a seal with.
+//
+// Everything else is kept, whatever its generation. Its start may still arrive
+// (matched by generation in takeForStart, so a later turn's start cannot claim
+// it), and its loss may still need to explain a block that a later sweep has to
+// seal — see sweepTurn's attribution. The map is bounded by ledgerBackstop.
 func (l *toolLedger) closeTurn(gen uint64) map[string]toolLoss {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.swept[gen] = true
+
 	out := make(map[string]toolLoss, len(l.entries))
 	for key, e := range l.entries {
 		if e.gen > gen {
 			continue // a later turn's record: not this sweep's business
 		}
 		out[key] = *e
-		switch {
-		case e.gen < gen:
-			delete(l.entries, key)
-		case !e.startDropped && (e.hasEnd || e.endLost):
-			// keep for a start that may still land
-		default:
+		if e.startDropped || (!e.hasEnd && !e.endLost) {
 			delete(l.entries, key)
 		}
 	}
+	l.pruneSwept()
 	return out
+}
+
+// didSweep reports whether gen's turn-end reconciliation actually ran.
+func (l *toolLedger) didSweep(gen uint64) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.swept[gen]
+}
+
+// spend retires the record for (gen, key) once it has explained a seal.
+func (l *toolLedger) spend(gen uint64, key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if e := l.entries[key]; e != nil && e.gen == gen {
+		delete(l.entries, key)
+	}
+}
+
+// pruneSwept drops sweep records older than the oldest live entry, so the set
+// stays bounded by the entries it can still describe.
+func (l *toolLedger) pruneSwept() {
+	if len(l.swept) == 0 {
+		return
+	}
+	oldest, found := uint64(0), false
+	for _, e := range l.entries {
+		if !found || e.gen < oldest {
+			oldest, found = e.gen, true
+		}
+	}
+	for gen := range l.swept {
+		if !found || gen < oldest {
+			delete(l.swept, gen)
+		}
+	}
 }
 
 // forget drops everything — a cleared transcript names blocks that no longer
@@ -174,6 +218,7 @@ func (l *toolLedger) forget() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.entries = make(map[string]*toolLoss)
+	l.swept = make(map[uint64]bool)
 }
 
 // pending reports how many entries the ledger holds. Diagnostics only.

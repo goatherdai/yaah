@@ -34,7 +34,9 @@ const (
 	LateEnd
 	// DuplicateEnd: the block was already terminal, so nothing was written.
 	DuplicateEnd
-	// UnmatchedEnd: no block carried the key; the end was stashed.
+	// UnmatchedEnd: no block carried the key, so the end settled nothing. The
+	// model keeps no copy — the caller records it against its turn
+	// (internal/tui/tool_ledger.go) so a late start can inherit it.
 	UnmatchedEnd
 )
 

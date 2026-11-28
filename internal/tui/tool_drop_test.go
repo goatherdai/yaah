@@ -238,12 +238,11 @@ func TestToolEndBeforeStartSettlesOneBlock(t *testing.T) {
 	}
 }
 
-// TestStashedEndSettlesOnlyItsOwnKey pins the real turn boundary. The sweep no
-// longer clears the stash — it can run before a start from the SAME turn is
-// applied, and clearing there would strand that start (see
-// TestLateToolStartAfterTheSweepIsStillSettled) — so what keeps turns apart is
-// the session-unique key: another turn's start cannot match the stashed end,
-// and the entry stays put for the start that can.
+// TestStashedEndSettlesOnlyItsOwnKey pins the real turn boundary. What keeps
+// turns apart is the ledger's generation, matched together with the key: another
+// turn's start cannot match a stashed end even when the key is identical (a
+// keyless call's fallback ordinal is), and the entry stays put for the start
+// that can still claim it.
 func TestStashedEndSettlesOnlyItsOwnKey(t *testing.T) {
 	ui := gateApp()
 
@@ -438,39 +437,56 @@ func TestKeylessDroppedEndIsNotAlsoCountedAsSwept(t *testing.T) {
 	}
 }
 
-// TestDroppedTurnEndDoesNotStrandItsFallbackLosses pins the boundary a missing
-// sweep leaves behind. When the DoneEvent's reconciliation cannot be scheduled,
-// no sweep of that turn will ever consume its lost-end records; a fallback-keyed
-// one carries a run-scoped ordinal that repeats on the next prompt, so letting it
-// survive would suppress the NEXT turn's swept attribution for a block it never
-// observed being lost. A unique-keyed record is kept — a start from its own turn
-// may still land and consume it.
-func TestDroppedTurnEndDoesNotStrandItsFallbackLosses(t *testing.T) {
-	ui, stop := newQueuedApp(t)
-	defer stop()
+// TestDroppedSweepLossExplainsTheNextSweepsSeal pins the two-sweeps case. When a
+// turn's reconciliation is dropped AND one of its ends was dropped, nothing seals
+// that block until the NEXT turn's sweep. The later sweep must not then count the
+// same loss a second time as swept: that turn's record is the explanation, and it
+// is spent when it does the explaining.
+func TestDroppedSweepLossExplainsTheNextSweepsSeal(t *testing.T) {
+	ui := gateApp()
 
-	// Turn 1: a keyless end and then the turn end itself, both unschedulable.
-	restore := saturate(t, ui)
-	ui.HandleEvent(&agent.ToolEndEvent{ID: 1, Name: "read", Args: `{"path":"a"}`, Result: "dropped", Duration: time.Millisecond})
-	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
-	restore()
+	// Turn 1: the start lands, so its block exists and is Running; the end's
+	// update is then lost, and the turn's own sweep never runs.
+	ui.addToolStart(1, "run1.1", "read", `{"path":"a"}`)
+	if n := runningToolBlocks(ui); n != 1 {
+		t.Fatalf("Running blocks = %d, want 1", n)
+	}
+	ui.ledger.markEndLost(1, "run1.1")
+
+	// Turn 2's sweep seals it. The loss was already attributed at the drop, so
+	// the recovery must not claim it too.
+	ui.sweepTurn(2)
+	if n := runningToolBlocks(ui); n != 0 {
+		t.Fatalf("Running blocks after the next sweep = %d, want 0", n)
+	}
+	counts := ui.toolOrphanCounts()
+	if got := counts[orphanKindSwept]; got != 0 {
+		t.Fatalf("swept = %d, want 0: the same loss was counted twice (counts: %v)", got, counts)
+	}
+	if n := ui.ledger.pending(); n != 0 {
+		t.Fatalf("entries after explaining a seal = %d, want 0 (it must be spent)", n)
+	}
+}
+
+// TestSweptAfterItsOwnTurnRanIsNotExplainedByAStaleRecord pins the other side:
+// when a turn's sweep DID run, its blocks were sealed then, so a seal attributed
+// later belongs to a later call and the stale record must not suppress it — a
+// keyless ordinal repeats on every prompt.
+func TestSweptAfterItsOwnTurnRanIsNotExplainedByAStaleRecord(t *testing.T) {
+	ui := gateApp()
+
+	// Turn 1: an end is lost and the turn's sweep runs, sealing nothing (no
+	// block existed), and the record is kept for a start that may still land.
+	ui.ledger.markEndLost(1, "1")
+	ui.sweepTurn(1)
+
+	// Turn 2 grows its own block under the same keyless ordinal and never gets
+	// an end for it. Turn 1's record must not explain this seal.
+	ui.addToolStart(2, "1", "read", `{"path":"b"}`)
+	ui.sweepTurn(2)
 
 	counts := ui.toolOrphanCounts()
-	if counts[orphanKindDroppedEnd] != 1 || counts[orphanKindDroppedSweep] != 1 {
-		t.Fatalf("turn 1 counts = %v, want one dropped_end and one dropped_sweep", counts)
-	}
-
-	// Turn 2 reuses ordinal 1 and grows a block whose end never arrives: the
-	// sweep must attribute it, not the stale record from turn 1.
-	ui.HandleEvent(&agent.ToolStartEvent{ID: 1, Name: "read", Args: `{"path":"b"}`})
-	waitForUI(t, ui, func() bool { return runningToolBlocks(ui) == 1 },
-		"turn 2's keyless start created no Running block")
-	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
-	waitForUI(t, ui, func() bool { return runningToolBlocks(ui) == 0 },
-		"turn 2's sweep did not seal the block")
-
-	counts = ui.toolOrphanCounts()
 	if got := counts[orphanKindSwept]; got != 1 {
-		t.Fatalf("swept = %d, want 1: a stale fallback record from the previous turn suppressed this turn's attribution (counts: %v)", got, counts)
+		t.Fatalf("swept = %d, want 1: a stale record from a turn that did sweep suppressed this turn's attribution (counts: %v)", got, counts)
 	}
 }

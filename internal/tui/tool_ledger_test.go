@@ -57,21 +57,25 @@ func TestLedgerLostEndSurvivesItsTurnSweep(t *testing.T) {
 	}
 }
 
-func TestLedgerRetiresAnEarlierGenerationsRecord(t *testing.T) {
+func TestLedgerKeepsAnEarlierGenerationsRecordForItsPendingStart(t *testing.T) {
 	l := newToolLedger()
-	l.stashEnd(1, "1", transcript.ToolEnd{Summary: "turn 1", Result: "one", Duration: time.Millisecond})
+	l.stashEnd(1, "run1.1", transcript.ToolEnd{Summary: "turn 1", Result: "one", Duration: time.Millisecond})
 
-	// A sweep closing turn 2 must retire it — and see it, stamped, so it cannot
-	// be used to attribute turn 2's own seals.
-	entries := l.closeTurn(2)
-	if e, ok := entries["1"]; !ok || e.gen != 1 {
-		t.Fatalf("snapshot = %+v, want the stale entry present and stamped gen 1", entries)
+	// A later turn's sweep must not retire it: the critical fallback delivers
+	// closures from their own goroutines, so a later sweep can arrive before an
+	// earlier turn's start that is still waiting in the managed queue.
+	l.closeTurn(2)
+	if n := l.pending(); n != 1 {
+		t.Fatalf("entries kept = %d, want 1: an earlier turn's end must survive for a start that may still be pending", n)
 	}
-	if n := l.pending(); n != 0 {
-		t.Fatalf("entries kept = %d, want 0: an earlier turn's record must not outlive it", n)
-	}
-	if _, ok := l.takeForStart(2, "1"); ok {
+
+	// The generation still separates them: turn 2 cannot claim it...
+	if _, ok := l.takeForStart(2, "run1.1"); ok {
 		t.Fatal("a later turn's start consumed an earlier turn's end")
+	}
+	// ...but turn 1's own start still can, and it is the normal settle path.
+	if loss, ok := l.takeForStart(1, "run1.1"); !ok || loss.end.Result != "one" {
+		t.Fatalf("takeForStart = (%+v, %v), want turn 1's end", loss, ok)
 	}
 }
 

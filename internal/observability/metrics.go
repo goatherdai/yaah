@@ -224,16 +224,16 @@ func RecordTUIQueueEvent(ctx context.Context, eventType, outcome string, depth i
 
 // RecordTUIToolOrphan counts one tool-block orphan, classified by kind:
 //
-//   - "unmatched_end": an end event met no block at all. It is stashed so a
-//     merely-late start can still create the block settled.
+//   - "unmatched_end": an end event met no block at all. It is recorded against
+//     its turn so a merely-late start can still create the block settled.
 //   - "dropped_start": a tool start's UI update could never be scheduled, so
 //     no block was ever created for that call.
 //   - "dropped_end": a tool end's UI update could never be scheduled. The loss
 //     is attributed here, where it was observed. Whichever seam reaches the
 //     block seals it: the turn-end sweep if the block exists by then, otherwise
-//     AddToolStart — but that second path needs a session-unique key, since only
-//     such a record outlives the sweep. A keyless call's late start can still
-//     create a Running block.
+//     the start itself, which creates the block terminal from the record. The
+//     record is stamped with its turn and survives that turn's sweep for exactly
+//     this case, keyed or keyless alike.
 //   - "duplicate_end": an end met a block that was already terminal.
 //   - "late_end": an end healed a block the sweep had sealed as interrupted.
 //   - "swept": a still-Running block sealed by the turn-end sweep. After the
