@@ -14,8 +14,9 @@ sub-agent team, see [sub-agents.md](./sub-agents.md); for agent personas, see
   collapsible tool cards (`ctrl+t`)
 - Sub-agent dispatch cards with role, duration, and status
 - A command palette (`ctrl+p`) with `:help`, `:clear`, `:compact`, `:stop`,
-  `:steer`, `:followup`, `:workflow`, `:model`, `:agent`, `:mode`, `:search`,
-  `:verbose`, `:banner`, `:top`, `:bottom`, and `:quit`. `:workflow run
+  `:steer`, `:followup`, `:workflow`, `:model`, `:agent`, `:mode`, `:roles`,
+  `:login [provider]`, `:logout [provider]`, `:mcp`, `:search`, `:verbose`,
+  `:banner`, `:top`, `:bottom`, and `:quit`. `:workflow run
   <spec>` executes a workflow document (`:workflow run` with no spec opens the
   discovered-spec picker) and `:workflow list` lists what is discoverable. The
   `:` typeahead and `:help` show the same complete set (all derived from
@@ -41,6 +42,7 @@ Running `yaah` with no arguments starts a readline REPL:
 | `/agents` | List agent personas |
 | `/agent [name]` | Switch this session's persona (bare `/agent` reports the current persona) |
 | `/mode [read-only\|full]` | Switch this session's mode axis (`plan`/`build` are accepted as the same words); bare `/mode` reports the current mode. Takes effect on the next run, and the choice is not persisted |
+| `/model [provider/model]` | Switch this session's routing: a bare model name keeps the provider, `provider/model` re-points both axes; bare `/model` reports the current routing. Effective on the next run, and the pick persists across resume |
 
 History persists at `~/.yaah/history` (or `$YAAH_HOME/history` when `YAAH_HOME` is set).
 

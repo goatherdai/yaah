@@ -8,6 +8,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 
 	"github.com/goatherdai/yaah/internal/tui/components/command"
+	"github.com/goatherdai/yaah/internal/tui/components/mcpinfo"
 )
 
 // newColonUI builds a test App whose UI event queue is drained, so colon
@@ -435,5 +436,70 @@ func TestHandleCommand_WorkflowBareReportsUsage(t *testing.T) {
 	}
 	if picked {
 		t.Fatal("bare :workflow must not open the picker")
+	}
+}
+
+func TestHandleCommand_RolesRefusedWhenUnwired(t *testing.T) {
+	ui := newColonUI(t)
+	if ui.HandleCommand(command.CmdReloadRoles, "") {
+		t.Fatal(":roles with no OnRolesReload wired should be refused, not consumed")
+	}
+}
+
+func TestHandleCommand_RolesCallsCallback(t *testing.T) {
+	ui := newColonUI(t)
+	var reloaded bool
+	ui.Hooks.OnRolesReload = func() { reloaded = true }
+
+	if !ui.HandleCommand(command.CmdReloadRoles, "") {
+		t.Fatal(":roles should be consumed")
+	}
+	if !reloaded {
+		t.Fatal(":roles did not call OnRolesReload")
+	}
+}
+
+func TestHandleCommand_LoginLogoutRefusedWhenUnwired(t *testing.T) {
+	ui := newColonUI(t)
+	if ui.HandleCommand(command.CmdLogin, "") {
+		t.Fatal(":login with no OnLogin wired should be refused, not consumed")
+	}
+	if ui.HandleCommand(command.CmdLogout, "") {
+		t.Fatal(":logout with no OnLogout wired should be refused, not consumed")
+	}
+}
+
+func TestHandleCommand_LoginLogoutPassProviderArg(t *testing.T) {
+	ui := newColonUI(t)
+	var loggedIn, loggedOut string
+	ui.Hooks.OnLogin = func(name string) { loggedIn = name }
+	ui.Hooks.OnLogout = func(name string) { loggedOut = name }
+
+	if !ui.HandleCommand(command.CmdLogin, "github") {
+		t.Fatal(":login <provider> should be consumed")
+	}
+	if loggedIn != "github" {
+		t.Fatalf("OnLogin provider = %q, want %q", loggedIn, "github")
+	}
+	if !ui.HandleCommand(command.CmdLogout, "github") {
+		t.Fatal(":logout <provider> should be consumed")
+	}
+	if loggedOut != "github" {
+		t.Fatalf("OnLogout provider = %q, want %q", loggedOut, "github")
+	}
+}
+
+func TestHandleCommand_MCPOpensModal(t *testing.T) {
+	ui := newColonUI(t)
+	ui.McpServers = []mcpinfo.Server{{Name: "docs", Connected: true}, {Name: "down", Connected: false}}
+
+	if !ui.HandleCommand(command.CmdMCP, "") {
+		t.Fatal(":mcp should be consumed")
+	}
+	if !ui.Pages.HasPage("mcp_modal") {
+		t.Fatal(":mcp did not open the MCP modal")
+	}
+	if ui.focus != focusModal {
+		t.Fatalf("focus = %v after :mcp, want focusModal", ui.focus)
 	}
 }

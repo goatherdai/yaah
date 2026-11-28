@@ -38,9 +38,12 @@ type fakeSession struct {
 	// history is what History returns for session/load replay tests.
 	history []types.Message
 	// provider and model track SetModel, so config-option tests can
-	// assert the switch reached the session.
-	provider string
-	model    string
+	// assert the switch reached the session. refuseModel makes SetModel
+	// report a refused switch (the unusable-provider backstop), so the
+	// surface can be pinned to refuse visibly instead of confirming.
+	provider    string
+	model       string
+	refuseModel bool
 	// persona tracks SetPersona for session-mode/agent tests.
 	persona string
 	// readOnly and approvalMode track the mode and approval axes, so
@@ -180,11 +183,15 @@ func (f *fakeSession) Mode() string {
 	return SessionModeBuild
 }
 
-func (f *fakeSession) SetModel(provider, model string) {
+func (f *fakeSession) SetModel(provider, model string) bool {
+	if f.refuseModel {
+		return false
+	}
 	f.mu.Lock()
 	f.provider = provider
 	f.model = model
 	f.mu.Unlock()
+	return true
 }
 
 func (f *fakeSession) ProviderName() string {
@@ -703,6 +710,32 @@ func TestServer_setConfigOptionSwitchesModel(t *testing.T) {
 	}
 	if got := sess.ProviderName(); got != "deepseek" {
 		t.Errorf("session provider = %q, want deepseek", got)
+	}
+}
+
+// TestServer_setConfigOptionRefusedModelSwitch pins that a refused switch
+// (SetModel false — the unusable-provider backstop) returns an error, not
+// a confirmation of a switch that did not land.
+func TestServer_setConfigOptionRefusedModelSwitch(t *testing.T) {
+	sess := &fakeSession{id: "sess-m4", provider: "openai", model: "gpt-5", refuseModel: true}
+	h := newACPHarness(t, sess)
+	h.server.catalog = pickerCatalog()
+	initialize(t, h)
+	if id := newSession(t, h); id != "sess-m4" {
+		t.Fatalf("session/new returned %q, want sess-m4", id)
+	}
+	if err := h.send("session/set_config_option", 2, `{"sessionId":"sess-m4","configId":"model","value":"deepseek/deepseek-flash"}`); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	if msg.Error == nil {
+		t.Fatal("refused model switch must return an error, not a confirmation")
+	}
+	if msg.Error.Code != -32602 {
+		t.Errorf("refused switch error code = %d, want -32602 (invalid params)", msg.Error.Code)
+	}
+	if got := sess.ModelName(); got != "gpt-5" {
+		t.Errorf("session model = %q, want the refused switch to keep gpt-5", got)
 	}
 }
 

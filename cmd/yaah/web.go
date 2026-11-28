@@ -574,7 +574,13 @@ func (ws *webServer) handleAction(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 
 	case "model":
-		ws.sess.SetModel(req.Provider, req.Model)
+		// A refused switch (provider not defined or unusable) must not
+		// be confirmed: SetModel keeps the old routing, so the header
+		// keeps showing it too.
+		if !ws.sess.SetModel(req.Provider, req.Model) {
+			http.Error(w, fmt.Sprintf("cannot switch to %s/%s: provider not usable by this session", req.Provider, req.Model), http.StatusBadRequest)
+			return
+		}
 		ws.mu.Lock()
 		v := ws.view
 		ws.mu.Unlock()

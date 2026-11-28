@@ -205,10 +205,37 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 			t.SetEphemeral("usage: " + command.Usage(command.CmdWorkflow))
 			return false
 		}
+	case command.CmdReloadRoles:
+		if t.Hooks.OnRolesReload == nil {
+			t.SetEphemeral("role reload is unavailable in this session")
+			return false
+		}
+		t.Hooks.OnRolesReload()
+		return true
+	case command.CmdLogin:
+		if t.Hooks.OnLogin == nil {
+			t.SetEphemeral("login is unavailable in this session")
+			return false
+		}
+		t.Hooks.OnLogin(arg)
+		return true
+	case command.CmdLogout:
+		if t.Hooks.OnLogout == nil {
+			t.SetEphemeral("logout is unavailable in this session")
+			return false
+		}
+		t.Hooks.OnLogout(arg)
+		return true
+	case command.CmdMCP:
+		// The MCP status is TUI-local state (SetMCPServers seeds it from
+		// the session's connections at launch), so :mcp needs no driver
+		// seam — the modal renders the same block the info pane carries.
+		t.ShowMCPInfo()
+		return true
 	default:
-		// Reachable for commands that are declared and parseable but have no
-		// handler yet (roles, login, logout, session, mcp). Say so rather than
-		// accepting the input and doing nothing.
+		// Reachable for commands that are declared and parseable but have
+		// no handler yet (session). Say so rather than accepting the input
+		// and doing nothing.
 		if name := command.Name(cmd); name != "" {
 			t.SetEphemeral(":" + name + " is not available in this session")
 		}

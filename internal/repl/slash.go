@@ -17,6 +17,7 @@ const (
 	CmdAgents
 	CmdAgent
 	CmdMode
+	CmdModel
 )
 
 // ParseSlashCommand checks if input is a recognized slash command.
@@ -51,6 +52,12 @@ func ParseSlashCommand(input string) SlashCommand {
 	if input == "/mode" || strings.HasPrefix(input, "/mode ") {
 		return CmdMode
 	}
+	// /model takes an optional routing: the bare command reports the
+	// current provider/model, "provider/model" (or a bare model name,
+	// keeping the provider) switches this session.
+	if input == "/model" || strings.HasPrefix(input, "/model ") {
+		return CmdModel
+	}
 	return CmdNone
 }
 
@@ -66,4 +73,11 @@ func SlashAgentArg(input string) string {
 // the input.
 func SlashModeArg(input string) string {
 	return strings.TrimSpace(strings.TrimPrefix(input, "/mode"))
+}
+
+// SlashModelArg extracts the routing from a /model input line, "" for
+// the bare command. ParseSlashCommand must have returned CmdModel for
+// the input.
+func SlashModelArg(input string) string {
+	return strings.TrimSpace(strings.TrimPrefix(input, "/model"))
 }

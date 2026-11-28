@@ -55,6 +55,18 @@ type DriverHooks struct {
 	// picker (read-only or full). The driver switches this session's
 	// mode axis, effective at the next run.
 	OnModeSelect func(word string)
+	// OnRolesReload is invoked at :roles (REPL /roles parity): the
+	// driver hot-reloads the role registry from the session's search
+	// paths and reports the outcome through the control channel.
+	OnRolesReload func()
+	// OnLogin and OnLogout receive the OAuth provider name typed at
+	// :login / :logout, "" when none was. The driver resolves "": the
+	// single configured provider is picked automatically; multiple
+	// configured providers without a name are refused with the names
+	// listed, since the TUI has no stdin to prompt on. The device-flow
+	// status messages flow back through the control channel.
+	OnLogin  func(provider string)
+	OnLogout func(provider string)
 
 	// ControlCh is the typed control-plane message channel (todos,
 	// questions, approvals, usage); the driver creates it and consumes

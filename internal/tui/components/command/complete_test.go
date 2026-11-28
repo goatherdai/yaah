@@ -117,12 +117,12 @@ func contains(hay []string, needle string) bool {
 }
 
 // The palette and typeahead must not advertise commands that have no handler:
-// suggesting ":session" and then silently doing nothing is the bug class this
-// whole change set is about.
+// suggesting a command and then silently doing nothing is the bug class this
+// whole change set is about. :roles, :login, :logout and :mcp gained
+// handlers (yaah-n8n8); :session is the last declared-but-unwired command.
 func TestDefaultEntries_ExcludesUnwired(t *testing.T) {
 	unwired := map[Cmd]bool{
-		CmdReloadRoles: true, CmdLogin: true, CmdLogout: true,
-		CmdSession: true, CmdMCP: true,
+		CmdSession: true,
 	}
 	for _, e := range DefaultEntries() {
 		if unwired[e.Cmd] {

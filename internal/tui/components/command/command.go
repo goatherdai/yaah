@@ -91,7 +91,7 @@ func splitName(input string) (name, arg string) {
 // takesArg reports whether cmd consumes the rest of the line.
 func takesArg(cmd Cmd) bool {
 	switch cmd {
-	case CmdSteer, CmdFollowUp, CmdSearch, CmdModel, CmdAgent, CmdMode, CmdWorkflow:
+	case CmdSteer, CmdFollowUp, CmdSearch, CmdModel, CmdAgent, CmdMode, CmdWorkflow, CmdLogin, CmdLogout:
 		return true
 	default:
 		return false
@@ -154,6 +154,10 @@ func Usage(cmd Cmd) string {
 		return ":agent [name]"
 	case CmdMode:
 		return ":mode [read-only|full]"
+	case CmdLogin:
+		return ":login [provider]"
+	case CmdLogout:
+		return ":logout [provider]"
 	case CmdWorkflow:
 		return ":workflow [run <spec.yaml|spec.json> | list]"
 	default:
@@ -181,6 +185,10 @@ func DefaultEntries() []Entry {
 		{"model", "Switch model", CmdModel},
 		{"agent", "Pick the persona (switches this session)", CmdAgent},
 		{"mode", "Switch the mode: read-only or full (switches this session)", CmdMode},
+		{"roles", "Reload role definitions", CmdReloadRoles},
+		{"login", "Authenticate with an OAuth provider", CmdLogin},
+		{"logout", "Remove stored OAuth credentials", CmdLogout},
+		{"mcp", "Show MCP server status", CmdMCP},
 		{"search", "Search messages (requires arg)", CmdSearch},
 		{"verbose", "Toggle verbose mode", CmdVerbose},
 		{"banner", "Toggle banner", CmdBanner},

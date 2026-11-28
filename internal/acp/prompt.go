@@ -261,7 +261,13 @@ func (s *Server) handleSetConfigOption(
 			respErr(msg.ID, codeInvalidParams, fmt.Sprintf("invalid value %q: want \"<provider>/<model>\"", p.Value))
 			return
 		}
-		st.sess.SetModel(provider, model)
+		if !st.sess.SetModel(provider, model) {
+			// SetModel refuses-and-warns internally (unusable provider):
+			// surface the refusal, not a confirmation of a switch that
+			// did not land.
+			respErr(msg.ID, codeInvalidParams, fmt.Sprintf("cannot switch to %q: provider %q is not usable by this session", p.Value, provider))
+			return
+		}
 		s.logf("session %s: model set to %s/%s", st.id, provider, model)
 		respOK(msg.ID, echo())
 	default:
