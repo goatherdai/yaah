@@ -105,11 +105,10 @@ func (t *App) HandleEvent(event agent.Event) {
 			// and remember the key, so the turn-end sweep — or, if the
 			// start is still in flight, AddToolStart — seals the block
 			// (never a permanent chevron) without claiming the loss as
-			// its own. A fallback key names no single turn's call, so it
-			// is counted but not recorded.
-			if unique {
-				t.recordLostToolEnd(key)
-			}
+			// its own. A fallback key is recorded too, but turn-scoped:
+			// it can attribute this turn's sweep, not identify a later
+			// turn's call (see lostToolEnd).
+			t.recordLostToolEnd(key, unique)
 			t.recordToolOrphan(orphanKindDroppedEnd)
 		}
 	case *agent.SubAgentStartEvent:

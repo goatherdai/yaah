@@ -245,7 +245,7 @@ type App struct {
 	// is written on the agent-loop goroutine and consumed by the turn-end
 	// sweep on the UI goroutine.
 	lostEndsMu sync.Mutex
-	lostEnds   []string
+	lostEnds   []lostToolEnd
 
 	availableModels []string
 	providerNames   map[string]string

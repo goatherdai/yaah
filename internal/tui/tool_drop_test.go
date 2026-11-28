@@ -280,18 +280,22 @@ func TestStashedEndSettlesOnlyItsOwnKey(t *testing.T) {
 func TestLostToolEndRecordIsBounded(t *testing.T) {
 	ui := gateApp()
 	for i := range lostToolEndsLimit + 4 {
-		ui.recordLostToolEnd("run1." + strconv.Itoa(i))
+		ui.recordLostToolEnd("run1."+strconv.Itoa(i), true)
 	}
-	ui.recordLostToolEnd("run1." + strconv.Itoa(lostToolEndsLimit+3)) // duplicate
+	ui.recordLostToolEnd("run1."+strconv.Itoa(lostToolEndsLimit+3), true) // duplicate
 
 	lost := ui.takeLostToolEnds()
 	if len(lost) != lostToolEndsLimit {
 		t.Fatalf("recorded lost ends = %d, want the cap %d", len(lost), lostToolEndsLimit)
 	}
-	if lost["run1.0"] {
+	keys := make(map[string]bool, len(lost))
+	for _, le := range lost {
+		keys[le.key] = true
+	}
+	if keys["run1.0"] {
 		t.Error("the oldest record was kept past the cap")
 	}
-	if !lost["run1."+strconv.Itoa(lostToolEndsLimit+3)] {
+	if !keys["run1."+strconv.Itoa(lostToolEndsLimit+3)] {
 		t.Error("the newest record was dropped")
 	}
 	if again := ui.takeLostToolEnds(); len(again) != 0 {
@@ -481,5 +485,43 @@ func TestFallbackKeyedEndIsNotStashed(t *testing.T) {
 	<-probe
 	if stashed != 1 {
 		t.Fatalf("stashed ends for a unique key = %d, want 1", stashed)
+	}
+}
+
+// TestKeylessDroppedEndIsNotAlsoCountedAsSwept pins the taxonomy for the
+// keyless path: a fallback-keyed loss is still a loss a seam observed, so the
+// sweep that seals its block must not also claim it as swept. The record is
+// turn-scoped — it can attribute this turn's sweep, but its ordinal identifies no
+// later turn's call.
+func TestKeylessDroppedEndIsNotAlsoCountedAsSwept(t *testing.T) {
+	ui, stop := newQueuedApp(t)
+	defer stop()
+
+	// The keyless start lands first, so its block exists and is Running.
+	ui.HandleEvent(&agent.ToolStartEvent{ID: 1, Name: "read", Args: `{"path":"a"}`})
+	waitForUI(t, ui, func() bool { return runningToolBlocks(ui) == 1 },
+		"the keyless start created no Running block")
+
+	// Its end's update cannot be scheduled: one loss, observed here.
+	restore := saturate(t, ui)
+	ui.HandleEvent(&agent.ToolEndEvent{ID: 1, Name: "read", Args: `{"path":"a"}`, Result: "ok", Duration: time.Millisecond})
+	restore()
+
+	counts := ui.toolOrphanCounts()
+	if got := counts[orphanKindDroppedEnd]; got != 1 {
+		t.Fatalf("dropped_end = %d, want 1 (counts: %v)", got, counts)
+	}
+
+	// The turn ends and the sweep seals the block — without double-counting.
+	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
+	waitForUI(t, ui, func() bool { return runningToolBlocks(ui) == 0 },
+		"the turn-end sweep did not seal the keyless block")
+
+	counts = ui.toolOrphanCounts()
+	if got := counts[orphanKindSwept]; got != 0 {
+		t.Fatalf("the same keyless loss was counted twice: swept = %d on top of dropped_end (counts: %v)", got, counts)
+	}
+	if got := counts[orphanKindDroppedEnd]; got != 1 {
+		t.Fatalf("dropped_end = %d after the sweep, want 1 (counts: %v)", got, counts)
 	}
 }

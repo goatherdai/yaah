@@ -89,15 +89,24 @@ func (t *App) toolOrphanCounts() map[string]int {
 	return out
 }
 
+// lostToolEnd is one recorded loss. unique reports whether its key identifies
+// the call for the session: a unique record outlives the sweep so a start still
+// in flight can consume it, while a fallback record is turn-scoped — it can
+// attribute this turn's sweep, but it cannot identify a later call.
+type lostToolEnd struct {
+	key    string
+	unique bool
+}
+
 // recordLostToolEnd remembers that key's end event will never be applied, so
 // the turn-end sweep can attribute the block to the drop instead of to its own
 // recovery. It runs on the agent-loop goroutine (HandleEvent's), so the record
 // is mutex-guarded: the sweep reads it on the UI goroutine.
-func (t *App) recordLostToolEnd(key string) {
+func (t *App) recordLostToolEnd(key string, unique bool) {
 	t.lostEndsMu.Lock()
 	defer t.lostEndsMu.Unlock()
-	for _, k := range t.lostEnds {
-		if k == key {
+	for _, le := range t.lostEnds {
+		if le.key == key {
 			return
 		}
 	}
@@ -105,17 +114,20 @@ func (t *App) recordLostToolEnd(key string) {
 		copy(t.lostEnds, t.lostEnds[1:])
 		t.lostEnds = t.lostEnds[:len(t.lostEnds)-1]
 	}
-	t.lostEnds = append(t.lostEnds, key)
+	t.lostEnds = append(t.lostEnds, lostToolEnd{key: key, unique: unique})
 }
 
-// takeLostToolEnd reports whether key's end event was recorded as lost,
-// removing that record. It is consumed by AddToolStart when the start lands
-// after the turn-end sweep, so the block is created terminal instead of Running.
+// takeLostToolEnd reports whether key's end event was recorded as lost by a
+// key that can identify the call, removing that record. It is consumed by
+// AddToolStart when the start lands after the turn-end sweep, so the block is
+// created terminal instead of Running. A fallback-keyed record is not offered
+// here: the ordinal cannot prove it belongs to this start rather than a later
+// turn's.
 func (t *App) takeLostToolEnd(key string) bool {
 	t.lostEndsMu.Lock()
 	defer t.lostEndsMu.Unlock()
-	for i, k := range t.lostEnds {
-		if k == key {
+	for i, le := range t.lostEnds {
+		if le.key == key && le.unique {
 			t.lostEnds = append(t.lostEnds[:i], t.lostEnds[i+1:]...)
 			return true
 		}
@@ -126,16 +138,14 @@ func (t *App) takeLostToolEnd(key string) bool {
 // takeLostToolEnds returns and clears the recorded lost ends. The sweep is the
 // turn boundary: a loss recorded before it belongs to a block the sweep is
 // about to seal, and a later sweep must not re-attribute it.
-func (t *App) takeLostToolEnds() map[string]bool {
+func (t *App) takeLostToolEnds() []lostToolEnd {
 	t.lostEndsMu.Lock()
 	defer t.lostEndsMu.Unlock()
 	if len(t.lostEnds) == 0 {
 		return nil
 	}
-	lost := make(map[string]bool, len(t.lostEnds))
-	for _, k := range t.lostEnds {
-		lost[k] = true
-	}
+	lost := make([]lostToolEnd, len(t.lostEnds))
+	copy(lost, t.lostEnds)
 	t.lostEnds = nil
 	return lost
 }
@@ -228,14 +238,19 @@ func (t *App) SweepStuckToolBlocks() int {
 	for _, key := range sealed {
 		sealedSet[key] = true
 	}
-	// A lost end whose block does not exist yet is NOT settled here: its start
-	// is still in flight (the same saturated-queue reordering this file has to
-	// tolerate elsewhere), so the record goes back and AddToolStart consumes it
-	// when that start lands. Dropping it would leave the late start to create a
-	// Running block after the turn's only sweep — the permanent chevron.
-	for key := range lost {
-		if !sealedSet[key] {
-			t.recordLostToolEnd(key)
+	lostKeys := make(map[string]bool, len(lost))
+	for _, le := range lost {
+		lostKeys[le.key] = true
+		// A unique-keyed loss whose block does not exist yet is NOT settled
+		// here: its start is still in flight (the same saturated-queue
+		// reordering this file has to tolerate elsewhere), so the record goes
+		// back and AddToolStart consumes it when that start lands. Dropping it
+		// would leave the late start to create a Running block after the turn's
+		// only sweep — the permanent chevron. A fallback-keyed loss cannot name
+		// a start that will arrive later, so it is spent here, where it
+		// suppresses this turn's swept count and is never re-recorded.
+		if le.unique && !sealedSet[le.key] {
+			t.recordLostToolEnd(le.key, le.unique)
 		}
 	}
 
@@ -244,7 +259,7 @@ func (t *App) SweepStuckToolBlocks() int {
 	}
 	t.markDirty()
 	for _, key := range sealed {
-		if lost[key] {
+		if lostKeys[key] {
 			continue
 		}
 		t.recordToolOrphan(orphanKindSwept)
