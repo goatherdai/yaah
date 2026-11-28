@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -17,18 +18,25 @@ import (
 // failed write flips the view, closes the handler's release channel, and
 // every later write is a no-op instead of burning the timeout per event.
 
-// failingWriter fails every Write like a broken pipe.
-type failingWriter struct{}
+// failingWriter fails every Write like a broken pipe, counting attempts so
+// a test can pin that stalled writes are skipped, not retried.
+type failingWriter struct {
+	writes atomic.Int64
+}
 
 var errBrokenPipe = errors.New("write: broken pipe")
 
-func (failingWriter) Header() http.Header       { return http.Header{} }
-func (failingWriter) Write([]byte) (int, error) { return 0, errBrokenPipe }
-func (failingWriter) WriteHeader(int)           {}
+func (w *failingWriter) Header() http.Header { return http.Header{} }
+func (w *failingWriter) Write([]byte) (int, error) {
+	w.writes.Add(1)
+	return 0, errBrokenPipe
+}
+func (w *failingWriter) WriteHeader(int) {}
 
 func TestSseViewWriteErrorStallsView(t *testing.T) {
 	stallCh := make(chan struct{})
-	v := &sseView{w: failingWriter{}, stallCh: stallCh}
+	fw := &failingWriter{}
+	v := &sseView{w: fw, stallCh: stallCh}
 
 	v.write([]byte(`{"type":"ctrl.state"}`))
 
@@ -40,11 +48,17 @@ func TestSseViewWriteErrorStallsView(t *testing.T) {
 	if !v.stalled.Load() {
 		t.Fatal("a failed write must mark the view stalled")
 	}
+	if got := fw.writes.Load(); got != 1 {
+		t.Fatalf("write attempts = %d, want exactly 1", got)
+	}
 
 	// Later writes are no-ops: they must not retry the dead connection and
 	// must not double-close the stall channel.
 	v.write([]byte(`{"type":"token"}`))
 	v.write([]byte(`{"type":"done"}`))
+	if got := fw.writes.Load(); got != 1 {
+		t.Errorf("writes after stall = %d, want 1 (stalled writes are skipped)", got)
+	}
 	select {
 	case <-stallCh:
 	default:

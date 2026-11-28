@@ -408,7 +408,17 @@ func (v *sseView) writeLocked(data []byte) {
 		v.stall()
 		return
 	}
-	if f, ok := v.w.(http.Flusher); ok {
+	// The flush is where a small frame actually reaches the network, so a
+	// failed flush must stall the view too. http.Flusher.Flush cannot
+	// report the error; the ResponseController's Flush can, and it is the
+	// same deadline-bounded write path. Bare test writers (rc nil) keep
+	// the Flusher fallback.
+	if v.rc != nil {
+		if err := v.rc.Flush(); err != nil {
+			v.stall()
+			return
+		}
+	} else if f, ok := v.w.(http.Flusher); ok {
 		f.Flush()
 	}
 }

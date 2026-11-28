@@ -73,6 +73,11 @@ func TestLogBrokerDrops(t *testing.T) {
 					t.Errorf("log should not mention %q, got: %s", noWant, out)
 				}
 			}
+			// The silent cases must actually be silent: a report emitted
+			// for a fully delivered subscriber would be noise on every run.
+			if len(tt.want) == 0 && out != "" {
+				t.Errorf("expected no log output, got: %s", out)
+			}
 		})
 	}
 }
@@ -114,10 +119,16 @@ func TestPublishDoneReportsDrops(t *testing.T) {
 		t.Errorf("anonymous brokerView subscription should be reported as view, got log: %s", out)
 	}
 	// The forwarder goroutine must have exited: brokerView.Close was called
-	// by publishDone and drains it, so the DoneEvent the wedged subscriber
-	// did receive is observable here after Close returns.
+	// by publishDone and drains it. What remains in the wedged subscriber's
+	// single slot is the filler TokenDeltaEvent — the DoneEvent itself was
+	// counted dropped when the shared 50ms must-deliver budget expired on
+	// the full channel — and reading it proves the forwarder ran to
+	// completion rather than leaking.
 	select {
-	case <-sub:
+	case evt := <-sub:
+		if _, ok := evt.(*TokenDeltaEvent); !ok {
+			t.Errorf("expected the filler TokenDeltaEvent, got %T", evt)
+		}
 	default:
 		t.Error("brokerView forwarder did not drain the subscription before exit")
 	}
