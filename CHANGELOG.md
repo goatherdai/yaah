@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.226.0](https://github.com/goatherdai/yaah/compare/v0.225.2...v0.226.0) (2026-11-28)
+
+
+### Features
+
+* **tui:** stop UX — halt classification, Esc arming, stop echo, Ctrl-C dialog (yaah-ny97) ([#461](https://github.com/goatherdai/yaah/issues/461)) ([0c50ecf](https://github.com/goatherdai/yaah/commit/0c50ecf8ec40158691e012b2cba37364c0097933))
+
 ## [0.225.2](https://github.com/goatherdai/yaah/compare/v0.225.1...v0.225.2) (2026-11-28)
 
 
