@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/goatherdai/yaah/internal/jsonrpc"
 	"github.com/goatherdai/yaah/internal/permissions"
@@ -124,63 +123,52 @@ func (s *Server) requestPermission(
 		return false
 	}
 
-	s.mu.Lock()
-	s.nextReqID++
-	reqID := s.nextReqID
-	s.mu.Unlock()
+	// c == nil means Run has not started (or already ended): deny,
+	// never block. requestClient owns id minting, answer registration,
+	// the send and the bounded wait.
 	if c == nil {
-		// Run has not started (or already ended) — deny, never block.
 		return false
 	}
 
 	toolCallID := callID
-	if toolCallID == "" {
-		// A model that supplies no call id cannot be correlated; keep
-		// the old synthetic id so the prompt still works.
-		toolCallID = fmt.Sprintf("perm_%d", reqID)
-	}
+	announced := callID != ""
 	title := permissionTitle(name, args)
 	if title == "" {
 		title = name
 	}
-	send := func(sessionID string, u any) {
-		raw, err := json.Marshal(u)
-		if err != nil {
-			s.logf("marshal update: %v", err)
-			return
-		}
-		c.write(jsonrpc.Message{
-			JSONRPC: "2.0",
-			Method:  "session/update",
-			Params:  rawOf(updateEnvelope{SessionID: sessionID, Update: raw}),
-		})
+	timeout := s.answerTimeout()
+
+	params := &RequestPermissionParams{
+		SessionID: sessionID,
+		ToolCall: ToolCallUpdate{
+			SessionUpdate: UpdateToolCallUpdate,
+			Title:         title,
+			Name:          name,
+			Kind:          toolKind(name),
+			Status:        StatusPending,
+		},
+		Options: permissionOptions(name),
 	}
 
-	// Answer channel registered BEFORE the request goes out so a fast
-	// client cannot arrive ahead of the routing entry.
-	answer := make(chan clientResponse, 1)
-	key := permissionID(reqID)
-	s.mu.Lock()
-	s.pendingReq[key] = answer
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		delete(s.pendingReq, key)
-		s.mu.Unlock()
-	}()
-
-	// Create the tool call the client will show in its permission
-	// dialog, and remember it so the execution event below updates the
-	// same row instead of creating a second one.
-	announced := callID != ""
-	if announced {
+	// Announce the row after the answer channel is registered but before
+	// the request goes out, so a fast client cannot answer a row it has
+	// not seen. The minted id also supplies the synthetic fallback for a
+	// model that gave no call id.
+	beforeSend := func(id int) {
+		if toolCallID == "" {
+			toolCallID = fmt.Sprintf("perm_%d", id)
+		}
+		params.ToolCall.ToolCallID = toolCallID
+		if !announced {
+			return
+		}
 		s.mu.Lock()
 		st := s.sessions[sessionID]
 		if st != nil && st.view != nil {
 			st.view.Announce(toolCallID)
 		}
 		s.mu.Unlock()
-		send(sessionID, ToolCallUpdate{
+		c.sendUpdate(sessionID, ToolCallUpdate{
 			SessionUpdate: UpdateToolCall,
 			ToolCallID:    toolCallID,
 			Title:         title,
@@ -189,26 +177,6 @@ func (s *Server) requestPermission(
 			Status:        StatusPending,
 		})
 	}
-
-	c.sendRequest(reqID, "session/request_permission", RequestPermissionParams{
-		SessionID: sessionID,
-		ToolCall: ToolCallUpdate{
-			SessionUpdate: UpdateToolCallUpdate,
-			ToolCallID:    toolCallID,
-			Title:         title,
-			Name:          name,
-			Kind:          toolKind(name),
-			Status:        StatusPending,
-		},
-		Options: permissionOptions(name),
-	})
-
-	timeout := s.PermissionTimeout
-	if timeout <= 0 {
-		timeout = defaultPermissionTimeout
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
 
 	deny := func(reason string) {
 		s.logf("permission %s denied: %s", toolCallID, reason)
@@ -220,7 +188,7 @@ func (s *Server) requestPermission(
 		if !announced {
 			return
 		}
-		send(sessionID, ToolCallUpdate{
+		c.sendUpdate(sessionID, ToolCallUpdate{
 			SessionUpdate: UpdateToolCallUpdate,
 			ToolCallID:    toolCallID,
 			Title:         title,
@@ -234,13 +202,16 @@ func (s *Server) requestPermission(
 		})
 	}
 
-	var resp clientResponse
-	select {
-	case resp = <-answer:
-	case <-timer.C:
+	resp, outcome, err := s.requestClient(runCtx, c, "session/request_permission", params,
+		clientRequestOptions{Timeout: timeout, BeforeSend: beforeSend})
+	if err != nil {
+		return false
+	}
+	switch outcome {
+	case clientTimedOut:
 		deny("no answer from client within " + timeout.String())
 		return false
-	case <-runCtx.Done():
+	case clientTurnEnded:
 		// The turn is over (cancel or shutdown); the spec requires a
 		// cancelled outcome from the client in this state, but a local
 		// deny is the safe interpretation either way. No failed-row
