@@ -90,6 +90,30 @@ func refuseDeprecatedTUIFlags() error {
 	return nil
 }
 
+// stopUI is the slice of the TUI the stop path needs. Narrow, so a test
+// can drive stopRun without building a live tview app.
+type stopUI interface {
+	HideThinking()
+}
+
+// runCanceller is the slice of the session the TUI's stop path needs.
+type runCanceller interface {
+	HaltCurrentRun()
+}
+
+// stopRun is the TUI's one stop path, shared by :stop (OnStop) and its
+// fallback twin OnAbort. It goes through the session's run cancel, not a
+// TUI-local one: the session registers a cancel for every run — including
+// wake-started turns, which never pass through OnSubmit — and clears it when
+// the run returns, so a stop always lands on the run actually in flight and
+// is a no-op when none is (yaah-l2z1).
+func stopRun(app stopUI, sess runCanceller) func() {
+	return func() {
+		app.HideThinking()
+		sess.HaltCurrentRun()
+	}
+}
+
 func runTUI(initialSpec string) error {
 	// Interactive surface: honor bare --resume before building the
 	// session (stderr is hijacked later; this runs on the real terminal).
@@ -195,21 +219,12 @@ func runTUI(initialSpec string) error {
 		app.SetEphemeral(reply)
 	}
 
-	var cancelAgent context.CancelFunc
 	app.Hooks.OnSubmit = func(input string) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancelAgent = cancel
 		app.AddPrompt(input)
 		app.ShowThinking()
-		go sess.RunPrompt(ctx, input)
+		go sess.RunPrompt(context.Background(), input)
 	}
-	app.Hooks.OnAbort = func() {
-		app.HideThinking()
-		if cancelAgent != nil {
-			cancelAgent()
-			cancelAgent = nil
-		}
-	}
+	app.Hooks.OnAbort = stopRun(app, sess)
 	app.Hooks.OnCompact = func() {
 		go sess.Compact()
 	}
@@ -333,13 +348,7 @@ func runTUI(initialSpec string) error {
 		app.EchoPrompt(text)
 		sess.FollowUp(text)
 	}
-	app.Hooks.OnStop = func() {
-		app.HideThinking()
-		if cancelAgent != nil {
-			cancelAgent()
-			cancelAgent = nil
-		}
-	}
+	app.Hooks.OnStop = stopRun(app, sess)
 
 	app.Hooks.ControlCh = controlCh
 	sess.SetView(app)

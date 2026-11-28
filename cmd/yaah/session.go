@@ -935,10 +935,13 @@ func (s *agentSession) TurnBudgetExhausted() bool {
 }
 
 // RunPrompt runs one prompt under a context the session owns: derived
-// from the caller's, so the frontends' own cancels (TUI abort, serve's
-// signal context) compose, but with a session-held cancel that
-// HaltCurrentRun can invoke — that is what supervisor halt on the root
-// scope bridges to (adoption plan A3, gated by supervisor.halt_root).
+// from the caller's, so a caller cancel (serve's signal context)
+// composes with the session-held cancel that HaltCurrentRun can invoke
+// — that is what supervisor halt on the root scope bridges to (adoption
+// plan A3, gated by supervisor.halt_root). The TUI passes
+// context.Background() and stops turns through HaltCurrentRun instead,
+// so a stop also lands on wake-started turns, which never pass through
+// a submit (yaah-l2z1).
 func (s *agentSession) RunPrompt(ctx context.Context, prompt string) (string, bool, error) {
 	var (
 		response string
