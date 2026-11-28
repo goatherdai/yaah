@@ -587,10 +587,10 @@ document.addEventListener('alpine:init', () => {
         this.cmdOpen = false; this.searchClose()
       },
 
-      // toolKey is the call's session-unique identity. tool_id is the
-      // run-scoped ordinal and repeats across prompts, so keying on it made a
-      // later prompt's tool.end settle a previous prompt's row (yaah-77f1).
-      toolKey(d) { return d.tool_key != null ? d.tool_key : (d.tool_id != null ? d.tool_id : null) },
+      // toolKey reads the call's session-unique identity off a wire frame.
+      // tool_id is the run-scoped ordinal and repeats across prompts, so it is
+      // accepted only from a producer that sends no key (yaah-77f1).
+      toolKey(d) { const key = d.tool_key ?? d.tool_id ?? ''; return key !== '' ? key : null },
 
       onEvt(d) {
         switch (d.type) {

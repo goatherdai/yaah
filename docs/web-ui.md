@@ -205,10 +205,10 @@ Tools are rendered inline in the chat log, not in a separate strip:
 
 1. **`tool.start`** → Creates a new tool message with `running: true`,
    icon `⏳`, and the pre-execution summary. Registers it in `_tools[tool_key]`
-   for later update. `tool_key` is the call's session-unique identity;
-   `tool_id` is the run-scoped dispatch ordinal and restarts at 1 on every
-   prompt, so it is accepted only as a fallback for an older producer. The
-   icon pulses via CSS animation.
+   for later update. The relay emits `tool_key` on both frames
+   (`sseWireEvent.ToolKey`); `tool_id` is the run-scoped dispatch ordinal and
+   restarts at 1 on every prompt, so it is read only from a producer that
+   sends no key. The icon pulses via CSS animation.
 
 2. **Streaming** → `token` and `thinking` events continue to arrive; tool
    messages remain in the log below the streaming content.

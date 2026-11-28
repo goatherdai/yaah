@@ -596,18 +596,18 @@ func TestRegistry_InFlightTableIsGenerationChecked(t *testing.T) {
 	}
 
 	// Writes into the stale table are invisible: nobody reads it.
-	stale.Start(1, "bash", "{}", time.Now())
+	stale.Start("k1", "bash", "{}", time.Now())
 	if got := r.InFlightCalls(scope, gen2, time.Now()); len(got) != 0 {
 		t.Errorf("stale table writes leaked into the live view: %+v", got)
 	}
-	live.Start(2, "edit", `{"filePath":"a.go"}`, time.Now())
+	live.Start("k2", "edit", `{"filePath":"a.go"}`, time.Now())
 	got := r.InFlightCalls(scope, gen2, time.Now())
 	if len(got) != 1 || got[0].Name != "edit" {
 		t.Errorf("InFlightCalls = %+v, want the live table's open call", got)
 	}
 
 	// A finished scope reports none.
-	live.End(2)
+	live.End("k2")
 	r.Unregister(scope)
 	if got := r.InFlightCalls(scope, gen2, time.Now()); got != nil {
 		t.Errorf("a finished scope must report nil in-flight, got %+v", got)
@@ -644,7 +644,7 @@ func TestRegistry_InFlightCallsIsGenerationChecked(t *testing.T) {
 	if tbl == nil {
 		t.Fatal("the successor must expose its table")
 	}
-	tbl.Start(1, "edit", `{"filePath":"a.go"}`, time.Now())
+	tbl.Start("k1", "edit", `{"filePath":"a.go"}`, time.Now())
 
 	// The predecessor's entry, read with the generation it carries: nil —
 	// the successor's call must not bleed into it.
@@ -676,7 +676,7 @@ func TestRegistry_MarkReturnedClearsInFlight(t *testing.T) {
 	if tbl == nil {
 		t.Fatal("the live run must expose its in-flight table")
 	}
-	tbl.Start(1, "bash", `{"command":"go test"}`, time.Now())
+	tbl.Start("k1", "bash", `{"command":"go test"}`, time.Now())
 	if got := r.InFlightCalls(scope, gen, time.Now()); len(got) != 1 {
 		t.Fatalf("InFlightCalls before return = %+v, want the open call", got)
 	}
@@ -704,7 +704,7 @@ func TestRegistry_MarkReturnedClearsInFlight(t *testing.T) {
 	if tbl2 == nil {
 		t.Fatal("the successor must expose its own table")
 	}
-	tbl2.Start(2, "edit", `{"filePath":"a.go"}`, time.Now())
+	tbl2.Start("k2", "edit", `{"filePath":"a.go"}`, time.Now())
 	r.MarkReturned(scope, gen) // the predecessor's stale generation
 	if got := r.InFlightCalls(scope, gen2, time.Now()); len(got) != 1 {
 		t.Errorf("a stale MarkReturned must leave the successor's table alone, got %+v", got)

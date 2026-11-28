@@ -12,7 +12,7 @@ import (
 
 // TestInFlightTable_StartEndEntries pins the table contract (yaah-k0x1): a
 // Start appears with its age at a given time, oldest first; an End removes
-// the matching ID; nothing open reports nil; and an End without its start
+// the matching key; nothing open reports nil; and an End without its start
 // is a no-op.
 func TestInFlightTable_StartEndEntries(t *testing.T) {
 	tbl := newInFlightTable(func() time.Time { return time.Unix(1000, 0) })
@@ -20,8 +20,8 @@ func TestInFlightTable_StartEndEntries(t *testing.T) {
 		t.Fatalf("an empty table must report nil, got %+v", got)
 	}
 
-	tbl.Start(1, "bash", `{"command":"go test"}`, time.Unix(1000, 0))
-	tbl.Start(2, "edit", `{"filePath":"a.go"}`, time.Unix(1001, 0))
+	tbl.Start("k1", "bash", `{"command":"go test"}`, time.Unix(1000, 0))
+	tbl.Start("k2", "edit", `{"filePath":"a.go"}`, time.Unix(1001, 0))
 
 	got := tbl.Entries(time.Unix(1002, 0))
 	if len(got) != 2 {
@@ -34,16 +34,16 @@ func TestInFlightTable_StartEndEntries(t *testing.T) {
 		t.Errorf("Entries[1] = {%s, age %v}, want edit aged 1s", got[1].Name, got[1].Age)
 	}
 
-	tbl.End(1)
+	tbl.End("k1")
 	got = tbl.Entries(time.Unix(1002, 0))
 	if len(got) != 1 || got[0].Name != "edit" {
 		t.Fatalf("Entries after End = %+v, want only edit", got)
 	}
-	tbl.End(999) // an end without its start is a no-op
+	tbl.End("nope") // an end without its start is a no-op
 	if got := tbl.Entries(time.Unix(1002, 0)); len(got) != 1 {
 		t.Errorf("a bogus End must change nothing, got %+v", got)
 	}
-	tbl.End(2)
+	tbl.End("k2")
 	if got := tbl.Entries(time.Unix(1002, 0)); got != nil {
 		t.Errorf("a drained table must report nil, got %+v", got)
 	}
@@ -55,7 +55,7 @@ func TestInFlightTable_StartEndEntries(t *testing.T) {
 // backwards.
 func TestInFlightTable_ArgsAreClippedAndAgeClamped(t *testing.T) {
 	tbl := newInFlightTable(func() time.Time { return time.Unix(1000, 0) })
-	tbl.Start(1, "bash", strings.Repeat("x", maxSnapshotArgsBytes+80), time.Unix(1000, 0))
+	tbl.Start("k1", "bash", strings.Repeat("x", maxSnapshotArgsBytes+80), time.Unix(1000, 0))
 	got := tbl.Entries(time.Unix(999, 0)) // a clock behind the start
 	if len(got) != 1 {
 		t.Fatalf("Entries = %d, want the open call", len(got))
@@ -134,12 +134,13 @@ func TestInFlightTable_ConcurrentAccess(t *testing.T) {
 	for w := 0; w < workers; w++ {
 		runGuarded(fmt.Sprintf("worker-%d", w), &workerWG, func() {
 			for i := 0; i < callsPerWorker; i++ {
-				id := int64(w*callsPerWorker + i)
-				tbl.Start(id, "bash", `{"command":"go test"}`, time.Now())
-				tbl.End(id)
+				num := w*callsPerWorker + i
+				key := fmt.Sprintf("c%d", num)
+				tbl.Start(key, "bash", `{"command":"go test"}`, time.Now())
+				tbl.End(key)
 				// The same round trip through the event seam.
-				tbl.Observe(&events.ToolStartEvent{ID: id + 1_000_000, Name: "edit", Args: `{"filePath":"a.go"}`})
-				tbl.Observe(&events.ToolEndEvent{ID: id + 1_000_000})
+				tbl.Observe(&events.ToolStartEvent{Key: "e" + key, ID: int64(num), Name: "edit", Args: `{"filePath":"a.go"}`})
+				tbl.Observe(&events.ToolEndEvent{Key: "e" + key, ID: int64(num)})
 			}
 		})
 	}
@@ -170,5 +171,40 @@ func TestInFlightTable_NilClockFallsBackToRealClock(t *testing.T) {
 	}
 	if got[0].Age < 0 || got[0].Age > time.Minute {
 		t.Errorf("Age = %v, want a small real duration — the nil clock must fall back to a real one", got[0].Age)
+	}
+}
+
+// TestInFlightTable_KeySeparatesRunsThatReuseTheOrdinal pins the identity the
+// table is keyed by (yaah-77f1): two calls from different prompts both carry
+// dispatch ordinal 1, so keying on the ordinal would let the second start
+// replace the first entry and the first end close the wrong call. The session
+// key separates them, and the ordinal survives only as a fallback.
+func TestInFlightTable_KeySeparatesRunsThatReuseTheOrdinal(t *testing.T) {
+	tbl := newInFlightTable(func() time.Time { return time.Unix(1000, 0) })
+	tbl.Observe(&events.ToolStartEvent{Key: "turn-a.1", ID: 1, Name: "bash"})
+	tbl.Observe(&events.ToolStartEvent{Key: "turn-b.1", ID: 1, Name: "edit"})
+
+	if got := tbl.Entries(time.Unix(1000, 0)); len(got) != 2 {
+		t.Fatalf("Entries = %+v, want both runs' calls (the ordinal is not an identity)", got)
+	}
+
+	// The first run's end closes only its own call.
+	tbl.Observe(&events.ToolEndEvent{Key: "turn-a.1", ID: 1})
+	got := tbl.Entries(time.Unix(1000, 0))
+	if len(got) != 1 || got[0].Name != "edit" {
+		t.Fatalf("after run A's end, Entries = %+v, want only run B's edit", got)
+	}
+
+	tbl.Observe(&events.ToolEndEvent{Key: "turn-b.1", ID: 1})
+	if got := tbl.Entries(time.Unix(1000, 0)); got != nil {
+		t.Errorf("after both ends, Entries = %+v, want nil", got)
+	}
+
+	// An event with no key still falls back to the ordinal, so an older
+	// producer keeps working on its own.
+	tbl.Observe(&events.ToolStartEvent{ID: 9, Name: "bash"})
+	tbl.Observe(&events.ToolEndEvent{ID: 9})
+	if got := tbl.Entries(time.Unix(1000, 0)); got != nil {
+		t.Errorf("legacy events without a key left %+v open, want nil", got)
 	}
 }

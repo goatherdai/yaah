@@ -126,6 +126,10 @@ type Block struct {
 	theme         *colors.Theme
 }
 
+// New builds a Running block. It stamps startTime here, at construction, and
+// Seal derives the end from it when a duration is known: a block built by New
+// always has a usable start, while a restored row (whose timing data was not
+// persisted) carries a durationLabel instead.
 func New(id, name, args string, th *colors.Theme) *Block {
 	icon := Icon(name)
 	return &Block{
@@ -169,6 +173,9 @@ func (b *Block) Fail(summary, err string) { b.Seal(Error, summary, err, 0) }
 // late (after the turn-end sweep sealed the block as Interrupted) reports how
 // long the call ran rather than how long its event took to arrive. A zero
 // duration means the caller has no measurement and the clock is used.
+// Seal settles the block. A positive dur is measured from startTime, so the
+// label reports how long the call ran rather than how late its event arrived
+// (a healed late end); with dur 0, or a zero startTime, the end is stamped now.
 func (b *Block) Seal(state State, tag, result string, dur time.Duration) {
 	b.endTime = time.Now()
 	if dur > 0 && !b.startTime.IsZero() {
