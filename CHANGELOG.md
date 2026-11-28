@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.230.3](https://github.com/goatherdai/yaah/compare/v0.230.2...v0.230.3) (2026-11-28)
+
+
+### Bug Fixes
+
+* **mcp:** detect framing after leading whitespace on the stdio server (yaah-czzd) ([#486](https://github.com/goatherdai/yaah/issues/486)) ([52a53b9](https://github.com/goatherdai/yaah/commit/52a53b960488ff983f100483e954df2ac9e2a90d))
+
 ## [0.230.2](https://github.com/goatherdai/yaah/compare/v0.230.1...v0.230.2) (2026-11-28)
 
 
