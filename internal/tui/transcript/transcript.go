@@ -166,6 +166,10 @@ type Model struct {
 
 	fullRenders int
 
+	// unmatchedEnds is the bounded ring of tool end events that settled no
+	// block (diagnostic only; see SettleTool).
+	unmatchedEnds []UnmatchedToolEnd
+
 	paintedLines  atomic.Int64
 	charsRendered atomic.Int64
 }

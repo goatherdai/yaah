@@ -20,8 +20,8 @@ func TestSweepRunningTools(t *testing.T) {
 	m.Append(ToolItem(running))
 	m.Append(ToolItem(done))
 	m.Append(ToolItem(failed))
-	m.CompleteTool("d1", "ok", "result")
-	m.FailTool("f1", "boom", "error")
+	m.SettleTool("d1", ToolEnd{Summary: "ok", Result: "result"})
+	m.SettleTool("f1", ToolEnd{Summary: "boom", Result: "error", Error: true})
 
 	m.Repaint(80) // establish the painted row table
 	if n := m.SweepRunningTools(); n != 1 {

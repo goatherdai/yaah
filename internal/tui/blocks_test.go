@@ -43,7 +43,7 @@ func TestAddToolStartAndEnd(t *testing.T) {
 	}
 
 	// End the tool
-	ui.AddToolEnd("1", "read", "file contents")
+	ui.AddToolEnd("1", "read", "file contents", 0)
 
 	// The tool block should be updated (completed)
 	if ui.tr.Len() != 1 {
@@ -62,7 +62,7 @@ func TestAddToolError(t *testing.T) {
 	ui.AddToolStart("1", "read", "file.txt")
 
 	// Add an error
-	ui.AddToolError("1", "read failed", "file not found")
+	ui.AddToolError("1", "read failed", "file not found", 0)
 
 	if ui.tr.Len() != 1 {
 		t.Errorf("Expected 1 item in conversationLog, got %d", ui.tr.Len())
@@ -80,7 +80,7 @@ func TestAddToolEnd_EmptyResult(t *testing.T) {
 	ui.AddToolStart("1", "delete", "file.txt")
 
 	// End with empty result (should complete, not fail)
-	ui.AddToolEnd("1", "delete", "")
+	ui.AddToolEnd("1", "delete", "", 0)
 
 	if ui.tr.Len() != 1 {
 		t.Errorf("Expected 1 item in conversationLog, got %d", ui.tr.Len())

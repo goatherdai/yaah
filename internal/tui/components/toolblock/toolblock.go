@@ -160,18 +160,23 @@ func (b *Block) SearchText() string { return b.name + " " + b.args + "\n" + b.re
 // showing "0ms" would imply a real measurement.
 func (b *Block) SetDurationLabel(label string) { b.durationLabel = label }
 
-func (b *Block) Complete(summary, result string) {
-	b.endTime = time.Now()
-	b.state = Done
-	b.tag = summary
-	b.result = result
-}
+func (b *Block) Complete(summary, result string) { b.Seal(Done, summary, result, 0) }
 
-func (b *Block) Fail(summary, err string) {
+func (b *Block) Fail(summary, err string) { b.Seal(Error, summary, err, 0) }
+
+// Seal moves the block into a terminal state, stamping its end from the
+// call's own measured duration when the caller has one: an end that arrives
+// late (after the turn-end sweep sealed the block as Interrupted) reports how
+// long the call ran rather than how long its event took to arrive. A zero
+// duration means the caller has no measurement and the clock is used.
+func (b *Block) Seal(state State, tag, result string, dur time.Duration) {
 	b.endTime = time.Now()
-	b.state = Error
-	b.tag = summary
-	b.result = err
+	if dur > 0 && !b.startTime.IsZero() {
+		b.endTime = b.startTime.Add(dur)
+	}
+	b.state = state
+	b.tag = tag
+	b.result = result
 }
 
 // Interrupt seals a still-Running block whose end event never arrived:

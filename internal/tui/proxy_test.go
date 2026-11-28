@@ -14,8 +14,8 @@ func TestHandleEvent_DoesNotBlock(t *testing.T) {
 	events := []agent.Event{
 		&agent.ThinkingEvent{Text: "thinking..."},
 		&agent.FlushEvent{Content: "flush"},
-		&agent.ToolStartEvent{ID: 1, Name: "read", Args: `{"file":"test.go"}`},
-		&agent.ToolEndEvent{ID: 1, Name: "read", Args: `{"file":"test.go"}`, Result: "ok", Duration: time.Millisecond},
+		&agent.ToolStartEvent{Key: "run1.1", ID: 1, Name: "read", Args: `{"file":"test.go"}`},
+		&agent.ToolEndEvent{Key: "run1.1", ID: 1, Name: "read", Args: `{"file":"test.go"}`, Result: "ok", Duration: time.Millisecond},
 		&agent.SubAgentStartEvent{SubAgentID: "sub-1", Role: "analyst", Model: "claude", Prompt: "analyze", World: "worktree"},
 		&agent.SubAgentEndEvent{SubAgentID: "sub-1", Role: "analyst", Duration: time.Second, World: "worktree"},
 		&agent.EscalationEvent{Summary: "test escalation"},
@@ -148,6 +148,7 @@ func TestHandleEvent_ToolError(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		ui.HandleEvent(&agent.ToolEndEvent{
+			Key:      "run1.1",
 			ID:       1,
 			Name:     "read",
 			Args:     `{"file":"test.go"}`,

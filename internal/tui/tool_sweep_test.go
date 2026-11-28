@@ -18,7 +18,7 @@ func TestDoneEventSweepsStuckToolBlocks(t *testing.T) {
 	defer close(done)
 	drainUIEvents(ui, done)
 
-	ui.HandleEvent(&agent.ToolStartEvent{ID: 7, Name: "bash", Args: `{"command":"ls"}`})
+	ui.HandleEvent(&agent.ToolStartEvent{Key: "run1.1", ID: 7, Name: "bash", Args: `{"command":"ls"}`})
 	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
 
 	waitForUI(t, ui, func() bool {
@@ -38,8 +38,8 @@ func TestDoneEventLeavesSettledBlocks(t *testing.T) {
 	defer close(done)
 	drainUIEvents(ui, done)
 
-	ui.HandleEvent(&agent.ToolStartEvent{ID: 1, Name: "read", Args: `{"path":"a"}`})
-	ui.HandleEvent(&agent.ToolEndEvent{ID: 1, Name: "read", Args: `{"path":"a"}`, Result: "ok", Duration: time.Millisecond})
+	ui.HandleEvent(&agent.ToolStartEvent{Key: "run1.1", ID: 1, Name: "read", Args: `{"path":"a"}`})
+	ui.HandleEvent(&agent.ToolEndEvent{Key: "run1.1", ID: 1, Name: "read", Args: `{"path":"a"}`, Result: "ok", Duration: time.Millisecond})
 	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
 
 	waitForUI(t, ui, func() bool {
@@ -59,7 +59,7 @@ func TestUnmatchedToolEndIsCountedNotFatal(t *testing.T) {
 	defer close(done)
 	drainUIEvents(ui, done)
 
-	ui.HandleEvent(&agent.ToolEndEvent{ID: 999, Name: "read", Args: `{}`, Result: "ok", Duration: time.Millisecond})
+	ui.HandleEvent(&agent.ToolEndEvent{Key: "run1.999", ID: 999, Name: "read", Args: `{}`, Result: "ok", Duration: time.Millisecond})
 	ui.HandleEvent(&agent.DoneEvent{Response: "all settled", ContextWindow: 8000})
 
 	// Liveness, not emptiness: the DoneEvent's response must still land,

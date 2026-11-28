@@ -230,7 +230,11 @@ func (l *Loop) Run(ctx context.Context, userInput string) (response string, runE
 		}
 		l.Persister.SetTurnContext(traceID, turnID)
 	}
-	return l.runMiddleware(ctx, userInput, turnID)
+	// Tool-call identity (yaah-77f1): every tool start/end event this run
+	// emits carries a key unique for the whole session, composed from this
+	// interaction's ID. A fresh Loop is built per prompt, so the dispatch
+	// ordinal alone repeats across prompts and can never be an identity.
+	return l.runMiddleware(withToolCallScope(ctx, turnID), userInput, turnID)
 }
 
 // runMiddleware executes the agent loop using the middleware pipeline.

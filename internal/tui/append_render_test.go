@@ -111,7 +111,7 @@ func TestRefreshMessages_ResponseChunkHasSeparator(t *testing.T) {
 
 	ui.appendMessage("comment on the bead please")
 	ui.AddToolStart("1", "bash", "bd comment yaah-95ri.7")
-	ui.AddToolEnd("1", "bash · bd comment", "ok")
+	ui.AddToolEnd("1", "bash · bd comment", "ok", 0)
 	ui.refreshMessages()
 	fullRenders := ui.tr.FullRenders()
 
@@ -151,7 +151,7 @@ func TestRefreshMessages_ResponseChunkHasSeparator(t *testing.T) {
 	// The layout must be stable: a subsequent full render (forced by the
 	// next tool completing) may not shift or re-indent the response.
 	ui.AddToolStart("2", "bash", "git status")
-	ui.AddToolEnd("2", "bash · git status", "clean")
+	ui.AddToolEnd("2", "bash · git status", "clean", 0)
 	ui.refreshMessages()
 	rows2 := paint()
 	posted2 := -1
@@ -266,7 +266,7 @@ func TestAddToolEnd_ForcesFullRender(t *testing.T) {
 	ui.refreshMessages()
 	fullRenders := ui.tr.FullRenders()
 
-	ui.AddToolEnd("42", "bash", "file output")
+	ui.AddToolEnd("42", "bash", "file output", 0)
 	ui.refreshMessages()
 	if got := ui.tr.FullRenders(); got != fullRenders+1 {
 		t.Fatalf("completing an EXISTING tool block must force a full rebuild (full renders %d, want %d)", got, fullRenders+1)

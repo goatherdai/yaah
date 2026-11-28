@@ -73,8 +73,16 @@ func (*FlushEvent) eventMarker() {}
 
 // ToolStartEvent is emitted before a tool begins execution.
 type ToolStartEvent struct {
-	ID      int64  // unique per-execution ID, shared with the matching ToolEndEvent
-	CallID  string // provider tool_call id, when the model supplied one
+	// Key is the call's identity, unique for the whole session and shared
+	// with the matching ToolEndEvent. Views key the block they open on it;
+	// it is the only identity a tool call has (yaah-77f1).
+	Key string
+	// ID is the run's dispatch ordinal. It restarts at 1 on every prompt
+	// (a fresh Loop is built per prompt), so it is NOT an identity: two
+	// prompts of one session reuse the same values. Views must not key a
+	// block on it.
+	ID      int64
+	CallID  string // provider tool_call id, when the model supplied one; empty when it supplied none
 	Name    string // tool name (e.g. "read", "grep")
 	Args    string // abbreviated arguments for display
 	RawArgs string // full, unabbreviated JSON arguments (views derive file locations from it)
@@ -84,8 +92,12 @@ func (*ToolStartEvent) eventMarker() {}
 
 // ToolEndEvent is emitted after a tool completes execution.
 type ToolEndEvent struct {
-	ID       int64         // unique per-execution ID, shared with the matching ToolStartEvent
-	CallID   string        // provider tool_call id, when the model supplied one
+	// Key is the call's identity, unique for the whole session and shared
+	// with the matching ToolStartEvent. A view settles the block carrying
+	// this key; the run-scoped ID below is not an identity (yaah-77f1).
+	Key      string
+	ID       int64         // run-scoped dispatch ordinal (restarts at 1 per prompt); not an identity
+	CallID   string        // provider tool_call id, when the model supplied one; empty when it supplied none
 	Name     string        // tool name
 	Args     string        // abbreviated arguments
 	RawArgs  string        // full, unabbreviated JSON arguments (edit-class views derive diffs from it)

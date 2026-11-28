@@ -41,8 +41,11 @@ func (t *App) HandleEvent(event agent.Event) {
 				return
 			}
 			t.setActivity(activity.Tool, e.Name)
-			id := fmt.Sprintf("%d", e.ID)
-			t.AddToolStart(id, e.Name, e.Args)
+			// The block is keyed on the event's session-unique identity.
+			// e.ID is the run's dispatch ordinal (it restarts at 1 on every
+			// prompt), so keying on it made a later prompt's call settle an
+			// earlier prompt's block (yaah-77f1).
+			t.AddToolStart(e.Key, e.Name, e.Args)
 		})
 	case *agent.ToolEndEvent:
 		t.queueUpdateCritical(func() {
@@ -50,11 +53,10 @@ func (t *App) HandleEvent(event agent.Event) {
 			if e.Name == "delegate" {
 				return
 			}
-			id := fmt.Sprintf("%d", e.ID)
 			if e.Error != "" {
-				t.AddToolError(id, e.Name+" \u274C", e.Error)
+				t.AddToolError(e.Key, e.Name+" \u274C", e.Error, e.Duration)
 			} else {
-				t.AddToolEnd(id, toolfmt.Summary(e.Name, e.Args, e.Result), e.Result)
+				t.AddToolEnd(e.Key, toolfmt.Summary(e.Name, e.Args, e.Result), e.Result, e.Duration)
 			}
 			t.restoreActivity()
 		})
