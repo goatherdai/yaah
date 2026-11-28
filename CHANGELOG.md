@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.227.0](https://github.com/goatherdai/yaah/compare/v0.226.0...v0.227.0) (2026-11-28)
+
+
+### Features
+
+* **parity:** TUI :roles/:login/:logout/:mcp handlers + REPL /model (yaah-n8n8, yaah-3ngx) ([#463](https://github.com/goatherdai/yaah/issues/463)) ([b17a3be](https://github.com/goatherdai/yaah/commit/b17a3be5b9b81240eeb8cd8cd93906c53923b404))
+
 ## [0.226.0](https://github.com/goatherdai/yaah/compare/v0.225.2...v0.226.0) (2026-11-28)
 
 
