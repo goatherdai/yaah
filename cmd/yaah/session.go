@@ -250,6 +250,9 @@ type agentSession struct {
 	// drainTimeout overrides backgroundJobDrainTimeout when set — the
 	// session-owned seam the close tests use; zero means the default.
 	drainTimeout time.Duration
+	// procCloseTimeout overrides backgroundProcessCloseTimeout when set —
+	// the session-owned seam the close tests use; zero means the default.
+	procCloseTimeout time.Duration
 
 	// sessionSandbox owns the isolated workspace backend's lifecycle, when
 	// workspace.backend is containerd: the sandbox was constructed, image-
@@ -437,6 +440,13 @@ type agentSession struct {
 // — the test seam, session-owned per the no-globals convention.
 const backgroundJobDrainTimeout = 30 * time.Second
 
+// backgroundProcessCloseTimeout bounds how long the teardown gives background
+// processes to exit after being asked to terminate, before they are hard-killed
+// (process.Manager.Close adds a short bounded settle on top). A session whose
+// procCloseTimeout field is set uses that instead — the test seam,
+// session-owned per the no-globals convention.
+const backgroundProcessCloseTimeout = 5 * time.Second
+
 // workspaceSandboxDestroyTimeout bounds the sandbox teardown in close() so
 // a wedged containerd daemon cannot hang session shutdown.
 const workspaceSandboxDestroyTimeout = 30 * time.Second
@@ -460,7 +470,9 @@ func (s *agentSession) shutdown() {
 	ctx := context.Background()
 	// The session row is written FIRST, before anything in this function can
 	// block. Teardown is bounded but not short — three drains of up to 30s
-	// each — and the termination-signal funnel races it, so a row written at
+	// each, plus the background-process close (5s of grace and a 2s settle:
+	// backgroundProcessCloseTimeout) — and the termination-signal funnel races
+	// it, so a row written at
 	// the end is a row that a second Ctrl-C, a terminal close or a hang can
 	// turn back into ended_at = 0 (the reported bug shape). Ended_at, the
 	// usage attribution and the evidence `yaah sessions list` and a resume
@@ -601,6 +613,23 @@ func (s *agentSession) shutdown() {
 			fmt.Fprintf(os.Stderr, "warning: background sub-agent(s) still finishing after %s; continuing session teardown\n", drainTimeout)
 		}
 	}
+	// Background processes (yaah-i1c1) stop here. After the drain: a run or
+	// a sub-agent are the only things that start one, and both are quiesced
+	// by now, so the set cannot grow past this point — the manager refuses
+	// new starts. Before the workspace sandbox is destroyed below, so
+	// nothing keeps writing into a workspace that is being torn down.
+	if s.procMgr != nil {
+		procCloseTimeout := s.procCloseTimeout
+		if procCloseTimeout == 0 {
+			procCloseTimeout = backgroundProcessCloseTimeout
+		}
+		procCtx, cancelProcClose := context.WithTimeout(ctx, procCloseTimeout)
+		report := s.procMgr.Close(procCtx)
+		cancelProcClose()
+		if len(report.Unconfirmed) > 0 {
+			fmt.Fprintf(os.Stderr, "warning: %d background process(es) could not be confirmed stopped: %s\n", len(report.Unconfirmed), strings.Join(report.Unconfirmed, ", "))
+		}
+	}
 	// The egress broker stops AFTER the drain, not before: Stop() waits for its
 	// accepted connections, and a background jailed sub-agent can still be
 	// mid-tunnel through it — stopping first would both block shutdown and pull
@@ -727,7 +756,7 @@ func handleTerminationSignal(sigs <-chan os.Signal, closeFn func(), exitFn func(
 	if _, ok := <-sigs; !ok {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "\ninterrupt: closing the session, this can take up to a minute; press Ctrl-C again to exit immediately\n")
+	fmt.Fprintf(os.Stderr, "\ninterrupt: closing the session, this can take up to about a minute and a half; press Ctrl-C again to exit immediately\n")
 	go func() {
 		if _, ok := <-sigs; ok {
 			exitFn(interruptExitCode)

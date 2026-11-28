@@ -1,7 +1,10 @@
 package process
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -324,5 +327,201 @@ func TestInfoLogsHandlesWrapAcrossAppends(t *testing.T) {
 	}
 	if !strings.HasSuffix(logs, "bbb") {
 		t.Errorf("wrap lost the newest bytes: tail %q", logs[len(logs)-10:])
+	}
+}
+
+// ---------- Done ----------
+
+// TestDoneClosesWhenStartFails pins the start-failure branch of the Done
+// contract: a Start whose shell cannot even be found fails before any
+// process exists, and the returned Info must still become awaitable — an
+// await on a failed start would otherwise hang forever.
+func TestDoneClosesWhenStartFails(t *testing.T) {
+	m := NewManager()
+	// An empty PATH makes exec.LookPath fail for the shell itself (neither
+	// sh nor pwsh can be found), so cmd.Start fails before any process
+	// exists.
+	t.Setenv("PATH", t.TempDir())
+	info, err := m.Start("echo hi", "unstartable")
+	if err == nil {
+		t.Fatal("Start succeeded with an empty PATH; expected a start failure")
+	}
+	if info == nil {
+		t.Fatal("Start returned a nil Info alongside its error; the Done contract cannot be asserted")
+	}
+	select {
+	case <-info.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Done did not close after a failed start")
+	}
+}
+
+// ---------- Close ----------
+
+// TestCloseStopsRunningProcess pins the headline behaviour: Close stops a
+// live process, confirms its exit through Done, and reports it as Exited —
+// not Escalated, because the polite signal is enough for a shell that does
+// not ignore it.
+func TestCloseStopsRunningProcess(t *testing.T) {
+	m := NewManager()
+	info, err := m.Start("sleep 30", "close test")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rep := m.Close(ctx)
+
+	if rep.Live != 1 || rep.Exited != 1 || rep.Escalated != 0 || len(rep.Unconfirmed) != 0 {
+		t.Errorf("Close report = %+v; want Live 1, Exited 1, Escalated 0, no Unconfirmed", rep)
+	}
+	select {
+	case <-info.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Done did not close after Close")
+	}
+	if status := info.Status(); status != "stopped" {
+		t.Errorf("status = %q; want %q", status, "stopped")
+	}
+}
+
+// TestCloseRefusesNewStarts pins the closed guard: after Close the manager
+// is terminal, and Start must fail with ErrClosed instead of spawning a
+// process nobody will ever reap.
+func TestCloseRefusesNewStarts(t *testing.T) {
+	m := NewManager()
+	m.Close(context.Background())
+
+	if _, err := m.Start("echo hi", "after close"); !errors.Is(err, ErrClosed) {
+		t.Errorf("Start after Close: err = %v; want an error wrapping ErrClosed", err)
+	}
+}
+
+// TestCloseOnIdleManagerIsANoOp pins the idempotence: an idle Close reports
+// the zero report, and a second Close — the racing-teardown shape — is a
+// silent no-op rather than a double teardown.
+func TestCloseOnIdleManagerIsANoOp(t *testing.T) {
+	m := NewManager()
+
+	first := m.Close(context.Background())
+	if first.Live != 0 || first.Exited != 0 || first.Escalated != 0 || first.Unconfirmed != nil {
+		t.Errorf("first Close on an idle manager = %+v; want the zero report", first)
+	}
+	second := m.Close(context.Background())
+	if second.Live != 0 || second.Exited != 0 || second.Escalated != 0 || second.Unconfirmed != nil {
+		t.Errorf("second Close on an idle manager = %+v; want the zero report", second)
+	}
+}
+
+// TestCloseIgnoresFinishedProcesses pins the collection filter: a process
+// that already exited (Done closed, status final) is not live, so Close has
+// nothing to signal and nothing to await.
+func TestCloseIgnoresFinishedProcesses(t *testing.T) {
+	m := NewManager()
+	info, err := m.Start("echo done", "already finished")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Done closes only after the exit status is final, so observing it is
+	// enough to know Close's collector will see a non-running status. The
+	// generous deadline tolerates slow shell startup (pwsh cold start).
+	select {
+	case <-info.Done():
+	case <-time.After(20 * time.Second):
+		t.Fatal("echo process did not finish within 20s")
+	}
+
+	rep := m.Close(context.Background())
+	if rep.Live != 0 {
+		t.Errorf("Close report = %+v; want Live 0 (a finished process is not live)", rep)
+	}
+}
+
+// ---------- Close: process groups ----------
+
+// waitForLogs polls until the process's output contains want, proving the
+// shell progressed past the command that produced it. A signal sent before
+// the child has armed its trap or forked its children hits default signal
+// dispositions and would test the wrong thing — startup is racy, the marker
+// is not.
+func waitForLogs(t *testing.T, info *Info, want string) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(info.Logs(), want) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("process output never contained %q; last logs: %q", want, info.Logs())
+}
+
+// TestStopKillsTheWholeTree witnesses the process group (yaah-i1c1): the
+// shell forks sleep and then waits for it, so the tree is shell -> sleep.
+// Killing only the shell leaves sleep holding the inherited stdout/stderr
+// pipes — the pipe readers never see EOF, cmd.Wait never returns, and Done
+// never closes. A group kill takes both down, which is exactly what this
+// test observes. The "armed" marker (waitForLogs) closes the startup race:
+// Stop only runs once sleep provably exists, so the witness cannot pass
+// vacuously against a group that was still just the shell.
+func TestStopKillsTheWholeTree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process groups are POSIX-only; Windows stops the direct child")
+	}
+	m := NewManager()
+	info, err := m.Start("sleep 30 & echo armed; wait", "tree test")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitForLogs(t, info, "armed")
+
+	if err := m.Stop(info.ID); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	select {
+	case <-info.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("Done did not close within 3s of Stop; the tree survived the kill")
+	}
+}
+
+// TestCloseEscalatesToHardKill pins the escalation: a tree that ignores the
+// polite signal must exhaust the caller's grace, be hard-killed, and still
+// land in the report as Exited — Escalated counts the kill, not a failure to
+// confirm.
+func TestCloseEscalatesToHardKill(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process groups are POSIX-only; Windows has no TERM for a tree to ignore")
+	}
+	m := NewManager()
+	// The shell and its backgrounded sleep both ignore SIGTERM ("trap ''
+	// TERM" and ignored dispositions survive fork+exec), so nothing exits
+	// until Close escalates to SIGKILL.
+	info, err := m.Start("trap '' TERM; sleep 30 & echo armed; wait", "stubborn tree")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// The "armed" marker closes the startup race: Close must not signal
+	// before the shell has armed its trap and forked the sleep — a TERM
+	// delivered that early hits default dispositions and tests nothing.
+	waitForLogs(t, info, "armed")
+
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	rep := m.Close(ctx)
+	elapsed := time.Since(start)
+
+	if rep.Live != 1 || rep.Exited != 1 || rep.Escalated != 1 || len(rep.Unconfirmed) != 0 {
+		t.Errorf("Close report = %+v; want Live 1, Exited 1, Escalated 1, no Unconfirmed", rep)
+	}
+	select {
+	case <-info.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Done did not close after the hard kill")
+	}
+	if elapsed < 150*time.Millisecond {
+		t.Errorf("Close returned in %s; the grace period was not waited out", elapsed)
 	}
 }
