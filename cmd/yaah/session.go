@@ -91,7 +91,10 @@ type Session interface {
 	IdleWakeTurnsEnabled() bool
 	SetCtrlCh(chan<- control.Msg)
 	SetApproveFn(func(name, args string) bool)
-	SetModel(providerName, modelName string)
+	// SetModel re-points the session's routing; the bool reports whether
+	// the switch landed (a provider that is undefined or unconstructible
+	// leaves the session untouched — SetModel's refuse-and-warn guard).
+	SetModel(providerName, modelName string) bool
 	ProviderName() string
 	ModelName() string
 	Mode() string
@@ -1440,8 +1443,11 @@ func (s *agentSession) promptWorkspaceAccess(path, reason string) bool {
 // catalog-advertised pairs, which the model discovery only reports for
 // constructible providers; the guard is the wrong-input backstop. The
 // instance builds outside the lock: makeProvider constructs an HTTP
-// client (pure, no I/O) but must not sit on the session mutex.
-func (s *agentSession) SetModel(providerName, modelName string) {
+// client (pure, no I/O) but must not sit on the session mutex. The bool
+// reports whether the switch landed, so interactive surfaces (REPL
+// /model) can confirm or refuse in user-visible words instead of
+// relying on the log line.
+func (s *agentSession) SetModel(providerName, modelName string) bool {
 	p, defined := s.cfg.Providers[providerName]
 	var prov agent.Provider
 	if defined {
@@ -1452,7 +1458,7 @@ func (s *agentSession) SetModel(providerName, modelName string) {
 	if !defined || prov == nil {
 		slog.Warn("session: model pick's provider is unusable; the session keeps its current routing",
 			"provider", providerName, "model", modelName)
-		return
+		return false
 	}
 	s.mu.Lock()
 	s.provider = prov
@@ -1471,6 +1477,7 @@ func (s *agentSession) SetModel(providerName, modelName string) {
 			slog.Warn("session: persisting model pick failed", "provider", providerName, "model", modelName, "err", err)
 		}
 	}
+	return true
 }
 
 // auxProviders returns the session-cached compact and fallback

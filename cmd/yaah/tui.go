@@ -247,6 +247,42 @@ func runTUI(initialSpec string) error {
 		app.SetMode(sess.Mode())
 		app.SetEphemeral(reply)
 	}
+	// :roles (REPL /roles parity): the reload reports through the control
+	// channel, which the control loop renders as ephemeral status.
+	app.Hooks.OnRolesReload = func() {
+		go sess.reloadRoles()
+	}
+	// :login / :logout (REPL /login,/logout parity). Both run in a
+	// goroutine — the device flow waits on the user's browser for up to
+	// five minutes — and report through the control channel, including
+	// the device-flow progress messages ("visit URL, enter code").
+	oauthStatus := func(text string) {
+		sendCtrlMsg(controlCh, nil, &control.Status{Text: text}, tuiSendTimeout)
+	}
+	app.Hooks.OnLogin = func(name string) {
+		go func() {
+			// The device flow reports its own progress and success (the
+			// "visit URL, enter code" line included) through oauthStatus.
+			providerName, err := resolveOAuthProvider(sess.cfg, name)
+			if err == nil {
+				err = loginOAuth(sess.cfg, providerName, oauthStatus)
+			}
+			if err != nil {
+				oauthStatus("login: " + err.Error())
+			}
+		}()
+	}
+	app.Hooks.OnLogout = func(name string) {
+		go func() {
+			providerName, err := resolveOAuthProvider(sess.cfg, name)
+			if err == nil {
+				err = logoutOAuth(sess.cfg, providerName, oauthStatus)
+			}
+			if err != nil {
+				oauthStatus("logout: " + err.Error())
+			}
+		}()
+	}
 
 	onSubmit, onStop := submitStopHooks(app, sess)
 	app.Hooks.OnSubmit = onSubmit

@@ -73,8 +73,10 @@ type Session interface {
 	// session/load (the conversation the restored loop carries).
 	History() []types.Message
 	// SetModel switches the provider and model subsequent turns use.
-	// An in-flight turn finishes on the model it started with.
-	SetModel(provider, model string)
+	// An in-flight turn finishes on the model it started with. The bool
+	// reports whether the switch landed; a provider the session cannot
+	// construct leaves the routing untouched.
+	SetModel(provider, model string) bool
 	// Mode reports the ACP mode vocabulary value ("build" or "plan")
 	// the session's mode axis derives to.
 	Mode() string

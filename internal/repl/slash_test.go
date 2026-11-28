@@ -45,3 +45,44 @@ func TestParseSlashCommand_returnsNoneForRegularInput(t *testing.T) {
 		})
 	}
 }
+
+func TestParseSlashCommand_argTakingCommands(t *testing.T) {
+	tests := []struct {
+		input string
+		want  SlashCommand
+	}{
+		{"/agents", CmdAgents},
+		{"/agent", CmdAgent},
+		{"/agent helper", CmdAgent},
+		{"/mode", CmdMode},
+		{"/mode full", CmdMode},
+		{"/model", CmdModel},
+		{"/model GLM-4.6", CmdModel},
+		{"/model zai/GLM-4.6", CmdModel},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := ParseSlashCommand(tt.input); got != tt.want {
+				t.Errorf("ParseSlashCommand(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSlashModelArg(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"/model", ""},
+		{"/model GLM-4.6", "GLM-4.6"},
+		{"/model   zai/GLM-4.6  ", "zai/GLM-4.6"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := SlashModelArg(tt.input); got != tt.want {
+				t.Errorf("SlashModelArg(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"github.com/goatherdai/yaah/internal/tui/components/command"
 	"github.com/goatherdai/yaah/internal/tui/components/errdialog"
 	"github.com/goatherdai/yaah/internal/tui/components/help"
+	"github.com/goatherdai/yaah/internal/tui/components/mcpinfo"
 	"github.com/goatherdai/yaah/internal/tui/components/modelpicker"
 	"github.com/goatherdai/yaah/internal/tui/components/question"
 	"github.com/goatherdai/yaah/internal/tui/components/workflowpicker"
@@ -105,6 +106,13 @@ func (t *App) ShowHelp() {
 	}
 	t.beginModal()
 	help.Show(t.App, t.Pages, bindings, command.DefaultEntries(), t.endModal)
+}
+
+// ShowMCPInfo displays the MCP server status overlay (:mcp). The data is
+// TUI-local (SetMCPServers), so this needs no driver seam.
+func (t *App) ShowMCPInfo() {
+	t.beginModal()
+	mcpinfo.Show(t.App, t.Pages, t.McpServers, t.Theme, t.endModal)
 }
 
 // showErrorDialog displays an error dialog using tvxwidgets.MessageDialog.

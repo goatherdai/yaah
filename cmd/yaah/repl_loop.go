@@ -137,6 +137,9 @@ func startREPL() error {
 		case repl.CmdMode:
 			sess.modeCommand(repl.SlashModeArg(input))
 			continue
+		case repl.CmdModel:
+			sess.modelCommand(repl.SlashModelArg(input))
+			continue
 		case repl.CmdLogin:
 			replLogin(sess)
 			continue
@@ -226,7 +229,9 @@ func printHelp() {
 	fmt.Printf("  %s  %s\n", repl.Bold("/logout"), repl.Dim("remove stored OAuth credentials"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/agents"), repl.Dim("list agent personas"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/agent [name]"), repl.Dim("switch this session's persona (bare reports the current persona)"))
+	fmt.Printf("  %s  %s\n", repl.Bold("/roles"), repl.Dim("reload role definitions"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/mode [mode]"), repl.Dim("switch this session's mode: read-only or full (bare reports the current mode)"))
+	fmt.Printf("  %s  %s\n", repl.Bold("/model [name]"), repl.Dim("switch this session's model, provider/model or bare name (bare reports the current model)"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/?"), repl.Dim("show this help"))
 	fmt.Println()
 }

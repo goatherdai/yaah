@@ -180,11 +180,12 @@ func (f *fakeSession) Mode() string {
 	return SessionModeBuild
 }
 
-func (f *fakeSession) SetModel(provider, model string) {
+func (f *fakeSession) SetModel(provider, model string) bool {
 	f.mu.Lock()
 	f.provider = provider
 	f.model = model
 	f.mu.Unlock()
+	return true
 }
 
 func (f *fakeSession) ProviderName() string {

@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/goatherdai/yaah/internal/tui/colors"
+	"github.com/goatherdai/yaah/internal/tui/components/modal"
+	"github.com/rivo/tview"
 )
 
 // Server holds a single MCP server state.
@@ -35,4 +38,44 @@ func Format(servers []Server, th *colors.Theme) string {
 		}
 	}
 	return b.String()
+}
+
+const modalPageName = "mcp_modal"
+
+// Show displays the MCP server status as a modal overlay — the same block
+// the info pane carries, promoted to the center so :mcp answers the
+// question "which servers is this session talking to" without hunting the
+// side pane. onDismiss is called when the overlay is dismissed (Escape or
+// Enter).
+func Show(app *tview.Application, pages *tview.Pages, servers []Server, th *colors.Theme, onDismiss func()) {
+	connected := 0
+	for _, s := range servers {
+		if s.Connected {
+			connected++
+		}
+	}
+	text := fmt.Sprintf("%s connected of %d configured\n\n%s",
+		th.Tag(th.Detail, fmt.Sprint(connected)),
+		len(servers),
+		Format(servers, th),
+	)
+	textView := tview.NewTextView().
+		SetDynamicColors(true).
+		SetText(text)
+	textView.SetBorder(true).
+		SetTitle(" MCP Servers ").
+		SetTitleColor(tcell.ColorYellow)
+
+	flex := modal.Wrap(textView)
+	flex.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
+		if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyEnter {
+			pages.RemovePage(modalPageName)
+			onDismiss()
+			return nil
+		}
+		return ev
+	})
+
+	pages.AddPage(modalPageName, flex, true, true)
+	app.SetFocus(textView)
 }
