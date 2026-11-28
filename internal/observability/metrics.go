@@ -237,6 +237,9 @@ func RecordTUIQueueEvent(ctx context.Context, eventType, outcome string, depth i
 //   - "swept": a still-Running block sealed by the turn-end sweep. After the
 //     drop accounting this means only that the end never arrived and no seam
 //     observed the loss.
+//   - "dropped_sweep": the turn-end reconciliation itself could never be
+//     scheduled, so nothing swept this turn and no block was sealed. Recorded
+//     because it is the only seam that observes a missing turn boundary.
 func RecordTUIToolOrphan(ctx context.Context, kind string) {
 	if tuiToolOrphans == nil {
 		return

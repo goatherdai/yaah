@@ -238,23 +238,40 @@ func TestToolEndBeforeStartSettlesOneBlock(t *testing.T) {
 	}
 }
 
-// TestSweepClearsTheStashBeforeALaterStart pins the turn boundary: an end
-// stashed in one turn must not settle a block created in a later one.
-func TestSweepClearsTheStashBeforeALaterStart(t *testing.T) {
+// TestStashedEndSettlesOnlyItsOwnKey pins the real turn boundary. The sweep no
+// longer clears the stash — it can run before a start from the SAME turn is
+// applied, and clearing there would strand that start (see
+// TestLateToolStartAfterTheSweepIsStillSettled) — so what keeps turns apart is
+// the session-unique key: another turn's start cannot match the stashed end,
+// and the entry stays put for the start that can.
+func TestStashedEndSettlesOnlyItsOwnKey(t *testing.T) {
 	ui := gateApp()
 
-	// An end with no block at all: stashed, and then this turn's sweep runs.
-	ui.AddToolEnd("run2.1", "read", "out", time.Millisecond)
-	ui.SweepStuckToolBlocks()
+	// An end whose start has not been applied yet: stashed.
+	ui.AddToolEnd("turn-a.2", "read", "out", time.Millisecond)
 
-	// The next turn reuses the key: a stale stashed end must not settle it.
-	ui.AddToolStart("run2.1", "read", `{"path":"a"}`)
-	blocks := toolBlocks(ui, "run2.1")
-	if len(blocks) != 1 {
-		t.Fatalf("blocks for the call = %d, want 1", len(blocks))
+	// A different turn's call is unaffected by it.
+	ui.AddToolStart("turn-b.1", "read", `{"path":"a"}`)
+	other := toolBlocks(ui, "turn-b.1")
+	if len(other) != 1 {
+		t.Fatalf("blocks for the later turn's call = %d, want 1", len(other))
 	}
-	if !blocks[0].IsRunning() {
-		t.Fatal("a stash cleared by the sweep still settled a later turn's block")
+	if !other[0].IsRunning() {
+		t.Fatal("another turn's start was settled by a stashed end it never emitted")
+	}
+	if n := len(ui.tr.UnmatchedEnds()); n != 1 {
+		t.Fatalf("stash = %d after an unrelated start, want the entry kept for its own key", n)
+	}
+
+	// Its own key still heals, even with the sweep in between.
+	ui.SweepStuckToolBlocks()
+	ui.AddToolStart("turn-a.2", "read", `{"path":"b"}`)
+	own := toolBlocks(ui, "turn-a.2")
+	if len(own) != 1 {
+		t.Fatalf("blocks for the stashed end's own call = %d, want 1", len(own))
+	}
+	if own[0].IsRunning() {
+		t.Fatal("the late start for a stashed end created a Running block")
 	}
 }
 
@@ -279,5 +296,89 @@ func TestLostToolEndRecordIsBounded(t *testing.T) {
 	}
 	if again := ui.takeLostToolEnds(); len(again) != 0 {
 		t.Errorf("a second take returned %d entries, want 0 (the record must be consumed)", len(again))
+	}
+}
+
+// TestLateToolStartAfterTheSweepIsStillSettled pins the ordering the sweep must
+// survive. An end can be applied before its own start, and the sweep can run
+// BETWEEN them: the critical fallback runs the DoneEvent's reconciliation
+// directly when the UI queue is saturated, ahead of a start still waiting in
+// that queue. The stashed end must therefore survive the sweep — clearing it
+// would leave the late start to create a Running block after the only sweep of
+// the turn had already run, with the end's result thrown away.
+//
+// The order is driven explicitly (end, then Done, then start) rather than raced
+// through a saturated queue, because that order is what saturation produces and
+// is exactly what the fix must tolerate.
+func TestLateToolStartAfterTheSweepIsStillSettled(t *testing.T) {
+	ui, stop := newQueuedApp(t)
+	defer stop()
+
+	// 1. The end arrives with no block to receive it: it is stashed.
+	ui.HandleEvent(&agent.ToolEndEvent{
+		Key: "run2.1", ID: 1, Name: "read", Args: `{"path":"a"}`,
+		Result: "the-result", Duration: 2 * time.Millisecond,
+	})
+	waitForUI(t, ui, func() bool { return len(ui.tr.UnmatchedEnds()) == 1 },
+		"the end for a block that does not exist yet was not stashed")
+
+	// 2. The turn ends and sweeps, before the start has been applied. The probe
+	// rides the same queue, so it runs after the DoneEvent's reconciliation.
+	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
+	var stashedAfterSweep int
+	probe := make(chan struct{})
+	ui.queueUpdate(func() {
+		stashedAfterSweep = len(ui.tr.UnmatchedEnds())
+		close(probe)
+	})
+	<-probe
+	if stashedAfterSweep != 1 {
+		t.Fatalf("stashed ends after the sweep = %d, want 1: the sweep dropped an end a start from the same turn still needs, so that start would create an unswept Running block", stashedAfterSweep)
+	}
+
+	// 3. The late start applies: its block must be created already settled.
+	ui.HandleEvent(&agent.ToolStartEvent{Key: "run2.1", ID: 1, Name: "read", Args: `{"path":"a"}`})
+	waitForUI(t, ui, func() bool { return len(toolBlocks(ui, "run2.1")) == 1 },
+		"the late tool start created no block")
+
+	var state toolblock.State
+	var text string
+	waitForUI(t, ui, func() bool {
+		blocks := toolBlocks(ui, "run2.1")
+		if len(blocks) != 1 {
+			return false
+		}
+		state = blocks[0].S()
+		text = blocks[0].SearchText()
+		return true
+	}, "the late tool block could not be read")
+
+	if state == toolblock.Running {
+		t.Fatal("the late start created a Running block after the turn's only sweep had run: it would keep a permanent chevron")
+	}
+	if state != toolblock.Done {
+		t.Fatalf("late block state = %v, want Done (settled by the end that arrived first)", state)
+	}
+	if !strings.Contains(text, "the-result") {
+		t.Fatalf("the late block lost the end's result: %q", text)
+	}
+}
+
+// TestDroppedTurnEndReconciliationIsCounted pins the other half: when the
+// DoneEvent's reconciliation cannot be scheduled, nothing sweeps the turn. The
+// sweep cannot be run from the event goroutine (the transcript belongs to the
+// UI goroutine) and re-queueing it could seal the next turn's blocks, so the
+// loss is recorded rather than recovered.
+func TestDroppedTurnEndReconciliationIsCounted(t *testing.T) {
+	ui, stop := newQueuedApp(t)
+	defer stop()
+
+	restore := saturate(t, ui)
+	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
+	restore()
+
+	counts := ui.toolOrphanCounts()
+	if got := counts[orphanKindDroppedSweep]; got != 1 {
+		t.Fatalf("dropped_sweep = %d, want 1 (counts: %v)", got, counts)
 	}
 }

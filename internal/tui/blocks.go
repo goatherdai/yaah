@@ -48,6 +48,13 @@ const (
 	// must never render a permanent chevron), but the loss is attributed
 	// here, where it was observed, not to the sweep.
 	orphanKindDroppedEnd = "dropped_end"
+	// orphanKindDroppedSweep: the DoneEvent's turn-end reconciliation could
+	// not be scheduled. Nothing sweeps this turn, so any still-Running block
+	// keeps its chevron and the lost-end record is never consumed. The
+	// sweep itself cannot be run from the event goroutine — the transcript
+	// is owned by the UI goroutine — so the loss is recorded instead of
+	// recovered: it is the only seam that observes it.
+	orphanKindDroppedSweep = "dropped_sweep"
 )
 
 // lostToolEndsLimit bounds the record of end events whose UI update could never

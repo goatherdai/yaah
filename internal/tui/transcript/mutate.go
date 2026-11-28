@@ -151,9 +151,16 @@ func (m *Model) TakeUnmatchedEnd(key string) (ToolEnd, bool) {
 // sweep it renders a permanent chevron. It reports the keys it sealed, so a
 // caller can attribute each block without re-reading the log.
 //
-// The sweep also clears the unmatched-end stash: an end stashed in this turn
-// whose start never arrived has no block coming, and keeping it would let a
-// later turn's start be settled by an earlier turn's event.
+// The sweep does NOT clear the unmatched-end stash. It used to, on the theory
+// that a stashed end belonged to a turn that is now over — but the sweep can
+// run while a start from the SAME turn is still in flight: the critical
+// fallback runs the DoneEvent's reconciliation directly when the UI queue is
+// saturated, ahead of a start still waiting in that queue. Clearing the stash
+// there would leave that late start to create a Running block after the only
+// sweep of the turn has already run — a permanent chevron, and the end's
+// result discarded. What protects a later turn from an earlier turn's stashed
+// end is the KEY: it is session-unique (yaah-77f1), so a next turn's start can
+// never match it. The stash stays bounded by unmatchedEndsLimit.
 func (m *Model) SweepRunningTools() []string {
 	sealed := make([]string, 0, 4)
 	for i := range m.items {
@@ -163,7 +170,6 @@ func (m *Model) SweepRunningTools() []string {
 			sealed = append(sealed, tb.ID())
 		}
 	}
-	m.unmatchedEnds = nil
 	if len(sealed) > 0 {
 		m.dirty = dirtyFull
 	}

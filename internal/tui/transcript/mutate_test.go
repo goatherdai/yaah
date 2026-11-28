@@ -59,10 +59,16 @@ func TestSweepRunningTools_ReportsTheSealedKeys(t *testing.T) {
 	}
 }
 
-// TestSweepRunningTools_ClearsTheUnmatchedEndStash pins that an end stashed in
-// one turn cannot settle a block created in a later one: the sweep is the turn
-// boundary, so the stash does not outlive it.
-func TestSweepRunningTools_ClearsTheUnmatchedEndStash(t *testing.T) {
+// TestSweepRunningTools_KeepsTheStashForALateStart pins the property the sweep
+// must NOT break: the sweep can run while a start from the same turn is still
+// in flight (the critical fallback runs the DoneEvent's reconciliation directly
+// ahead of a start still queued behind a saturated queue), so a stashed end must
+// survive it — otherwise that late start creates a Running block after the only
+// sweep of the turn has run, and the end's result is discarded.
+//
+// What keeps a later turn from consuming an earlier turn's stashed end is the
+// session-unique key, not the sweep: a next turn's start cannot match "run2.1".
+func TestSweepRunningTools_KeepsTheStashForALateStart(t *testing.T) {
 	th := colors.NewDarkTheme()
 	m, _ := settleFixture(&th, "run1.1")
 	if got := m.SettleTool("run2.1", ToolEnd{Summary: "early", Result: "out"}); got != UnmatchedEnd {
@@ -70,11 +76,18 @@ func TestSweepRunningTools_ClearsTheUnmatchedEndStash(t *testing.T) {
 	}
 
 	m.SweepRunningTools()
-	if got := len(m.UnmatchedEnds()); got != 0 {
-		t.Fatalf("stashed ends after the sweep = %d, want 0", got)
+
+	end, ok := m.TakeUnmatchedEnd("run2.1")
+	if !ok {
+		t.Fatal("the sweep dropped an end a start from the same turn still needed")
 	}
-	if end, ok := m.TakeUnmatchedEnd("run2.1"); ok {
-		t.Fatalf("a cleared stash still settled a block: %+v", end)
+	if end.Result != "out" {
+		t.Fatalf("stashed end result = %q, want the end's own result", end.Result)
+	}
+	// A start from a LATER turn still cannot reach it: the key is the guard,
+	// which is what the removed clear was standing in for.
+	if _, ok := m.TakeUnmatchedEnd("run3.1"); ok {
+		t.Fatal("a later turn's key matched an earlier turn's stashed end")
 	}
 }
 

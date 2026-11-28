@@ -185,7 +185,7 @@ func (t *App) HandleEvent(event agent.Event) {
 			t.addWakePrompt(e.Text)
 		})
 	case *agent.DoneEvent:
-		t.queueUpdateDrawCritical(func() {
+		scheduled := t.queueUpdateDrawCritical(func() {
 			flushed := t.flushPendingTokens()
 			t.pendingTool = ""
 			// A stale arm must not carry into the next turn: one Esc
@@ -229,6 +229,15 @@ func (t *App) HandleEvent(event agent.Event) {
 			}
 			t.renderInfoPane()
 		})
+		if !scheduled {
+			// The turn-end reconciliation never runs: nothing sweeps this
+			// turn, so a still-Running block keeps its chevron and the
+			// lost-end record is never consumed. It cannot be run here —
+			// the transcript belongs to the UI goroutine — and re-queueing
+			// it could seal the NEXT turn's blocks, so the loss is recorded
+			// instead of recovered (yaah-77f1 review).
+			t.recordToolOrphan(orphanKindDroppedSweep)
+		}
 	}
 }
 
