@@ -30,6 +30,27 @@ func TestNewRequestMintsNumericID(t *testing.T) {
 	}
 }
 
+// TestNewRequestMarshalsZeroID pins the yaah-dev-loop skill's missing-id
+// troubleshooting case: some MCP clients send initialize with id 0, and a
+// scalar-id regression (an omitempty-style drop that eats only 0) would
+// hang the client waiting for a response that never carries its id.
+func TestNewRequestMarshalsZeroID(t *testing.T) {
+	msg := NewRequest(0, "initialize", nil)
+	if msg.IsNotification() {
+		t.Error("id 0 is a valid request id, not a notification")
+	}
+	if id, ok := msg.IDInt(); !ok || id != 0 {
+		t.Errorf("IDInt = %d, %v; want 0, true", id, ok)
+	}
+	wire, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(wire), `"id":0`) {
+		t.Errorf("wire bytes %s dropped the zero id", wire)
+	}
+}
+
 func TestNewNotificationHasNoID(t *testing.T) {
 	msg := NewNotification("notifications/initialized", nil)
 	if !msg.IsNotification() {

@@ -399,9 +399,9 @@ func (h *HTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// `initialize` is a request even when sent with id=0 (some
-		// MCP clients do this in the legacy HTTP+SSE transport). All
-		// other methods with id=0 are treated as notifications
-		// per the JSON-RPC convention.
+		// MCP clients do this in the legacy HTTP+SSE transport). id 0
+		// is a valid request id for every method; only id-less
+		// messages are notifications.
 		if msg.IsNotification() && !isInitialize(msg) {
 			if _, derr := h.server.dispatch(r.Context(), msg); derr != nil {
 				fmt.Fprintf(os.Stderr, "mcp notification dispatch error: %v\n", derr)
