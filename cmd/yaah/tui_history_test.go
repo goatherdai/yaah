@@ -274,6 +274,19 @@ func TestTUIHistoryFromMessagesOutcomeStatus(t *testing.T) {
 			result:          nil,
 			wantInterrupted: true,
 		},
+		{
+			// Rows the engine does not write today (child 7 will): a result
+			// row that carries interrupted/cancelled projects onto the
+			// Interrupted render, never onto an implied success.
+			name:            "interrupted row renders interrupted",
+			result:          ptrTo(resultWith("call-1", "error: context canceled", types.ToolOutcomeInterrupted, 0)),
+			wantInterrupted: true,
+		},
+		{
+			name:            "cancelled row renders interrupted",
+			result:          ptrTo(resultWith("call-1", "cancelled", types.ToolOutcomeCancelled, 0)),
+			wantInterrupted: true,
+		},
 	}
 
 	for _, tc := range tests {

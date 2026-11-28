@@ -196,9 +196,12 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	// child that went silent mid-run (stuck) from one that never started
 	// after its world was ready (dispatch startup, yaah-95ri.3).
 	killPartial := ""
+	killTruncated := false
+	killBytes := 0
 	if allowed && d.isDelegate && !d.isBackground && d.watchdogActive && ctx.Err() == nil && runCtx.Err() == context.Canceled {
 		err = d.killVerdict()
-		killPartial = l.truncateToolResult(res)
+		killBytes = len(res)
+		killPartial, killTruncated = l.truncateToolResultFlag(res)
 	}
 	if l.Config.OtelEnabled && toolSpan != nil {
 		if allowed && d.isDelegate && !d.isBackground {
@@ -212,20 +215,25 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 
 	errStr := ""
 	// resultBytes is the untruncated size of what this call reports, measured
-	// here because the full text is still in hand and truncateToolResult
-	// returns its input unchanged when the result fits — so a shorter result
-	// below means the cap actually fired.
+	// here because the full text is still in hand. truncated is the cutter's
+	// own verdict and is never inferred from these lengths: the notice that
+	// replaces the cut text is itself bytes, so a cut result can be LONGER
+	// than the original (a result just over the line cap), and the error
+	// text carries a kill's partial output already cut.
 	var resultBytes int
+	truncated := false
 	if err != nil {
 		errStr = err.Error()
 		res = fmt.Sprintf("error: %v", err)
+		resultBytes = len(res)
 		if killPartial != "" {
 			res += "\n" + killPartial
+			resultBytes += 1 + killBytes
+			truncated = killTruncated
 		}
-		resultBytes = len(res)
 	} else {
 		resultBytes = len(res)
-		res = l.truncateToolResult(res)
+		res, truncated = l.truncateToolResultFlag(res)
 	}
 	outcome := toolOutcomeFromErr(err)
 
@@ -242,7 +250,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 			Result:      res,
 			Duration:    duration,
 			Outcome:     outcome,
-			Truncated:   len(res) < resultBytes,
+			Truncated:   truncated,
 			ResultBytes: resultBytes,
 		}
 		if err != nil {

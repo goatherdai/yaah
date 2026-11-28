@@ -31,7 +31,7 @@ func (m *InlineLimitMiddleware) PostModel(ctx context.Context, msg *types.Messag
 	msg.ToolCalls = msg.ToolCalls[:m.max]
 	step.InlineDropped = len(dropped)
 	for _, tc := range dropped {
-		step.SynthesizedResults = append(step.SynthesizedResults, types.ToolResultMsg(
+		step.SynthesizedResults = append(step.SynthesizedResults, types.ToolFailedMsg(
 			tc.ID, tc.Function.Name,
 			fmt.Sprintf(
 				"[dropped: this call exceeded the inline tool limit (%d per turn) and was not executed. "+

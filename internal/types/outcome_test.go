@@ -23,6 +23,23 @@ func TestToolOutcomeZeroValueIsUnknown(t *testing.T) {
 	}
 }
 
+// A synthesized result can only be built with its status: ToolFailedMsg is
+// the constructor the middleware use, so a row for a call that never ran
+// cannot persist as unknown (yaah-77f1). An executed result stays unknown
+// here on purpose — the dispatch path classifies it from the tool's error.
+func TestToolFailedMsgCarriesErrorOutcome(t *testing.T) {
+	msg := ToolFailedMsg("call-1", "bash", "error: denied")
+	if msg.Role != "tool" || msg.ToolCallID != "call-1" || msg.Name != "bash" || msg.Content != "error: denied" {
+		t.Errorf("ToolFailedMsg = %+v, want a tool result for call-1/bash", msg)
+	}
+	if msg.Outcome != ToolOutcomeError {
+		t.Errorf("Outcome = %q, want %q", msg.Outcome, ToolOutcomeError)
+	}
+	if plain := ToolResultMsg("call-1", "bash", "x"); plain.Outcome != ToolOutcomeUnknown {
+		t.Errorf("ToolResultMsg.Outcome = %q, want unknown", plain.Outcome)
+	}
+}
+
 func TestParseToolOutcome(t *testing.T) {
 	tests := []struct {
 		name string

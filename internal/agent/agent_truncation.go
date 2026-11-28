@@ -18,8 +18,21 @@ func cleanTruncatedDir(dir string) { agentctx.CleanTruncatedDir(dir) }
 // SUCCESSFUL tool result. Tool-level truncation and the never-truncate-errors
 // invariant live in internal/tools/result.go: tools put failure detail first,
 // so this cap can only ever cut success detail. Errors never reach this
-// function — agent_dispatch delivers them verbatim.
+// function — agent_dispatch delivers them verbatim. It is
+// truncateToolResultFlag without the flag, for callers that only need the
+// text.
 func (l *Loop) truncateToolResult(result string) string {
+	out, _ := l.truncateToolResultFlag(result)
+	return out
+}
+
+// truncateToolResultFlag is truncateToolResult that also reports whether the
+// cap fired. The flag is the cutter's own verdict and must be used instead of
+// any length comparison: the notice that replaces the cut text is itself
+// bytes, so a cut result can be LONGER than the original (any result just
+// over the line cap), which makes "shorter than before" false exactly when
+// truncation happened (yaah-77f1).
+func (l *Loop) truncateToolResultFlag(result string) (string, bool) {
 	maxLines := l.ctxMgr().ToolResultMaxLines
 	if maxLines <= 0 {
 		maxLines = agentctx.DefaultTruncateMaxLines
@@ -34,7 +47,7 @@ func (l *Loop) truncateToolResult(result string) string {
 	byteCount := len(result)
 
 	if lineCount <= maxLines && byteCount <= maxBytes {
-		return result
+		return result, false
 	}
 
 	lineCapped := lineCount > maxLines
@@ -85,7 +98,7 @@ func (l *Loop) truncateToolResult(result string) string {
 			"\n...[output truncated at %d lines / %d bytes — %s. Or spawn a subagent for large analysis.]...",
 			truncatedLines, len(result), agentctx.RecoveryClause(fullPath, wrapped),
 		)
-		return truncated + hint
+		return truncated + hint, true
 	}
 
 	// No spill landed, so the cut bytes exist nowhere. Say so: a notice that
@@ -97,5 +110,5 @@ func (l *Loop) truncateToolResult(result string) string {
 	return truncated + fmt.Sprintf(
 		"\n...[truncated at %d lines / %d bytes — %s]...",
 		truncatedLines, len(result), agentctx.NoSpoolClause(reason),
-	)
+	), true
 }

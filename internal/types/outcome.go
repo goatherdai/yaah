@@ -15,8 +15,13 @@ package types
 type ToolOutcome string
 
 const (
-	// ToolOutcomeUnknown is the zero value: no outcome was recorded. A
-	// persisted row carrying it predates the outcome column.
+	// ToolOutcomeUnknown is the zero value: no producer recorded an outcome.
+	// Every in-tree writer of a tool result row sets one — the dispatch path
+	// (internal/agent/agent_tools.go) and the middleware that synthesizes a
+	// result without running the tool (ToolFailedMsg) — so a persisted row
+	// carrying it was written before outcomes were persisted. A new writer
+	// MUST set one: the alternative is the legacy text rule deciding its
+	// rows on resume.
 	ToolOutcomeUnknown ToolOutcome = ""
 	// ToolOutcomeOK is a call that ran to completion and returned a result.
 	ToolOutcomeOK ToolOutcome = "ok"
@@ -50,4 +55,16 @@ func ParseToolOutcome(s string) ToolOutcome {
 		return o
 	}
 	return ToolOutcomeUnknown
+}
+
+// ToolFailedMsg is a tool result the engine synthesized WITHOUT running the
+// tool: an approval refusal, a supervisor-guard denial, an inline-limit drop.
+// The call failed from the model's point of view, so it carries the error
+// outcome explicitly — a synthesized row must never persist with an unknown
+// status, or the resume projection falls back to reading its text and may
+// show a call that never ran as a success (yaah-77f1).
+func ToolFailedMsg(callID, name, content string) Message {
+	msg := ToolResultMsg(callID, name, content)
+	msg.Outcome = ToolOutcomeError
+	return msg
 }

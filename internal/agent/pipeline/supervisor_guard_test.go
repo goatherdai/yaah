@@ -46,6 +46,11 @@ func TestSupervisorGuard_DeniesBeforeDispatch(t *testing.T) {
 		t.Errorf("remaining calls = %+v, want only the non-shell call to dispatch", msg.ToolCalls)
 	}
 	denied := step2.SynthesizedResults[0]
+	// A guard denial persists as an explicit failure, never as an unknown
+	// status the resume projection would have to guess from (yaah-77f1).
+	if denied.Outcome != types.ToolOutcomeError {
+		t.Errorf("denied outcome = %q, want %q", denied.Outcome, types.ToolOutcomeError)
+	}
 	if !strings.Contains(denied.Content, `tool "bash" denied by supervisor guard`) {
 		t.Errorf("denied result = %q, want the approval middleware's denied-call shape naming the guard", denied.Content)
 	}

@@ -68,7 +68,7 @@ func (m *SupervisorGuardMiddleware) PostModel(ctx context.Context, msg *types.Me
 		// request over a dangling ID — and the model reads the same
 		// error surface it already knows how to respond to.
 		step.SynthesizedResults = append(step.SynthesizedResults,
-			types.ToolResultMsg(tc.ID, tc.Function.Name,
+			types.ToolFailedMsg(tc.ID, tc.Function.Name,
 				fmt.Sprintf("error: tool %q denied by supervisor guard: %s", tc.Function.Name, reason)))
 	}
 	msg.ToolCalls = filtered

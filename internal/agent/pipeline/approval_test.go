@@ -46,6 +46,11 @@ func TestApprovalMiddleware_DenyStripsDangerousCalls(t *testing.T) {
 	if step.SynthesizedResults[0].ToolCallID != "1" || step.SynthesizedResults[0].Role != "tool" {
 		t.Errorf("synthesized result not a tool message for call 1: %+v", step.SynthesizedResults[0])
 	}
+	// A denied call persists as an explicit failure, never as an unknown
+	// status the resume projection would have to guess from (yaah-77f1).
+	if got := step.SynthesizedResults[0].Outcome; got != types.ToolOutcomeError {
+		t.Errorf("denied outcome = %q, want %q", got, types.ToolOutcomeError)
+	}
 	if deniedArgs != `{"command":"rm -rf /"}` {
 		t.Errorf("emitDeny not called with original args: %q", deniedArgs)
 	}
