@@ -1,7 +1,6 @@
 package transcript
 
 import (
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +29,7 @@ func settleFixture(th *colors.Theme, ids ...string) (*Model, []*toolblock.Block)
 // TestSettleTool pins the state machine: Running -> Done | Error |
 // Interrupted, and an end event is applied by the rule in SettleTool's doc —
 // last Running block wins, an Interrupted block heals, an already-terminal
-// block is untouched, and nothing matched is stashed.
+// block is untouched, and nothing matched leaves no record in the model.
 func TestSettleTool(t *testing.T) {
 	th := colors.NewDarkTheme()
 
@@ -38,13 +37,12 @@ func TestSettleTool(t *testing.T) {
 		name string
 		// ids are the blocks in transcript order; state pre-settles a block
 		// before the event under test.
-		ids     []string
-		settle  map[string]ToolEnd // ends applied before the event under test
-		key     string
-		end     ToolEnd
-		want    Settlement
-		states  []toolblock.State
-		stashed int
+		ids    []string
+		settle map[string]ToolEnd // ends applied before the event under test
+		key    string
+		end    ToolEnd
+		want   Settlement
+		states []toolblock.State
 	}{
 		{
 			name:   "running block settles",
@@ -66,14 +64,13 @@ func TestSettleTool(t *testing.T) {
 			// The defect: one key, two blocks, because a later run reused the
 			// earlier run's ordinal. The live (last) block is the one that
 			// settles; the older one keeps what it had.
-			name:    "last running block wins",
-			ids:     []string{"k.1", "k.1"},
-			settle:  map[string]ToolEnd{},
-			key:     "k.1",
-			end:     ToolEnd{Summary: "newer", Result: "newer result"},
-			want:    Settled,
-			states:  []toolblock.State{toolblock.Running, toolblock.Done},
-			stashed: 0,
+			name:   "last running block wins",
+			ids:    []string{"k.1", "k.1"},
+			settle: map[string]ToolEnd{},
+			key:    "k.1",
+			end:    ToolEnd{Summary: "newer", Result: "newer result"},
+			want:   Settled,
+			states: []toolblock.State{toolblock.Running, toolblock.Done},
 		},
 		{
 			name:   "duplicate end does not overwrite",
@@ -104,13 +101,15 @@ func TestSettleTool(t *testing.T) {
 			states: []toolblock.State{toolblock.Interrupted}, // replaced below
 		},
 		{
-			name:    "unmatched end is stashed",
-			ids:     []string{"k.1"},
-			key:     "other.9",
-			end:     ToolEnd{Summary: "ok", Result: "out"},
-			want:    UnmatchedEnd,
-			states:  []toolblock.State{toolblock.Running},
-			stashed: 1,
+			// The model keeps no copy of an unmatched end: the view records
+			// it against its turn so a late start can inherit it
+			// (internal/tui/tool_ledger.go). The block is untouched.
+			name:   "unmatched end settles nothing",
+			ids:    []string{"k.1"},
+			key:    "other.9",
+			end:    ToolEnd{Summary: "ok", Result: "out"},
+			want:   UnmatchedEnd,
+			states: []toolblock.State{toolblock.Running},
 		},
 	}
 
@@ -132,9 +131,6 @@ func TestSettleTool(t *testing.T) {
 				if b.S() != tc.states[i] {
 					t.Errorf("block %d state = %v, want %v", i, b.S(), tc.states[i])
 				}
-			}
-			if got := len(m.UnmatchedEnds()); got != tc.stashed {
-				t.Errorf("stashed ends = %d, want %d", got, tc.stashed)
 			}
 		})
 	}
@@ -227,28 +223,6 @@ func TestSettleTool_LateEndUsesTheEventDuration(t *testing.T) {
 	rendered := block.RenderCtx(colors.RenderCtx{Theme: &th, Width: 80})
 	if !strings.Contains(rendered, "250ms") {
 		t.Errorf("healed block duration = %q, want the event's 250ms", rendered)
-	}
-}
-
-// TestSettleTool_UnmatchedEndsAreBounded pins that the diagnostic stash
-// cannot grow without bound: the newest ends are kept, the oldest dropped.
-func TestSettleTool_UnmatchedEndsAreBounded(t *testing.T) {
-	th := colors.NewDarkTheme()
-	m, _ := settleFixture(&th, "run1.1")
-
-	last := ""
-	for i := range unmatchedEndsLimit + 4 {
-		last = "gone." + strconv.Itoa(i)
-		if got := m.SettleTool(last, ToolEnd{Summary: last}); got != UnmatchedEnd {
-			t.Fatalf("SettleTool(%q) = %v, want UnmatchedEnd", last, got)
-		}
-	}
-	stashed := m.UnmatchedEnds()
-	if len(stashed) != unmatchedEndsLimit {
-		t.Fatalf("stashed %d ends, want the ring capped at %d", len(stashed), unmatchedEndsLimit)
-	}
-	if stashed[len(stashed)-1].Key != last {
-		t.Errorf("newest stashed key = %q, want the last one offered (%q)", stashed[len(stashed)-1].Key, last)
 	}
 }
 

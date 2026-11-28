@@ -241,9 +241,9 @@ func RecordTUIQueueEvent(ctx context.Context, eventType, outcome string, depth i
 //     observed the loss.
 //   - "dropped_sweep": the turn-end reconciliation itself could never be
 //     scheduled, so nothing swept this turn. Recorded because it is the only
-//     seam that observes a missing turn boundary. The fallback-keyed lost-end
-//     records are discarded with it (they are only valid for their own turn);
-//     a unique-keyed one survives for a start that still lands.
+//     seam that observes a missing turn boundary. The turn's ledger entries are
+//     retired by the next sweep instead, and because attribution matches on the
+//     turn generation a stale entry cannot be mistaken for a fresh loss.
 func RecordTUIToolOrphan(ctx context.Context, kind string) {
 	if tuiToolOrphans == nil {
 		return

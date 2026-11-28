@@ -40,6 +40,10 @@ func (t *App) submitFollowUp() {
 // clearConversation resets all conversation state and re-renders the view.
 func (t *App) clearConversation() {
 	t.tr.Clear()
+	// The ledger names blocks that just vanished: an entry (an end waiting for
+	// a late start, a dropped start, a lost end) would otherwise settle or
+	// strand a block in the next conversation.
+	t.ledger.forget()
 	t.subAgents = nil
 	t.subAgentsBusy.Store(false)
 	t.compactBoundary = 0

@@ -240,12 +240,18 @@ type App struct {
 	toolOrphanMu sync.Mutex
 	toolOrphans  map[string]int
 
-	// lostEndsMu guards lostEnds, the bounded record of tool end events
-	// whose UI update could never be scheduled (see recordLostToolEnd). It
-	// is written on the agent-loop goroutine and consumed by the turn-end
-	// sweep on the UI goroutine.
-	lostEndsMu sync.Mutex
-	lostEnds   []lostToolEnd
+	// turnGen is the current turn's generation (see toolLedger). It is read
+	// when a tool event is handled — on the broker's forwarder goroutine, in
+	// event order — and bumped when a DoneEvent is handled, so a turn's
+	// records are stamped before the next turn's events can be. Atomic
+	// because the reading handlers and the bumping DoneEvent branch can run
+	// on different goroutines during a handover.
+	turnGen atomic.Uint64
+	// ledger records each tool call's fate for its turn: the end that
+	// arrived before its block, the update that could never be scheduled,
+	// and the start that never will be. It replaces the former
+	// unmatched-end stash, lost-end slice and re-add rule (yaah-ol3r).
+	ledger *toolLedger
 
 	availableModels []string
 	providerNames   map[string]string
@@ -292,6 +298,7 @@ func New(version string) *App {
 		showBanner:      true,
 		fallbackSem:     make(chan struct{}, uiMaxDirectFallbacks),
 		fallbackWaiters: make(chan struct{}, uiMaxDirectWaiters),
+		ledger:          newToolLedger(),
 		slowThreshold:   50 * time.Millisecond,
 	}
 	t.tr = transcript.NewModel(t.Theme)
