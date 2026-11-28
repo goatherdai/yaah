@@ -1,0 +1,130 @@
+package yaah
+
+import (
+	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+// The /api/stream write path must be bounded: a client that stops reading
+// fills the kernel socket buffers, and without a write deadline the blocked
+// Fprintf parks the BrokerView forwarder — wedging Run teardown until the
+// TCP stack gives up (yaah-zdzm). These tests pin the stall semantics: a
+// failed write flips the view, closes the handler's release channel, and
+// every later write is a no-op instead of burning the timeout per event.
+
+// failingWriter fails every Write like a broken pipe, counting attempts so
+// a test can pin that stalled writes are skipped, not retried.
+type failingWriter struct {
+	writes atomic.Int64
+}
+
+var errBrokenPipe = errors.New("write: broken pipe")
+
+func (w *failingWriter) Header() http.Header { return http.Header{} }
+func (w *failingWriter) Write([]byte) (int, error) {
+	w.writes.Add(1)
+	return 0, errBrokenPipe
+}
+func (w *failingWriter) WriteHeader(int) {}
+
+func TestSseViewWriteErrorStallsView(t *testing.T) {
+	stallCh := make(chan struct{})
+	fw := &failingWriter{}
+	v := &sseView{w: fw, stallCh: stallCh}
+
+	v.write([]byte(`{"type":"ctrl.state"}`))
+
+	select {
+	case <-stallCh:
+	default:
+		t.Fatal("a failed write must close the stall channel")
+	}
+	if !v.stalled.Load() {
+		t.Fatal("a failed write must mark the view stalled")
+	}
+	if got := fw.writes.Load(); got != 1 {
+		t.Fatalf("write attempts = %d, want exactly 1", got)
+	}
+
+	// Later writes are no-ops: they must not retry the dead connection and
+	// must not double-close the stall channel.
+	v.write([]byte(`{"type":"token"}`))
+	v.write([]byte(`{"type":"done"}`))
+	if got := fw.writes.Load(); got != 1 {
+		t.Errorf("writes after stall = %d, want 1 (stalled writes are skipped)", got)
+	}
+	select {
+	case <-stallCh:
+	default:
+		t.Error("stall channel should stay closed, not re-fired")
+	}
+}
+
+// TestSseViewBareLiteralStillWrites pins the nil-safety contract: the many
+// bare struct literals in existing tests construct a view with no response
+// controller and no stall channel, and writes through such a view keep
+// behaving exactly as before this change.
+func TestSseViewBareLiteralStillWrites(t *testing.T) {
+	buf := newSyncBuffer()
+	v := &sseView{w: buf}
+
+	v.write([]byte(`{"type":"token"}`))
+
+	if !strings.Contains(buf.String(), `data: {"type":"token"}`) {
+		t.Errorf("bare literal view should still write SSE data, got: %q", buf.String())
+	}
+}
+
+// TestSseViewStalledWriteIsBounded drives the real path: a live TCP
+// connection whose client never reads. The kernel buffers fill, the per-write
+// deadline (shortened for the test) expires, and the write returns instead of
+// parking the caller forever.
+func TestSseViewStalledWriteIsBounded(t *testing.T) {
+	handlerDone := make(chan bool, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(handlerDone)
+		v := &sseView{
+			w:            w,
+			rc:           http.NewResponseController(w),
+			stallCh:      make(chan struct{}),
+			writeTimeout: 100 * time.Millisecond,
+		}
+		payload := make([]byte, 64*1024)
+		for i := 0; i < 4096 && !v.stalled.Load(); i++ {
+			v.write(payload)
+		}
+		// Report whether the deadline actually tripped: a host with huge
+		// socket buffers could absorb every write, and returning without a
+		// stall would pass the teardown bound without exercising it.
+		handlerDone <- v.stalled.Load()
+	}))
+	defer srv.Close()
+
+	// A client that sends one HTTP request and then never reads: its unread
+	// socket is what fills the server-side buffers.
+	conn, err := net.Dial("tcp", strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+
+	select {
+	case stalled := <-handlerDone:
+		if !stalled {
+			t.Fatal("handler returned without stalling: the write deadline never tripped, so the test exercised nothing")
+		}
+		// The handler returned on its own: the deadline bounded the write,
+		// stall() fired, and teardown is free to run — the whole point.
+	case <-time.After(30 * time.Second):
+		t.Fatal("stalled write never returned; Run teardown would hang")
+	}
+}

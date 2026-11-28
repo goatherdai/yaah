@@ -61,7 +61,9 @@ All web UI assets are embedded in the yaah binary via `//go:embed web`.
 - **`handleStream`**: Accepts one SSE client at a time. Creates an `sseView`,
   wires it to the session's event broker, and starts `forwardCtrl` for
   control-plane messages (questions, approvals, todos). Blocks until the
-  client disconnects.
+  client disconnects or an SSE write stalls (the write deadline trips on a
+  client that stopped reading), releasing the stream so an EventSource
+  reconnect gets a fresh lane.
 
 - **`handleAction`**: Accepts JSON POST commands from the browser:
   - `prompt` — start a new agent turn (HTTP 409 if one is already running)

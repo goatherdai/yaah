@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/goatherdai/yaah/internal/agent"
 	"github.com/goatherdai/yaah/internal/control"
@@ -203,7 +204,21 @@ func (v *sseView) SetSessionMode(mode string) {
 
 type sseView struct {
 	w  http.ResponseWriter
+	rc *http.ResponseController
 	mu sync.Mutex
+
+	// stalled is set once a write has failed (deadline, broken pipe). Every
+	// later write is then a no-op: retrying against a dead connection would
+	// burn the write timeout per event for the rest of the run. stallCh is
+	// closed at that same moment to release the /api/stream handler, which
+	// owns this view's teardown. Both are nil-safe so bare struct literals
+	// (tests) keep working.
+	stalled atomic.Bool
+	stallCh chan struct{}
+
+	// writeTimeout bounds one write; zero means sseWriteTimeout. A field so
+	// the stall test can use a short deadline on a real connection.
+	writeTimeout time.Duration
 
 	// header info set from the session on SSE connect
 	provider    string
@@ -360,6 +375,13 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 	v.write(marshalWire(we))
 }
 
+// sseWriteTimeout bounds one SSE write. A client that stops reading fills
+// the kernel buffers and would otherwise park fmt.Fprintf — and with it the
+// BrokerView forwarder goroutine — indefinitely, hanging Run teardown on a
+// dead tab. The handler's select on stallCh then releases the stream so the
+// browser's EventSource reconnect gets a fresh lane.
+const sseWriteTimeout = 5 * time.Second
+
 func (v *sseView) write(data []byte) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -368,9 +390,47 @@ func (v *sseView) write(data []byte) {
 
 // writeLocked writes SSE data assuming v.mu is already held.
 func (v *sseView) writeLocked(data []byte) {
-	fmt.Fprintf(v.w, "data: %s\n\n", data)
-	if f, ok := v.w.(http.Flusher); ok {
+	if v.stalled.Load() {
+		return
+	}
+	if v.rc != nil {
+		// Deadline, not a server WriteTimeout: the stream is long-lived and
+		// idle between events, so only the write itself must be bounded. On
+		// writers without deadline support (httptest.ResponseRecorder) the
+		// call is a no-op error and the write proceeds unbounded, as before.
+		timeout := v.writeTimeout
+		if timeout <= 0 {
+			timeout = sseWriteTimeout
+		}
+		_ = v.rc.SetWriteDeadline(time.Now().Add(timeout))
+	}
+	if _, err := fmt.Fprintf(v.w, "data: %s\n\n", data); err != nil {
+		v.stall()
+		return
+	}
+	// The flush is where a small frame actually reaches the network, so a
+	// failed flush must stall the view too. http.Flusher.Flush cannot
+	// report the error; the ResponseController's Flush can, and it is the
+	// same deadline-bounded write path. Bare test writers (rc nil) keep
+	// the Flusher fallback.
+	if v.rc != nil {
+		if err := v.rc.Flush(); err != nil {
+			v.stall()
+			return
+		}
+	} else if f, ok := v.w.(http.Flusher); ok {
 		f.Flush()
+	}
+}
+
+// stall marks the stream dead after a failed write and releases the
+// /api/stream handler exactly once. Nil-safe for bare struct literals.
+func (v *sseView) stall() {
+	if v.stalled.Swap(true) {
+		return
+	}
+	if v.stallCh != nil {
+		close(v.stallCh)
 	}
 }
 

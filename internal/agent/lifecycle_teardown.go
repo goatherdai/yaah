@@ -3,8 +3,10 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/goatherdai/yaah/internal/agent/events"
+	"github.com/goatherdai/yaah/internal/pubsub"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -52,10 +54,56 @@ func (l *Loop) publishDone(response *string, runErr *error) {
 	// wedged for the whole budget; a momentary backlog cannot drop it the
 	// way a lossy Publish would.
 	l.broker.PublishMustDeliver(&done)
+	// Snapshot the retiring generation's delivery accounting before
+	// brokerView.Close detaches the subscriber and wipes the Stats rows.
+	// This is the quiescence point the broker documents: the final event
+	// has been fanned out and no publisher races the read, so per-view
+	// dropped counts are exact. Lossy token deltas are expected and cheap;
+	// this exists so a wedged view (the one case that also drops
+	// must-deliver events) is visible in production instead of only in
+	// Broker tests.
+	logBrokerDrops(l.broker.Stats())
 	l.brokerView.Close()
 	// Mark eventing as retired: applyDefaults re-arms the broker on the
 	// next Run so a reused Loop keeps delivering events (finding A4).
 	l.brokerClosed = true
+}
+
+// logBrokerDrops reports every subscription that lost events during the
+// Run, once per Run, after the final DoneEvent. The broker's counters exist
+// so a slow or wedged view can be named rather than inferred; this is their
+// only production reader. Anonymous subscriptions (BrokerView's forwarder)
+// carry no id and are reported as "view" — production has exactly one per
+// broker.
+//
+// Only must-deliver drops Warn: those events are never repaired by a later
+// event, so a must-drop means the wedged-view case this report exists for.
+// Lossy token-delta drops are expected under a merely slow consumer and are
+// repaired by the next must-deliver FlushEvent, so they log at Debug — a
+// WARN there would fire on every run with a briefly busy view and drown the
+// signal.
+func logBrokerDrops(rows []pubsub.SubscriberStats) {
+	for _, row := range rows {
+		if row.Dropped <= 0 {
+			continue
+		}
+		id := row.ID
+		if id == "" {
+			id = "view"
+		}
+		if row.MustDropped > 0 {
+			slog.Warn("event broker dropped must-deliver events during run",
+				"subscriber", id,
+				"delivered", row.Delivered,
+				"dropped", row.Dropped,
+				"must_delivered_dropped", row.MustDropped)
+			continue
+		}
+		slog.Debug("event broker dropped lossy stream events during run",
+			"subscriber", id,
+			"delivered", row.Delivered,
+			"dropped", row.Dropped)
+	}
 }
 
 // teardown handles panic recovery, flushes the persister, emits the
