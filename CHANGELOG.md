@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.229.1](https://github.com/goatherdai/yaah/compare/v0.229.0...v0.229.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **web:** bound SSE writes and surface broker drop counts (yaah-zdzm) ([#475](https://github.com/goatherdai/yaah/issues/475)) ([5a8d2bd](https://github.com/goatherdai/yaah/commit/5a8d2bdb0c18bc34206eda5c5dbef28a65e97420))
+
+
+### Code Refactoring
+
+* **mcp,acp:** extract shared internal/jsonrpc wire layer (yaah-71yi) ([#476](https://github.com/goatherdai/yaah/issues/476)) ([a7fb02a](https://github.com/goatherdai/yaah/commit/a7fb02a57063dcf4580b5cf357da2d4750833d6f))
+
 ## [0.229.0](https://github.com/goatherdai/yaah/compare/v0.228.3...v0.229.0) (2026-11-28)
 
 
