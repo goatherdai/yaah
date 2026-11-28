@@ -70,11 +70,11 @@ func (t *App) restoreHistory() {
 				t.tr.Append(transcript.MarkdownItem(item.Text))
 			}
 			for j, call := range item.ToolCalls {
-				// Always namespace restored IDs. Live tool events use bare
-				// per-run counters ("1", "2", ...); a provider call id can
-				// look identical, and CompleteTool scans from the front of
-				// the log, so an unprefixed restored id would capture a live
-				// tool's result and leave the live block stuck as Running.
+				// Always namespace restored IDs. Live tool events key their
+				// blocks on the session-unique event Key; a restored row's
+				// namespace must therefore never coincide with a live one,
+				// or a live tool's settlement would land on the restored
+				// block and leave its own stuck as Running (yaah-77f1).
 				id := "history-tool-" + strconv.Itoa(i) + "-" + strconv.Itoa(j)
 				tb := toolblock.New(id, call.Name, call.Args, t.Theme)
 				if call.Error != "" {

@@ -120,7 +120,7 @@ func TestToolCallKey_TwoRunsCannotCollide(t *testing.T) {
 		t.Fatalf("both runs keyed their first call %q — a later run would settle the earlier block", first.Key)
 	}
 	if first.ID != second.ID {
-		t.Logf("note: run ordinals differ (%d vs %d); the test asserts keys, not ordinals", first.ID, second.ID)
+		t.Fatalf("run ordinals differ (%d vs %d); the reused-ordinal collision precondition is unmet, so the assertion above proves nothing", first.ID, second.ID)
 	}
 }
 

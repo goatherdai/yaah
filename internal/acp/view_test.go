@@ -619,3 +619,45 @@ func TestView_toolCallIDKeyBeatsARepeatedProviderCallID(t *testing.T) {
 		t.Fatalf("id for an event with no key = %q, want the provider call id", ids[2])
 	}
 }
+
+// TestView_announcedCallKeepsItsProviderID pins the permission path's
+// correlation: the approval middleware creates the client row under the
+// provider call id before the dispatch emits ToolStartEvent (and before any
+// Key exists), and ACP cannot rename a row. The execution pair must therefore
+// reuse the announced id — rendering it under Key instead leaves the pending
+// row dangling and opens a duplicate (yaah-77f1 review 4).
+func TestView_announcedCallKeepsItsProviderID(t *testing.T) {
+	var got []any
+	v := NewView()
+	send := captureUpdate(&got)
+
+	// The permission request announced the row as call_1.
+	v.Announce("call_1")
+
+	v.SendTo("s", send, &agent.ToolStartEvent{Key: "turn-a.1", ID: 1, CallID: "call_1", Name: "bash"})
+	v.SendTo("s", send, &agent.ToolEndEvent{Key: "turn-a.1", ID: 1, CallID: "call_1", Name: "bash", Result: "ok\n"})
+
+	// An unannounced call in the same turn still correlates on its key.
+	v.SendTo("s", send, &agent.ToolStartEvent{Key: "turn-a.2", ID: 2, CallID: "call_2", Name: "bash"})
+
+	if len(got) != 3 {
+		t.Fatalf("updates = %d, want 3", len(got))
+	}
+	first := decodeUpdate(t, got[0])
+	second := decodeUpdate(t, got[1])
+	third := decodeUpdate(t, got[2])
+
+	if id, _ := first["toolCallId"].(string); id != "call_1" {
+		t.Fatalf("announced start rendered under %q, want the announced call_1", id)
+	}
+	// The start must convert the announced row, not create a second one.
+	if kind, _ := first["sessionUpdate"].(string); kind != UpdateToolCallUpdate {
+		t.Fatalf("announced start sessionUpdate = %q, want %q (it must update the announced row)", kind, UpdateToolCallUpdate)
+	}
+	if id, _ := second["toolCallId"].(string); id != "call_1" {
+		t.Fatalf("announced end rendered under %q, want the announced call_1", id)
+	}
+	if id, _ := third["toolCallId"].(string); id != "turn-a.2" {
+		t.Fatalf("unannounced start rendered under %q, want its session key", id)
+	}
+}

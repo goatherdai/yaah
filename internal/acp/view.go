@@ -14,9 +14,9 @@ import (
 // View translates agent events into ACP session/update payloads.
 // Tool calls are delivered as an ACP tool_call at creation (status
 // in_progress — dispatch executes immediately after publish) and a
-// tool_call_update at completion, correlated via the per-execution ID
-// carried on the events themselves and rendered as the string
-// toolCallId "t<N>".
+// tool_call_update at completion, correlated by correlateID: the event's
+// session-unique Key, except that a call announced by a permission request
+// keeps the provider call id its client row was created under.
 type View struct {
 	mu sync.Mutex
 	// announced holds tool call ids already sent as tool_call by a
@@ -146,6 +146,25 @@ func toolCallIDFor(key, callID string, id int64) string {
 	return toolCallID(id)
 }
 
+// correlateID picks the id a tool_call/tool_call_update pair is rendered
+// under, and is the single place the announced-permission exception lives.
+//
+// Key is authoritative (toolCallIDFor) with one case that overrides it: the
+// approval middleware runs before the dispatch emits its ToolStartEvent, so a
+// permission request creates the client row under the provider call id before
+// any Key exists — and ACP has no rename. Rendering the execution under Key
+// instead would leave the pending row dangling and open a duplicate, so an
+// announced call keeps the provider id for its whole lifecycle (start and end
+// both, which is why the announcement is not cleared when the start consumes
+// it). The announced set is per prompt turn, so the provider-id reuse it
+// admits is bounded to calls that actually went through approval.
+func (v *View) correlateID(key, callID string, id int64) string {
+	if callID != "" && v.wasAnnounced(callID) {
+		return callID
+	}
+	return toolCallIDFor(key, callID, id)
+}
+
 // SendTo converts evt to an update and passes it to send, tagging it
 // with the given session ID. Events with no ACP representation are
 // dropped.
@@ -179,7 +198,7 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 			Content:       textContent("\n"),
 		})
 	case *agent.ToolStartEvent:
-		callID := toolCallIDFor(e.Key, e.CallID, e.ID)
+		callID := v.correlateID(e.Key, e.CallID, e.ID)
 		updateKind := UpdateToolCall
 		if v.wasAnnounced(callID) {
 			updateKind = UpdateToolCallUpdate
@@ -207,7 +226,7 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 		}
 		send(sessionID, call)
 	case *agent.ToolEndEvent:
-		callID := toolCallIDFor(e.Key, e.CallID, e.ID)
+		callID := v.correlateID(e.Key, e.CallID, e.ID)
 		update := ToolCallUpdate{
 			SessionUpdate: UpdateToolCallUpdate,
 			ToolCallID:    callID,

@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -14,6 +15,19 @@ import (
 	"github.com/goatherdai/yaah/internal/tui/components/activity"
 	"github.com/goatherdai/yaah/internal/tui/transcript"
 )
+
+// toolBlockKey picks the id a tool block is keyed on. The event's
+// session-unique Key is authoritative; a keyless event (a legacy or test
+// dispatch) falls back to the run-scoped ordinal, matching the pre-yaah-77f1
+// behaviour rather than opening an empty-key block that any later keyless end
+// could settle. The other views carry the same fallback (acp.toolCallIDFor,
+// the web wire's tool_id), so the TUI is not the lone exception.
+func toolBlockKey(key string, id int64) string {
+	if key != "" {
+		return key
+	}
+	return strconv.FormatInt(id, 10)
+}
 
 func (t *App) HandleEvent(event agent.Event) {
 	switch e := event.(type) {
@@ -43,9 +57,9 @@ func (t *App) HandleEvent(event agent.Event) {
 			t.setActivity(activity.Tool, e.Name)
 			// The block is keyed on the event's session-unique identity.
 			// e.ID is the run's dispatch ordinal (it restarts at 1 on every
-			// prompt), so keying on it made a later prompt's call settle an
-			// earlier prompt's block (yaah-77f1).
-			t.AddToolStart(e.Key, e.Name, e.Args)
+			// prompt), so keying on it alone made a later prompt's call
+			// settle an earlier prompt's block (yaah-77f1).
+			t.AddToolStart(toolBlockKey(e.Key, e.ID), e.Name, e.Args)
 		})
 	case *agent.ToolEndEvent:
 		t.queueUpdateCritical(func() {
@@ -53,10 +67,11 @@ func (t *App) HandleEvent(event agent.Event) {
 			if e.Name == "delegate" {
 				return
 			}
+			key := toolBlockKey(e.Key, e.ID)
 			if e.Error != "" {
-				t.AddToolError(e.Key, e.Name+" \u274C", e.Error, e.Duration)
+				t.AddToolError(key, e.Name+" \u274C", e.Error, e.Duration)
 			} else {
-				t.AddToolEnd(e.Key, toolfmt.Summary(e.Name, e.Args, e.Result), e.Result, e.Duration)
+				t.AddToolEnd(key, toolfmt.Summary(e.Name, e.Args, e.Result), e.Result, e.Duration)
 			}
 			t.restoreActivity()
 		})
