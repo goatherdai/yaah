@@ -331,6 +331,23 @@ func (c *connection) notify(method string, params any) {
 	c.write(jsonrpc.Message{JSONRPC: "2.0", Method: method, Params: data})
 }
 
+// sendUpdate writes one session/update notification. It is the single
+// implementation behind both Server.sendUpdate (installed in Run) and the
+// permission bridge, which may target a connection argument other than the
+// server's current one.
+func (c *connection) sendUpdate(sessionID string, update any) {
+	raw, err := json.Marshal(update)
+	if err != nil {
+		c.logf("marshal update: %v", err)
+		return
+	}
+	c.write(jsonrpc.Message{
+		JSONRPC: "2.0",
+		Method:  "session/update",
+		Params:  rawOf(updateEnvelope{SessionID: sessionID, Update: raw}),
+	})
+}
+
 // sendRequest writes a JSON-RPC request with the given numeric ID.
 func (c *connection) sendRequest(id int, method string, params any) {
 	data, err := json.Marshal(params)
@@ -373,18 +390,7 @@ func (s *Server) Run(ctx context.Context) error {
 	s.conn = c
 	s.mu.Unlock()
 
-	sendUpdate := func(sessionID string, update any) {
-		raw, err := json.Marshal(update)
-		if err != nil {
-			s.logf("marshal update: %v", err)
-			return
-		}
-		c.write(jsonrpc.Message{
-			JSONRPC: "2.0",
-			Method:  "session/update",
-			Params:  rawOf(updateEnvelope{SessionID: sessionID, Update: raw}),
-		})
-	}
+	sendUpdate := c.sendUpdate
 	s.mu.Lock()
 	s.sendUpdate = sendUpdate
 	s.mu.Unlock()

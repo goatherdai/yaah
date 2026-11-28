@@ -5,20 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/goatherdai/yaah/internal/tools"
 )
-
-// runCtxDone returns the turn context's Done channel; nil (no turn
-// known) yields a nil channel, which blocks forever — the timeout is
-// then the only bound, matching a headless ask.
-func runCtxDone(ctx context.Context) <-chan struct{} {
-	if ctx == nil {
-		return nil
-	}
-	return ctx.Done()
-}
 
 // elicitationFormSchema builds the JSON Schema a question entry
 // becomes. The top level is an object schema (required by form
@@ -106,45 +95,21 @@ func (s *Server) elicitAnswer(
 	}
 	message := fmt.Sprintf("%s: %s", entry.Header, entry.Question)
 
-	s.mu.Lock()
-	s.nextReqID++
-	reqID := s.nextReqID
-	s.mu.Unlock()
-
-	// Answer channel registered before the request goes out, like the
-	// permission bridge, so a fast client cannot win the race.
-	answerCh := make(chan clientResponse, 1)
-	key := permissionID(reqID)
-	s.mu.Lock()
-	s.pendingReq[key] = answerCh
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		delete(s.pendingReq, key)
-		s.mu.Unlock()
-	}()
-
-	c.sendRequest(reqID, "elicitation/create", ElicitationParams{
+	timeout := s.answerTimeout()
+	resp, outcome, err := s.requestClient(runCtx, c, "elicitation/create", ElicitationParams{
 		Message:         message,
 		Mode:            ElicitationModeForm,
 		SessionID:       st.id,
 		RequestedSchema: schema,
-	})
-
-	timeout := s.PermissionTimeout
-	if timeout <= 0 {
-		timeout = defaultPermissionTimeout
+	}, clientRequestOptions{Timeout: timeout})
+	if err != nil {
+		return "", true, false
 	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	var resp clientResponse
-	select {
-	case resp = <-answerCh:
-	case <-timer.C:
+	switch outcome {
+	case clientTimedOut:
 		s.logf("elicitation for session %s timed out", st.id)
 		return "", true, false
-	case <-runCtxDone(runCtx):
+	case clientTurnEnded:
 		s.logf("elicitation for session %s abandoned: turn ended", st.id)
 		return "", true, false
 	}

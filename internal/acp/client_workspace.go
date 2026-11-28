@@ -319,51 +319,22 @@ func (s *Server) callClient(ctx context.Context, method string, params any) (jso
 func (s *Server) callClientWithLate(ctx context.Context, method string, params any, late func(json.RawMessage)) (json.RawMessage, error) {
 	s.mu.Lock()
 	c := s.conn
-	if c == nil {
-		s.mu.Unlock()
-		return nil, fmt.Errorf("%s: no client connection", method)
-	}
-	s.nextReqID++
-	id := s.nextReqID
-	ch := make(chan clientResponse, 1)
-	key := permissionID(id)
-	s.pendingReq[key] = ch
 	s.mu.Unlock()
-	cleanup := func() {
-		s.mu.Lock()
-		delete(s.pendingReq, key)
-		s.mu.Unlock()
-	}
 
-	c.sendRequest(id, method, params)
-	select {
-	case resp := <-ch:
-		cleanup()
-		if resp.err != nil {
-			return nil, resp.err
+	resp, outcome, err := s.requestClient(ctx, c, method, params, clientRequestOptions{Late: late})
+	if err != nil {
+		return nil, err
+	}
+	if outcome == clientTurnEnded {
+		if ctx == nil {
+			return nil, context.Canceled
 		}
-		return resp.result, nil
-	case <-ctx.Done():
-		if late == nil {
-			cleanup()
-			return nil, ctx.Err()
-		}
-		// The request is already in flight and may have created a resource.
-		// Keep routing alive briefly so a late success can be released.
-		go func() {
-			timer := time.NewTimer(30 * time.Second)
-			defer timer.Stop()
-			select {
-			case resp := <-ch:
-				if resp.err == nil && resp.result != nil {
-					late(resp.result)
-				}
-			case <-timer.C:
-			}
-			cleanup()
-		}()
 		return nil, ctx.Err()
 	}
+	if resp.err != nil {
+		return nil, resp.err
+	}
+	return resp.result, nil
 }
 
 // wrapClientWorkspace installs the client-backed overlay after a session is
