@@ -161,3 +161,72 @@ func TestScrollbarPageClicks(t *testing.T) {
 		t.Fatalf("content press must not start a drag")
 	}
 }
+
+// TestScrollbarFitsContentPressPassesThrough pins the fits-content
+// contract: when the transcript fits the viewport the thumb fills the
+// track, there is no scroll range, and a track press passes through
+// without marking the view user-scrolled — a stray click must not pin
+// the viewport against the live tail.
+func TestScrollbarFitsContentPressPassesThrough(t *testing.T) {
+	ui := gateApp()
+	sim := setupSim(t, ui)
+	ui.appendMessage("one short message")
+	ui.refreshMessages()
+	ui.Root.Draw(sim)
+
+	geom, ok := ui.pane.ScrollbarGeom()
+	if !ok {
+		t.Fatalf("pane reports no scrollbar geometry")
+	}
+	if geom.ThumbSize != geom.H {
+		t.Fatalf("fits-content thumb size = %d, want full track %d", geom.ThumbSize, geom.H)
+	}
+	act, ev := pressAt(ui, geom.X, geom.Y)
+	if act != tview.MouseLeftDown || ev == nil {
+		t.Fatalf("fits-content track press should pass through: act=%v", act)
+	}
+	if ui.tr.UserScrolled() {
+		t.Fatalf("fits-content press marked the view user-scrolled")
+	}
+	if ui.scrollDrag >= 0 {
+		t.Fatalf("fits-content press armed a drag")
+	}
+}
+
+// TestScrollbarStaleDragHealsOnPress pins the self-heal's second path:
+// a release outside the pane is missed, so the drag flag can be stale
+// when the next press lands in the content columns — the press must
+// clear it, or a later button-held move would jump the viewport.
+func TestScrollbarStaleDragHealsOnPress(t *testing.T) {
+	ui := gateApp()
+	sim := setupSim(t, ui)
+	x, y := scrollbarTestSetup(t, ui, sim)
+
+	geom, _ := ui.pane.ScrollbarGeom()
+	if _, ev := pressAt(ui, x, geom.ThumbStart); ev != nil {
+		t.Fatalf("press on thumb not consumed")
+	}
+	if ui.scrollDrag < 0 {
+		t.Fatalf("press did not arm the drag")
+	}
+
+	// The stale release is missed; the next press lands in the content
+	// columns and must disarm the drag.
+	if _, ev := pressAt(ui, x-1, y); ev == nil {
+		t.Fatalf("content press should pass through")
+	}
+	if ui.scrollDrag >= 0 {
+		t.Fatalf("content press left a stale drag armed")
+	}
+
+	// A button-held move afterwards is an ordinary move, not a drag:
+	// the viewport does not move.
+	before := ui.pane.Offset()
+	act, ev := dragTo(ui, x-1, y+2)
+	if act != tview.MouseMove || ev == nil {
+		t.Fatalf("move after healed drag should pass through: act=%v", act)
+	}
+	if got := ui.pane.Offset(); got != before {
+		t.Fatalf("healed drag still scrolled the viewport: %d -> %d", before, got)
+	}
+}

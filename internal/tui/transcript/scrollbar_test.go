@@ -168,9 +168,29 @@ func TestScrollToThumb(t *testing.T) {
 	}
 }
 
+// TestScrollToThumbOneRowViewport pins the degenerate drag: a 1-row
+// viewport over overflowing content clamps the thumb to the whole
+// track, which has no representable positions — ScrollToThumb must be
+// a no-op, not a divide-by-zero.
+func TestScrollToThumbOneRowViewport(t *testing.T) {
+	_, p := scrollbarTestPane(t, 50)
+	p.SetRect(0, 0, 11, 1)
+	p.Model().SetScrolled(true)
+	p.ScrollTo(5)
+	g, ok := p.ScrollbarGeom()
+	if !ok || g.H != 1 || g.ThumbSize != 1 {
+		t.Fatalf("1-row viewport geometry = (ok=%v h=%d size=%d), want full-track thumb", ok, g.H, g.ThumbSize)
+	}
+	p.ScrollToThumb(g.Y)
+	if got := p.Offset(); got != 5 {
+		t.Fatalf("no-position drag moved the viewport to %d, want it pinned at 5", got)
+	}
+}
+
 // TestContentWidthReservesTrack pins the wrap-width contract: the track
 // column is excluded from the width items wrap at, unconditionally, so
-// the wrap width never changes when content becomes scrollable.
+// the wrap width never changes when content becomes scrollable — and
+// the no-rect fallback honors the same contract.
 func TestContentWidthReservesTrack(t *testing.T) {
 	_, p := scrollbarTestPane(t, 1)
 	if got := p.ContentWidth(); got != 40 {
@@ -179,5 +199,9 @@ func TestContentWidthReservesTrack(t *testing.T) {
 	p.SetRect(0, 0, 1, 10)
 	if got := p.ContentWidth(); got != 1 {
 		t.Fatalf("1-wide pane content width = %d, want 1", got)
+	}
+	p.SetRect(0, 0, 0, 10)
+	if got := p.ContentWidth(); got != 79 {
+		t.Fatalf("no-rect content width = %d, want the 79 fallback", got)
 	}
 }

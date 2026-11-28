@@ -33,6 +33,11 @@ func (t *App) scrollbarMouse(action tview.MouseAction, event *tcell.EventMouse) 
 	}
 	switch action {
 	case tview.MouseLeftDown:
+		// A fresh press always ends any stale drag first: a release
+		// outside the pane was missed by design, and the next press
+		// (even in the content columns, which pass through below)
+		// must not leave the old drag armed.
+		t.scrollDrag = -1
 		return t.scrollbarPress(event)
 	case tview.MouseMove:
 		if t.scrollDrag < 0 {
@@ -53,6 +58,13 @@ func (t *App) scrollbarMouse(action tview.MouseAction, event *tcell.EventMouse) 
 func (t *App) scrollbarPress(event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
 	geom, ok := t.pane.ScrollbarGeom()
 	if !ok || !onTrack(geom, event) {
+		return tview.MouseLeftDown, event
+	}
+	// A thumb that fills the track — content fits, or a 1-row viewport
+	// over any overflow — has no scroll range: the press passes
+	// through untouched, and the view is not marked user-scrolled (a
+	// stray click must not pin the viewport against the live tail).
+	if geom.ThumbSize >= geom.H {
 		return tview.MouseLeftDown, event
 	}
 	t.tr.SetScrolled(true)

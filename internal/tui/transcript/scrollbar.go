@@ -86,6 +86,12 @@ func (p *Pane) ScrollToThumb(sy int) {
 		p.offset = 0
 		return
 	}
+	// A thumb that fills the track (content fits, or a 1-row viewport
+	// over any overflow) has no representable positions: the drag is a
+	// no-op, never a divide-by-zero.
+	if g.H == g.ThumbSize {
+		return
+	}
 	p.offset = rel * span / (g.H - g.ThumbSize)
 	p.ClampOffset()
 }

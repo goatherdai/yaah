@@ -60,7 +60,7 @@ func (p *Pane) Model() *Model { return p.model }
 func (p *Pane) ContentWidth() int {
 	_, _, w, _ := p.GetRect()
 	if w <= 0 {
-		return 80
+		return 79
 	}
 	if w >= 2 {
 		w--
