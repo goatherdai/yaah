@@ -12,9 +12,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	kerneltrace "github.com/goatherdai/goatherd-kernel"
 
@@ -370,12 +370,5 @@ func argText(v any) string {
 // byte cap.
 func clipLine(s string, max int) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	cut := max
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + "…"
+	return textclip.Head(s, max, "…")
 }

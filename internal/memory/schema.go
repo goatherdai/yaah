@@ -14,6 +14,7 @@ package memory
 import (
 	"database/sql"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,11 +65,7 @@ const maxSessionPromptBytes = 64 * 1024
 // truncateWithMarker caps s at max bytes, replacing any partial UTF-8
 // sequence at the cut point and appending a truncation marker when cut.
 func truncateWithMarker(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	cut := strings.ToValidUTF8(s[:max], "")
-	return cut + "\n…[truncated]"
+	return textclip.Head(strings.ToValidUTF8(s, ""), max, "\n…[truncated]")
 }
 
 // Memory scopes are the explicit tiers of docs/compaction-as-sleep.md §8 P3

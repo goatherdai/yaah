@@ -16,12 +16,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"log/slog"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/goatherd-runtime"
@@ -781,14 +781,7 @@ func (s *Service) record(rule, scopeID, kind, command, reason string) {
 // a UTF-8 rune boundary, marking the cut with an ellipsis so a reader can
 // tell a short command from a clipped one.
 func boundDenyDetail(v string) string {
-	if len(v) <= maxDenyDetailBytes {
-		return v
-	}
-	cut := maxDenyDetailBytes
-	for cut > 0 && !utf8.RuneStart(v[cut]) {
-		cut--
-	}
-	return v[:cut] + "…"
+	return textclip.Head(v, maxDenyDetailBytes, "…")
 }
 
 // appendDenyFact records one blocked call in the refused scope's trace:

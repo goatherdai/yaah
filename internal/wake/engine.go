@@ -3,6 +3,7 @@ package wake
 import (
 	"context"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"strconv"
 	"strings"
 	"time"
@@ -317,24 +318,13 @@ func condLabel(c condition) string {
 
 // clip bounds s by bytes, preserving valid UTF-8 at the cut.
 func clip(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return strings.ToValidUTF8(s[:max], "") + "…[truncated]"
+	return textclip.Head(strings.ToValidUTF8(s, ""), max, "…[truncated]")
 }
 
 // tail bounds s to its last max bytes: the newest output is the diagnostic
 // part of a log or command result. Earlier output is marked as dropped.
 func tail(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	cut := len(s) - max
-	// Do not begin in the middle of a UTF-8 continuation byte.
-	for cut < len(s) && (s[cut]&0xC0) == 0x80 {
-		cut++
-	}
-	return "...[earlier output dropped]...\n" + s[cut:]
+	return textclip.Tail(s, max, "...[earlier output dropped]...\n")
 }
 
 // head returns at most n elements of xs.

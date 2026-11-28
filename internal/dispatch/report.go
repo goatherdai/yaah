@@ -12,7 +12,7 @@ package dispatch
 
 import (
 	"fmt"
-	"unicode/utf8"
+	"github.com/goatherdai/yaah/internal/textclip"
 
 	"github.com/goatherdai/yaah/internal/reportpage"
 )
@@ -37,16 +37,9 @@ const maxDurableReportBytes = 8 << 20
 // capDurableReport bounds a report for durable sealing (see
 // maxDurableReportBytes). Under the cap it returns the text unchanged.
 func capDurableReport(s string) string {
-	if len(s) <= maxDurableReportBytes {
-		return s
-	}
-	cut := maxDurableReportBytes
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + fmt.Sprintf(
+	return textclip.Head(s, maxDurableReportBytes, fmt.Sprintf(
 		"\n...[report exceeded the %d-byte durable cap; the remainder was not retained]...",
-		maxDurableReportBytes)
+		maxDurableReportBytes))
 }
 
 // retrieveProposalReport renders the route a bounded proposal report names:

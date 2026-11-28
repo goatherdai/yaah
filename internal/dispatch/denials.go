@@ -8,8 +8,8 @@ package dispatch
 
 import (
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/goatherdai/yaah/internal/jobs"
 )
@@ -89,12 +89,5 @@ func oneLine(s string, max int) string {
 		}
 		return r
 	}, s)
-	if len(s) <= max {
-		return s
-	}
-	cut := max
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + "...[clipped]"
+	return textclip.Head(s, max, "...[clipped]")
 }

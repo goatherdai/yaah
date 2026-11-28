@@ -3,6 +3,7 @@ package validate
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"sort"
 	"strings"
 )
@@ -242,9 +243,5 @@ func sortedKeys(m map[string]any) []string {
 // truncated bounds a value quoted into a message, on rune boundaries so a
 // non-ASCII schema name cannot be cut mid-codepoint.
 func truncated(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
+	return textclip.HeadRunes(s, n, "…")
 }

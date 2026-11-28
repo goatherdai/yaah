@@ -3,8 +3,8 @@ package agent
 import (
 	"fmt"
 	"log/slog"
-	"unicode/utf8"
 
+	"github.com/goatherdai/yaah/internal/textclip"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -88,27 +88,16 @@ func headPrefix(s string, n int) string {
 	if n <= 0 {
 		return ""
 	}
-	if n >= len(s) {
-		return s
-	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n]
+	kept, _ := textclip.Bytes(s, n)
+	return kept
 }
 
 // tailSuffix returns at most n bytes from the end of s on a character
 // boundary.
 func tailSuffix(s string, n int) string {
-	if n <= 0 || n >= len(s) {
-		if n <= 0 {
-			return ""
-		}
-		return s
+	if n <= 0 {
+		return ""
 	}
-	start := len(s) - n
-	for start < len(s) && !utf8.RuneStart(s[start]) {
-		start++
-	}
-	return s[start:]
+	kept, _ := textclip.TailBytes(s, n)
+	return kept
 }

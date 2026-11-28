@@ -26,6 +26,7 @@ package supervision
 
 import (
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"math"
 	"sort"
 	"strings"
@@ -605,17 +606,10 @@ func singleLine(s string) string {
 // long, not 351. Runes, not bytes: a byte cut would split a multi-byte
 // character. max <= 0 means no cap, and the input is returned unchanged.
 func clipRunes(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	runes := []rune(s)
-	if len(runes) <= max {
-		return s
-	}
 	if max == 1 {
-		return "…" // guard max-1 == 0
+		return "…" // the marker is the whole budget
 	}
-	return string(runes[:max-1]) + "…"
+	return textclip.HeadRunesWithin(s, max, "…")
 }
 
 // fileList renders a modified-file set for its one line of the block: every

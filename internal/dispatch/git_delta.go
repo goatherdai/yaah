@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"github.com/goatherdai/yaah/internal/tools/substrate"
 	"io/fs"
 	"os"
@@ -435,14 +436,7 @@ func excludedFromManifest(p string) bool { return substrate.ExcludedFromManifest
 // clipDeltaReview bounds the display-only diff. The manifest is never clipped.
 func clipDeltaReview(review string) string {
 	review = strings.TrimRight(review, "\n")
-	if len(review) <= gitDeltaMaxReviewBytes {
-		return review
-	}
-	cut := gitDeltaMaxReviewBytes
-	for cut > 0 && !utf8.RuneStart(review[cut]) {
-		cut--
-	}
-	return review[:cut] + "\n...[review truncated; the manifest is complete]"
+	return textclip.Head(review, gitDeltaMaxReviewBytes, "\n...[review truncated; the manifest is complete]")
 }
 
 // proposalArtifactDir is where a container proposal's manifest lives. It is

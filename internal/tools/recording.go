@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"io/fs"
 	"path/filepath"
 	"strings"
@@ -614,12 +615,12 @@ func boundedRunes(s string, max int) string {
 	if !utf8.ValidString(s) {
 		s = strings.ToValidUTF8(s, "?")
 	}
-	runes := []rune(s)
-	if len(runes) <= max {
-		return s
-	}
 	if max <= 3 {
+		runes := []rune(s)
+		if len(runes) <= max {
+			return s
+		}
 		return string(runes[:max])
 	}
-	return string(runes[:max-3]) + "..."
+	return textclip.HeadRunesWithin(s, max, "...")
 }

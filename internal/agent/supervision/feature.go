@@ -9,6 +9,7 @@
 package supervision
 
 import (
+	"github.com/goatherdai/yaah/internal/textclip"
 	"strings"
 
 	"github.com/goatherdai/yaah/internal/supervisionapi"
@@ -38,9 +39,6 @@ func clipRunes(s string, max int) string {
 	if max <= 0 {
 		return ""
 	}
-	r := []rune(s)
-	if len(r) <= max {
-		return s
-	}
-	return string(r[:max])
+	kept, _ := textclip.Runes(s, max)
+	return kept
 }

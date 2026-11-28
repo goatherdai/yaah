@@ -2,6 +2,7 @@ package memory
 
 import (
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"sort"
 	"time"
 )
@@ -147,9 +148,5 @@ func (d *DB) Journey(limit int) ([]JourneyEvent, error) {
 // truncateRunes cuts s to at most n runes without splitting a multi-byte
 // rune, appending an ellipsis when truncation happened.
 func truncateRunes(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
+	return textclip.HeadRunes(s, n, "…")
 }
