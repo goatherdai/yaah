@@ -90,6 +90,54 @@ func refuseDeprecatedTUIFlags() error {
 	return nil
 }
 
+// submitUI is the slice of the TUI the submit and stop paths need. Narrow,
+// so a test can drive them without building a live tview app.
+type submitUI interface {
+	AddPrompt(string)
+	ShowThinking()
+	HideThinking()
+}
+
+// promptSession is the slice of the session the submit and stop paths need.
+type promptSession interface {
+	RunPrompt(ctx context.Context, prompt string) (string, bool, error)
+	HaltCurrentRun()
+}
+
+// submitStopHooks wires the TUI's submit and stop paths as a pair, because
+// they share one piece of state: the cancel of the context the last submit
+// handed the session.
+//
+// A stop has two things to reach. A prompt still queued behind the running
+// turn: RunPrompt waits on the run gate, so a queued prompt has no run to
+// cancel yet. Its context is cancelled first, so it aborts as soon as it
+// gets the gate — even if that is the instant the running turn releases
+// it. And the run in flight, through the session's HaltCurrentRun: it is
+// registered for every run — including wake-started turns, which never
+// pass through a submit — and cleared when the run returns, so a stop lands
+// on the run actually in flight and is a no-op when none is. Before this
+// the queued prompt's cancel was the only one, which is why a stop could
+// not reach a wake-started turn (yaah-l2z1).
+func submitStopHooks(app submitUI, sess promptSession) (onSubmit func(string), onStop func()) {
+	var cancelSubmit context.CancelFunc
+	onSubmit = func(input string) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancelSubmit = cancel
+		app.AddPrompt(input)
+		app.ShowThinking()
+		go sess.RunPrompt(ctx, input)
+	}
+	onStop = func() {
+		app.HideThinking()
+		if cancelSubmit != nil {
+			cancelSubmit()
+			cancelSubmit = nil
+		}
+		sess.HaltCurrentRun()
+	}
+	return onSubmit, onStop
+}
+
 func runTUI(initialSpec string) error {
 	// Interactive surface: honor bare --resume before building the
 	// session (stderr is hijacked later; this runs on the real terminal).
@@ -195,21 +243,11 @@ func runTUI(initialSpec string) error {
 		app.SetEphemeral(reply)
 	}
 
-	var cancelAgent context.CancelFunc
-	app.Hooks.OnSubmit = func(input string) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancelAgent = cancel
-		app.AddPrompt(input)
-		app.ShowThinking()
-		go sess.RunPrompt(ctx, input)
-	}
-	app.Hooks.OnAbort = func() {
-		app.HideThinking()
-		if cancelAgent != nil {
-			cancelAgent()
-			cancelAgent = nil
-		}
-	}
+	onSubmit, onStop := submitStopHooks(app, sess)
+	app.Hooks.OnSubmit = onSubmit
+	// OnAbort is OnStop's fallback twin: internal/tui only calls it when
+	// OnStop is nil, so the two must never diverge.
+	app.Hooks.OnAbort = onStop
 	app.Hooks.OnCompact = func() {
 		go sess.Compact()
 	}
@@ -333,13 +371,7 @@ func runTUI(initialSpec string) error {
 		app.EchoPrompt(text)
 		sess.FollowUp(text)
 	}
-	app.Hooks.OnStop = func() {
-		app.HideThinking()
-		if cancelAgent != nil {
-			cancelAgent()
-			cancelAgent = nil
-		}
-	}
+	app.Hooks.OnStop = onStop
 
 	app.Hooks.ControlCh = controlCh
 	sess.SetView(app)

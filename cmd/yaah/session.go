@@ -493,9 +493,11 @@ func (s *agentSession) shutdown() {
 	// A watch can start its own turn. Cancel it (once it has published its
 	// cancel func) and join the run gate — bounded — before the workspace
 	// substrate below is destroyed: a wake mid-Exec must not still hold the
-	// sandbox its owner is tearing down. The join runs even when runInFlight
-	// is not visible yet, because StartWakeTurn claims the gate before its
-	// goroutine publishes the run state.
+	// sandbox its owner is tearing down. The join waits out the unwind of
+	// whatever the cancel reached. It does not stop a RunPrompt that is
+	// still queued on the gate: nothing cancels that caller's context, and
+	// RunPrompt does not check s.closed, so one can take the gate after the
+	// join samples it (yaah-l025).
 	s.mu.RLock()
 	cancelRun := s.runCancel
 	s.mu.RUnlock()
@@ -935,10 +937,13 @@ func (s *agentSession) TurnBudgetExhausted() bool {
 }
 
 // RunPrompt runs one prompt under a context the session owns: derived
-// from the caller's, so the frontends' own cancels (TUI abort, serve's
-// signal context) compose, but with a session-held cancel that
-// HaltCurrentRun can invoke — that is what supervisor halt on the root
-// scope bridges to (adoption plan A3, gated by supervisor.halt_root).
+// from the caller's, so the frontends' own cancels (the TUI's per-submit
+// cancel, serve's signal context) compose with the session-held cancel
+// that HaltCurrentRun can invoke — that is what supervisor halt on the
+// root scope bridges to (adoption plan A3, gated by supervisor.halt_root).
+// A prompt still queued on the run gate has no run for HaltCurrentRun to
+// reach; only its caller's cancel can stop it before it starts
+// (yaah-l2z1).
 func (s *agentSession) RunPrompt(ctx context.Context, prompt string) (string, bool, error) {
 	var (
 		response string
@@ -956,22 +961,30 @@ func (s *agentSession) RunPrompt(ctx context.Context, prompt string) (string, bo
 	return response, streamed, err
 }
 
-// runPromptLocked runs one turn. The caller must hold the run gate (runMu).
-func (s *agentSession) runPromptLocked(ctx context.Context, prompt string) (string, bool, error) {
+// beginRun derives the run context and publishes it as the session's
+// in-flight run, which is what HaltCurrentRun cancels. The caller must
+// hold the run gate and must call the returned release when the run ends.
+func (s *agentSession) beginRun(ctx context.Context) (context.Context, func()) {
 	runCtx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
 	s.runCancel = cancel
 	s.runCtx = runCtx
 	s.runInFlight = true
 	s.mu.Unlock()
-	defer func() {
+	return runCtx, func() {
 		s.mu.Lock()
 		s.runCancel = nil
 		s.runCtx = nil
 		s.runInFlight = false
 		s.mu.Unlock()
 		cancel()
-	}()
+	}
+}
+
+// runPromptLocked runs one turn. The caller must hold the run gate (runMu).
+func (s *agentSession) runPromptLocked(ctx context.Context, prompt string) (string, bool, error) {
+	runCtx, release := s.beginRun(ctx)
+	defer release()
 	return s.runPrompt(runCtx, prompt)
 }
 
@@ -1029,9 +1042,15 @@ func (s *agentSession) StartWakeTurn(text string) bool {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Publish the run before it has a goroutine. The gate is already held
+	// here, and a stop that lands before the goroutine is first scheduled
+	// must still find a cancel to invoke — otherwise it would be a no-op and
+	// the turn would run to completion against it (yaah-l2z1).
+	runCtx, release := s.beginRun(ctx)
 	go func() {
 		defer s.runMu.Unlock()
-		_, _, _ = s.runPromptLocked(ctx, text)
+		defer release()
+		_, _, _ = s.runPrompt(runCtx, text)
 	}()
 	return true
 }
