@@ -16,22 +16,20 @@ import (
 	"github.com/goatherdai/yaah/internal/tui/transcript"
 )
 
-// toolBlockKey picks the id a tool block is keyed on, and reports whether that
-// id identifies the call for the whole session. The event's session-unique Key
-// is authoritative; a keyless event (a legacy or test dispatch) falls back to
+// toolBlockKey picks the id a tool block is keyed on. The event's session-unique
+// Key is authoritative; a keyless event (a legacy or test dispatch) falls back to
 // the run-scoped ordinal, matching the pre-yaah-77f1 behaviour rather than
-// opening an empty-key block that any later keyless end could settle. The other
-// views carry the same fallback (acp.toolCallIDFor, the web wire's tool_id), so
-// the TUI is not the lone exception.
+// opening an empty-key block. The other views carry the same fallback
+// (acp.correlateID, the web wire's tool_id), so the TUI is not the lone exception.
 //
-// The second return value is load-bearing for settlement: a fallback key is an
-// ordinal that restarts at 1 on every prompt, so nothing may be stashed under it
-// for a later start to find (see settleToolEnd).
-func toolBlockKey(key string, id int64) (string, bool) {
+// That the fallback repeats on every prompt is handled where it matters — in the
+// ledger, which matches records on (turn generation, key) rather than the key
+// alone, so a keyless call can never settle another turn's block (yaah-ol3r).
+func toolBlockKey(key string, id int64) string {
 	if key != "" {
-		return key, true
+		return key
 	}
-	return strconv.FormatInt(id, 10), false
+	return strconv.FormatInt(id, 10)
 }
 
 func (t *App) HandleEvent(event agent.Event) {
@@ -59,56 +57,62 @@ func (t *App) HandleEvent(event agent.Event) {
 		// prompt), so keying on it alone made a later prompt's call
 		// settle an earlier prompt's block (yaah-77f1). A dropped update
 		// is counted below: the block it would have created never exists.
-		key, _ := toolBlockKey(e.Key, e.ID)
+		key := toolBlockKey(e.Key, e.ID)
+		// The generation is read HERE, on the forwarder goroutine in event
+		// order: reading it when the queued update runs would let a later
+		// turn's DoneEvent bump it first, which is exactly the cross-turn
+		// confusion the ledger's generation exists to prevent.
+		gen := t.turnGen.Load()
 		scheduled := t.queueUpdateCritical(func() {
 			t.pendingTool = e.Name
 			if e.Name == "delegate" {
 				return
 			}
 			t.setActivity(activity.Tool, e.Name)
-			t.AddToolStart(key, e.Name, e.Args)
+			t.addToolStart(gen, key, e.Name, e.Args)
 		})
 		if !scheduled && e.Name != "delegate" {
 			// The update will never run, so no block exists for this
-			// call. Count the loss here: nothing downstream can see it.
+			// call. Count the loss here, where it is observed, and record
+			// it so the turn-end sweep does not also attribute the block
+			// — and does not keep waiting for a start that cannot come.
 			// A delegate draws no tool block, so its loss is not a block
-			// loss and is not counted as one.
+			// loss.
+			t.ledger.markStartDropped(gen, key)
 			t.recordToolOrphan(orphanKindDroppedStart)
 		}
 	case *agent.ToolEndEvent:
 		// The same key the start used: a dropped end is recorded under it so
 		// the turn-end sweep can attribute the block it could not settle.
-		key, unique := toolBlockKey(e.Key, e.ID)
+		key := toolBlockKey(e.Key, e.ID)
+		gen := t.turnGen.Load()
 		scheduled := t.queueUpdateCritical(func() {
 			t.pendingTool = ""
 			if e.Name == "delegate" {
 				return
 			}
 			if e.Error != "" {
-				t.settleToolEnd(key, transcript.ToolEnd{
+				t.settleToolEnd(gen, key, transcript.ToolEnd{
 					Summary:  e.Name + " \u274C",
 					Result:   e.Error,
 					Duration: e.Duration,
 					Error:    true,
-				}, unique)
+				})
 			} else {
-				t.settleToolEnd(key, transcript.ToolEnd{
+				t.settleToolEnd(gen, key, transcript.ToolEnd{
 					Summary:  toolfmt.Summary(e.Name, e.Args, e.Result),
 					Result:   e.Result,
 					Duration: e.Duration,
-				}, unique)
+				})
 			}
 			t.restoreActivity()
 		})
 		if !scheduled && e.Name != "delegate" {
 			// The end will never be applied. Count it as the drop it is
-			// and remember the key, so the turn-end sweep — or, if the
-			// start is still in flight, AddToolStart — seals the block
-			// (never a permanent chevron) without claiming the loss as
-			// its own. A fallback key is recorded too, but turn-scoped:
-			// it can attribute this turn's sweep, not identify a later
-			// turn's call (see lostToolEnd).
-			t.recordLostToolEnd(key, unique)
+			// and record it, so the turn-end sweep — or, if the start is
+			// still in flight, the start itself — seals the block (never
+			// a permanent chevron) without claiming the loss as its own.
+			t.ledger.markEndLost(gen, key)
 			t.recordToolOrphan(orphanKindDroppedEnd)
 		}
 	case *agent.SubAgentStartEvent:
@@ -202,6 +206,13 @@ func (t *App) HandleEvent(event agent.Event) {
 			t.addWakePrompt(e.Text)
 		})
 	case *agent.DoneEvent:
+		// The generation is closed HERE, in event order: every tool event of
+		// this turn was already stamped with gen, and any event of the next
+		// turn will be stamped gen+1 — even if it is handled before this
+		// sweep's closure runs on the UI goroutine. That is what makes a
+		// turn's records impossible to consume from another turn.
+		gen := t.turnGen.Load()
+		t.turnGen.Add(1)
 		scheduled := t.queueUpdateDrawCritical(func() {
 			flushed := t.flushPendingTokens()
 			t.pendingTool = ""
@@ -212,8 +223,9 @@ func (t *App) HandleEvent(event agent.Event) {
 			// Self-healing seal: any tool block still Running has no end
 			// event coming — the turn is over. Sweep it to a terminal
 			// state with an interrupted marker instead of leaving a
-			// permanent chevron (yaah-ebhe).
-			t.SweepStuckToolBlocks()
+			// permanent chevron (yaah-ebhe), and attribute this turn's
+			// losses once.
+			t.sweepTurn(gen)
 			t.setActivity(activity.Idle, "")
 			// The response renders only when neither the stop echo's
 			// flush nor this flush painted it: the streamed buffer and
@@ -253,13 +265,11 @@ func (t *App) HandleEvent(event agent.Event) {
 			// goroutine — and re-queueing it could seal the NEXT turn's
 			// blocks, so the loss is recorded instead of recovered.
 			//
-			// The turn-scoped lost-end records go with the missing sweep: no
-			// sweep of this turn will consume them, and their fallback keys
-			// repeat next prompt, where they would suppress a different
-			// turn's swept attribution. Unique-keyed records stay, because a
-			// start from this turn may still land and consume one
-			// (yaah-77f1 review).
-			t.dropFallbackLostEnds()
+			// No record needs discarding here: the entries this sweep would
+			// have retired are stamped gen, the next turn's events are stamped
+			// gen+1, and attribution matches on the generation — so a stale
+			// entry cannot suppress the next turn's accounting, and the next
+			// sweep retires it as stale (yaah-ol3r).
 			t.recordToolOrphan(orphanKindDroppedSweep)
 		}
 	}

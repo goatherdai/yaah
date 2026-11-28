@@ -1,13 +1,13 @@
 package tui
 
 import (
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/goatherdai/yaah/internal/agent"
 	"github.com/goatherdai/yaah/internal/tui/components/toolblock"
+	"github.com/goatherdai/yaah/internal/tui/transcript"
 )
 
 // tool_drop_test.go — what the view does when a tool call's UI update is not
@@ -231,19 +231,18 @@ func TestToolEndBeforeStartSettlesOneBlock(t *testing.T) {
 			}
 			// The stashed end settled this block; it must not be left over to
 			// settle a later one.
-			if got := len(ui.tr.UnmatchedEnds()); got != 0 {
+			if got := ui.ledger.pending(); got != 0 {
 				t.Errorf("stashed ends after the start = %d, want 0", got)
 			}
 		})
 	}
 }
 
-// TestStashedEndSettlesOnlyItsOwnKey pins the real turn boundary. The sweep no
-// longer clears the stash — it can run before a start from the SAME turn is
-// applied, and clearing there would strand that start (see
-// TestLateToolStartAfterTheSweepIsStillSettled) — so what keeps turns apart is
-// the session-unique key: another turn's start cannot match the stashed end,
-// and the entry stays put for the start that can.
+// TestStashedEndSettlesOnlyItsOwnKey pins the real turn boundary. What keeps
+// turns apart is the ledger's generation, matched together with the key: another
+// turn's start cannot match a stashed end even when the key is identical (a
+// keyless call's fallback ordinal is), and the entry stays put for the start
+// that can still claim it.
 func TestStashedEndSettlesOnlyItsOwnKey(t *testing.T) {
 	ui := gateApp()
 
@@ -259,7 +258,7 @@ func TestStashedEndSettlesOnlyItsOwnKey(t *testing.T) {
 	if !other[0].IsRunning() {
 		t.Fatal("another turn's start was settled by a stashed end it never emitted")
 	}
-	if n := len(ui.tr.UnmatchedEnds()); n != 1 {
+	if n := ui.ledger.pending(); n != 1 {
 		t.Fatalf("stash = %d after an unrelated start, want the entry kept for its own key", n)
 	}
 
@@ -275,96 +274,45 @@ func TestStashedEndSettlesOnlyItsOwnKey(t *testing.T) {
 	}
 }
 
-// TestLostToolEndRecordIsBounded pins that the drop record cannot grow without
-// bound, records one key only once, and is consumed by its reader.
-func TestLostToolEndRecordIsBounded(t *testing.T) {
-	ui := gateApp()
-	for i := range lostToolEndsLimit + 4 {
-		ui.recordLostToolEnd("run1."+strconv.Itoa(i), true)
-	}
-	ui.recordLostToolEnd("run1."+strconv.Itoa(lostToolEndsLimit+3), true) // duplicate
-
-	lost := ui.takeLostToolEnds()
-	if len(lost) != lostToolEndsLimit {
-		t.Fatalf("recorded lost ends = %d, want the cap %d", len(lost), lostToolEndsLimit)
-	}
-	keys := make(map[string]bool, len(lost))
-	for _, le := range lost {
-		keys[le.key] = true
-	}
-	if keys["run1.0"] {
-		t.Error("the oldest record was kept past the cap")
-	}
-	if !keys["run1."+strconv.Itoa(lostToolEndsLimit+3)] {
-		t.Error("the newest record was dropped")
-	}
-	if again := ui.takeLostToolEnds(); len(again) != 0 {
-		t.Errorf("a second take returned %d entries, want 0 (the record must be consumed)", len(again))
-	}
-}
-
 // TestLateToolStartAfterTheSweepIsStillSettled pins the ordering the sweep must
-// survive. An end can be applied before its own start, and the sweep can run
-// BETWEEN them: the critical fallback runs the DoneEvent's reconciliation
-// directly when the UI queue is saturated, ahead of a start still waiting in
-// that queue. The stashed end must therefore survive the sweep — clearing it
-// would leave the late start to create a Running block after the only sweep of
-// the turn had already run, with the end's result thrown away.
+// survive. The sweep can run while a start from the SAME turn is still in flight
+// — the critical fallback runs the DoneEvent's reconciliation directly, ahead of a
+// start still waiting in the queue — so the end it stashed must survive the sweep
+// and settle the block that start creates.
 //
-// The order is driven explicitly (end, then Done, then start) rather than raced
-// through a saturated queue, because that order is what saturation produces and
-// is exactly what the fix must tolerate.
+// The generations here are explicit because that is the real shape: the start's
+// event was handled BEFORE the DoneEvent (so it carries the turn being closed),
+// even though its update runs after the sweep. Driving it through HandleEvent
+// after the DoneEvent would stamp it with the next turn and test nothing.
 func TestLateToolStartAfterTheSweepIsStillSettled(t *testing.T) {
-	ui, stop := newQueuedApp(t)
-	defer stop()
+	ui := gateApp()
 
-	// 1. The end arrives with no block to receive it: it is stashed.
-	ui.HandleEvent(&agent.ToolEndEvent{
-		Key: "run2.1", ID: 1, Name: "read", Args: `{"path":"a"}`,
-		Result: "the-result", Duration: 2 * time.Millisecond,
-	})
-	waitForUI(t, ui, func() bool { return len(ui.tr.UnmatchedEnds()) == 1 },
-		"the end for a block that does not exist yet was not stashed")
-
-	// 2. The turn ends and sweeps, before the start has been applied. The probe
-	// rides the same queue, so it runs after the DoneEvent's reconciliation.
-	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
-	var stashedAfterSweep int
-	probe := make(chan struct{})
-	ui.queueUpdate(func() {
-		stashedAfterSweep = len(ui.tr.UnmatchedEnds())
-		close(probe)
-	})
-	<-probe
-	if stashedAfterSweep != 1 {
-		t.Fatalf("stashed ends after the sweep = %d, want 1: the sweep dropped an end a start from the same turn still needs, so that start would create an unswept Running block", stashedAfterSweep)
+	ui.settleToolEnd(1, "run2.1", transcript.ToolEnd{Summary: "read", Result: "the-result", Duration: 2 * time.Millisecond})
+	if got := ui.ledger.pending(); got != 1 {
+		t.Fatalf("ledger entries after the end = %d, want 1", got)
 	}
 
-	// 3. The late start applies: its block must be created already settled.
-	ui.HandleEvent(&agent.ToolStartEvent{Key: "run2.1", ID: 1, Name: "read", Args: `{"path":"a"}`})
-	waitForUI(t, ui, func() bool { return len(toolBlocks(ui, "run2.1")) == 1 },
-		"the late tool start created no block")
-
-	var state toolblock.State
-	var text string
-	waitForUI(t, ui, func() bool {
-		blocks := toolBlocks(ui, "run2.1")
-		if len(blocks) != 1 {
-			return false
-		}
-		state = blocks[0].S()
-		text = blocks[0].SearchText()
-		return true
-	}, "the late tool block could not be read")
-
-	if state == toolblock.Running {
-		t.Fatal("the late start created a Running block after the turn's only sweep had run: it would keep a permanent chevron")
+	ui.sweepTurn(1)
+	if got := ui.ledger.pending(); got != 1 {
+		t.Fatalf("ledger entries after the sweep = %d, want 1: the end must survive for a start still in flight", got)
 	}
-	if state != toolblock.Done {
-		t.Fatalf("late block state = %v, want Done (settled by the end that arrived first)", state)
+
+	ui.addToolStart(1, "run2.1", "read", `{"path":"a"}`)
+	blocks := toolBlocks(ui, "run2.1")
+	if len(blocks) != 1 {
+		t.Fatalf("blocks for the late start = %d, want 1", len(blocks))
 	}
-	if !strings.Contains(text, "the-result") {
-		t.Fatalf("the late block lost the end's result: %q", text)
+	if blocks[0].IsRunning() {
+		t.Fatal("the late start created a Running block after the turn's only sweep had run: permanent chevron")
+	}
+	if blocks[0].S() != toolblock.Done {
+		t.Fatalf("late block state = %v, want Done", blocks[0].S())
+	}
+	if !strings.Contains(blocks[0].SearchText(), "the-result") {
+		t.Fatal("the late block lost the end's result")
+	}
+	if got := ui.ledger.pending(); got != 0 {
+		t.Fatalf("ledger entries after the start consumed one = %d, want 0", got)
 	}
 }
 
@@ -388,103 +336,66 @@ func TestDroppedTurnEndReconciliationIsCounted(t *testing.T) {
 }
 
 // TestLostEndSealsAStartThatLandsAfterTheSweep pins the case the sweep cannot
-// reach on its own: the end's UI update was dropped while its start was still in
-// flight, so at turn end there is no block to seal. The record must survive the
-// sweep and be consumed by the late start, which creates the block terminal —
-// otherwise the start creates a Running block after the turn's only sweep and it
-// keeps a permanent chevron.
+// reach on its own: the end's UI update was dropped, so nothing will ever settle
+// the block. The record survives its turn's sweep for a start that may still
+// land, and that start creates the block terminal rather than Running.
 func TestLostEndSealsAStartThatLandsAfterTheSweep(t *testing.T) {
-	ui, stop := newQueuedApp(t)
-	defer stop()
+	ui := gateApp()
 
-	// 1. The end's update cannot be scheduled: counted, and its key recorded.
-	restore := saturate(t, ui)
-	ui.HandleEvent(&agent.ToolEndEvent{
-		Key: "run1.1", ID: 1, Name: "read", Args: `{"path":"a"}`,
-		Result: "the-result", Duration: time.Millisecond,
-	})
-	restore()
-
-	// 2. The turn ends. No block exists yet, so the sweep seals nothing — but it
-	// must keep the record for the start that has not landed.
-	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
-	var stashed int
-	probe := make(chan struct{})
-	ui.queueUpdate(func() {
-		stashed = len(ui.tr.UnmatchedEnds())
-		close(probe)
-	})
-	<-probe
-	if stashed != 0 {
-		t.Fatalf("the dropped end was stashed (%d entries), want the lost record path", stashed)
+	ui.ledger.markEndLost(1, "run1.1")
+	ui.sweepTurn(1)
+	if got := ui.ledger.pending(); got != 1 {
+		t.Fatalf("ledger entries after the sweep = %d, want the lost end kept for a start that may still land", got)
 	}
 
-	// 3. The start finally lands and must create the block terminal.
-	ui.HandleEvent(&agent.ToolStartEvent{Key: "run1.1", ID: 1, Name: "read", Args: `{"path":"a"}`})
-	waitForUI(t, ui, func() bool { return len(toolBlocks(ui, "run1.1")) == 1 },
-		"the late start created no block")
-
-	var state toolblock.State
-	waitForUI(t, ui, func() bool {
-		blocks := toolBlocks(ui, "run1.1")
-		if len(blocks) != 1 {
-			return false
-		}
-		state = blocks[0].S()
-		return true
-	}, "the late block could not be read")
-
-	if state == toolblock.Running {
-		t.Fatal("a start whose end was dropped landed after the turn's only sweep and was left Running: permanent chevron")
+	ui.addToolStart(1, "run1.1", "read", `{"path":"a"}`)
+	blocks := toolBlocks(ui, "run1.1")
+	if len(blocks) != 1 {
+		t.Fatalf("blocks for the late start = %d, want 1", len(blocks))
+	}
+	if blocks[0].IsRunning() {
+		t.Fatal("a start whose end was dropped landed after the sweep and was left Running: permanent chevron")
 	}
 	if n := runningToolBlocks(ui); n != 0 {
 		t.Fatalf("still-Running blocks = %d, want 0", n)
 	}
-
-	counts := ui.toolOrphanCounts()
-	if got := counts[orphanKindDroppedEnd]; got != 1 {
-		t.Fatalf("dropped_end = %d, want 1 (counts: %v)", got, counts)
-	}
-	if got := counts[orphanKindSwept]; got != 0 {
-		t.Fatalf("the sweep claimed a loss it never observed: swept = %d", got)
-	}
 }
 
-// TestFallbackKeyedEndIsNotStashed pins the other half of the no-clear rule. The
-// stash now survives the sweep, which is safe only because a key is
-// session-unique; a keyless event falls back to the run-scoped ordinal, which
-// repeats every prompt, so its end is discarded instead of hoarded.
-func TestFallbackKeyedEndIsNotStashed(t *testing.T) {
-	ui, stop := newQueuedApp(t)
-	defer stop()
+// TestKeylessEndCannotSettleAnotherTurn pins what a keyless event's identity
+// cannot do. Its block key falls back to the run-scoped ordinal, which repeats on
+// every prompt, so the guarantee that it cannot settle a later turn's call comes
+// from the ledger's generation — matched as (turn, key) — rather than from
+// refusing to keep the end at all.
+func TestKeylessEndCannotSettleAnotherTurn(t *testing.T) {
+	ui := gateApp()
 
-	// A keyless end: its block key is the run-scoped ordinal, which repeats
-	// every prompt. Counted as unmatched, but taken back out of the stash.
-	ui.HandleEvent(&agent.ToolEndEvent{
-		ID: 1, Name: "read", Args: `{"path":"a"}`, Result: "out", Duration: time.Millisecond,
-	})
-	waitForUI(t, ui, func() bool {
-		return len(ui.tr.UnmatchedEnds()) == 0 && ui.toolOrphanCounts()[orphanKindUnmatchedEnd] == 1
-	}, "a fallback-keyed end was hoarded in the stash (an ordinal repeats every prompt, so it could settle another turn's start)")
+	// Turn 1: an end whose start has not been applied yet.
+	ui.settleToolEnd(1, "1", transcript.ToolEnd{Summary: "read", Result: "out"})
+	ui.sweepTurn(1)
+	if got := ui.ledger.pending(); got != 1 {
+		t.Fatalf("ledger entries after the sweep = %d, want 1 kept for a start that may still land", got)
+	}
 
-	// The next turn reuses ordinal 1: its block must not inherit that end.
-	ui.HandleEvent(&agent.ToolStartEvent{ID: 1, Name: "read", Args: `{"path":"a"}`})
-	waitForUI(t, ui, func() bool {
-		blocks := toolBlocks(ui, "1")
-		return len(blocks) == 1 && blocks[0].IsRunning()
-	}, "a fallback-keyed block was settled by an end from another turn")
+	// Turn 2 reuses ordinal 1: its block must not inherit turn 1's end.
+	ui.addToolStart(2, "1", "read", `{"path":"a"}`)
+	blocks := toolBlocks(ui, "1")
+	if len(blocks) != 1 {
+		t.Fatalf("blocks for the keyless call = %d, want 1", len(blocks))
+	}
+	if !blocks[0].IsRunning() {
+		t.Fatal("a later turn's block was settled by an earlier turn's end")
+	}
 
-	// A session-unique key is still stashed, so a merely-late start heals.
-	var stashed int
-	probe := make(chan struct{})
-	ui.queueUpdate(func() {
-		ui.AddToolEnd("turn-a.2", "read", "out", time.Millisecond)
-		stashed = len(ui.tr.UnmatchedEnds())
-		close(probe)
-	})
-	<-probe
-	if stashed != 1 {
-		t.Fatalf("stashed ends for a unique key = %d, want 1", stashed)
+	// Its own turn still heals.
+	ui.addToolStart(1, "1", "read", `{"path":"b"}`)
+	var settled int
+	for _, b := range toolBlocks(ui, "1") {
+		if !b.IsRunning() {
+			settled++
+		}
+	}
+	if settled != 1 {
+		t.Fatalf("settled blocks = %d, want the one from its own turn", settled)
 	}
 }
 
@@ -526,62 +437,56 @@ func TestKeylessDroppedEndIsNotAlsoCountedAsSwept(t *testing.T) {
 	}
 }
 
-// TestDroppedTurnEndDoesNotStrandItsFallbackLosses pins the boundary a missing
-// sweep leaves behind. When the DoneEvent's reconciliation cannot be scheduled,
-// no sweep of that turn will ever consume its lost-end records; a fallback-keyed
-// one carries a run-scoped ordinal that repeats on the next prompt, so letting it
-// survive would suppress the NEXT turn's swept attribution for a block it never
-// observed being lost. A unique-keyed record is kept — a start from its own turn
-// may still land and consume it.
-func TestDroppedTurnEndDoesNotStrandItsFallbackLosses(t *testing.T) {
-	ui, stop := newQueuedApp(t)
-	defer stop()
+// TestDroppedSweepLossExplainsTheNextSweepsSeal pins the two-sweeps case. When a
+// turn's reconciliation is dropped AND one of its ends was dropped, nothing seals
+// that block until the NEXT turn's sweep. The later sweep must not then count the
+// same loss a second time as swept: that turn's record is the explanation, and it
+// is spent when it does the explaining.
+func TestDroppedSweepLossExplainsTheNextSweepsSeal(t *testing.T) {
+	ui := gateApp()
 
-	// Turn 1: a keyless end and then the turn end itself, both unschedulable.
-	restore := saturate(t, ui)
-	ui.HandleEvent(&agent.ToolEndEvent{ID: 1, Name: "read", Args: `{"path":"a"}`, Result: "dropped", Duration: time.Millisecond})
-	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
-	restore()
-
-	counts := ui.toolOrphanCounts()
-	if counts[orphanKindDroppedEnd] != 1 || counts[orphanKindDroppedSweep] != 1 {
-		t.Fatalf("turn 1 counts = %v, want one dropped_end and one dropped_sweep", counts)
+	// Turn 1: the start lands, so its block exists and is Running; the end's
+	// update is then lost, and the turn's own sweep never runs.
+	ui.addToolStart(1, "run1.1", "read", `{"path":"a"}`)
+	if n := runningToolBlocks(ui); n != 1 {
+		t.Fatalf("Running blocks = %d, want 1", n)
 	}
+	ui.ledger.markEndLost(1, "run1.1")
 
-	// Turn 2 reuses ordinal 1 and grows a block whose end never arrives: the
-	// sweep must attribute it, not the stale record from turn 1.
-	ui.HandleEvent(&agent.ToolStartEvent{ID: 1, Name: "read", Args: `{"path":"b"}`})
-	waitForUI(t, ui, func() bool { return runningToolBlocks(ui) == 1 },
-		"turn 2's keyless start created no Running block")
-	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
-	waitForUI(t, ui, func() bool { return runningToolBlocks(ui) == 0 },
-		"turn 2's sweep did not seal the block")
-
-	counts = ui.toolOrphanCounts()
-	if got := counts[orphanKindSwept]; got != 1 {
-		t.Fatalf("swept = %d, want 1: a stale fallback record from the previous turn suppressed this turn's attribution (counts: %v)", got, counts)
+	// Turn 2's sweep seals it. The loss was already attributed at the drop, so
+	// the recovery must not claim it too.
+	ui.sweepTurn(2)
+	if n := runningToolBlocks(ui); n != 0 {
+		t.Fatalf("Running blocks after the next sweep = %d, want 0", n)
+	}
+	counts := ui.toolOrphanCounts()
+	if got := counts[orphanKindSwept]; got != 0 {
+		t.Fatalf("swept = %d, want 0: the same loss was counted twice (counts: %v)", got, counts)
+	}
+	if n := ui.ledger.pending(); n != 0 {
+		t.Fatalf("entries after explaining a seal = %d, want 0 (it must be spent)", n)
 	}
 }
 
-// TestDroppedTurnEndKeepsUniqueLosses pins the other half: a lost end whose key
-// identifies the call survives a missing sweep, because a start from that same
-// turn can still land and use it.
-func TestDroppedTurnEndKeepsUniqueLosses(t *testing.T) {
-	ui, stop := newQueuedApp(t)
-	defer stop()
+// TestSweptAfterItsOwnTurnRanIsNotExplainedByAStaleRecord pins the other side:
+// when a turn's sweep DID run, its blocks were sealed then, so a seal attributed
+// later belongs to a later call and the stale record must not suppress it — a
+// keyless ordinal repeats on every prompt.
+func TestSweptAfterItsOwnTurnRanIsNotExplainedByAStaleRecord(t *testing.T) {
+	ui := gateApp()
 
-	restore := saturate(t, ui)
-	ui.HandleEvent(&agent.ToolEndEvent{
-		Key: "run1.1", ID: 1, Name: "read", Args: `{"path":"a"}`, Result: "the-result", Duration: time.Millisecond,
-	})
-	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
-	restore()
+	// Turn 1: an end is lost and the turn's sweep runs, sealing nothing (no
+	// block existed), and the record is kept for a start that may still land.
+	ui.ledger.markEndLost(1, "1")
+	ui.sweepTurn(1)
 
-	// The turn's reconciliation was lost, but the start still lands: its block
-	// must be terminal, not Running.
-	ui.HandleEvent(&agent.ToolStartEvent{Key: "run1.1", ID: 1, Name: "read", Args: `{"path":"a"}`})
-	waitForUI(t, ui, func() bool {
-		blocks := toolBlocks(ui, "run1.1")
-		return len(blocks) == 1 && !blocks[0].IsRunning()
-	}, "a lost turn end stranded a keyed start as Running")
+	// Turn 2 grows its own block under the same keyless ordinal and never gets
+	// an end for it. Turn 1's record must not explain this seal.
+	ui.addToolStart(2, "1", "read", `{"path":"b"}`)
+	ui.sweepTurn(2)
+
+	counts := ui.toolOrphanCounts()
+	if got := counts[orphanKindSwept]; got != 1 {
+		t.Fatalf("swept = %d, want 1: a stale record from a turn that did sweep suppressed this turn's attribution (counts: %v)", got, counts)
+	}
 }

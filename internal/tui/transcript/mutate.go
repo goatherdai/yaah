@@ -34,22 +34,11 @@ const (
 	LateEnd
 	// DuplicateEnd: the block was already terminal, so nothing was written.
 	DuplicateEnd
-	// UnmatchedEnd: no block carried the key; the end was stashed.
+	// UnmatchedEnd: no block carried the key, so the end settled nothing. The
+	// model keeps no copy — the caller records it against its turn
+	// (internal/tui/tool_ledger.go) so a late start can inherit it.
 	UnmatchedEnd
 )
-
-// unmatchedEndsLimit bounds the unmatched-end stash. Settlement failures are
-// evidence about ordering, so a few are kept for diagnosis; the counter at the
-// view layer is the durable signal, not this ring.
-const unmatchedEndsLimit = 8
-
-// UnmatchedToolEnd is an end event that settled no block, kept so the block its
-// key names can be created already settled if the start is merely late, and so
-// a caller can inspect the drift instead of only counting it.
-type UnmatchedToolEnd struct {
-	Key string
-	End ToolEnd
-}
 
 // SettleTool applies one tool end event to the block its key names. There is
 // one rule for every end, success or failure, in order:
@@ -62,7 +51,11 @@ type UnmatchedToolEnd struct {
 //     outcome, labelled with the event's own duration rather than the delay;
 //  3. else a block with the key is already terminal and is left untouched
 //     (DuplicateEnd): a second end never overwrites the first;
-//  4. else nothing matched, so the end is stashed (UnmatchedEnd).
+//  4. else nothing carries the key, and the caller decides what to do with an
+//     end whose block does not exist yet (UnmatchedEnd). The model keeps no
+//     copy: the view records it against its turn, so an end can be inherited by
+//     a start that is late without any record outliving its own turn
+//     (internal/tui/tool_ledger.go).
 func (m *Model) SettleTool(key string, end ToolEnd) Settlement {
 	lastRunning, lastInterrupted, matched := -1, -1, false
 	for i := len(m.items) - 1; i >= 0; i-- {
@@ -93,7 +86,6 @@ func (m *Model) SettleTool(key string, end ToolEnd) Settlement {
 	case matched:
 		return DuplicateEnd
 	default:
-		m.stashUnmatchedEnd(key, end)
 		return UnmatchedEnd
 	}
 }
@@ -106,64 +98,18 @@ func (m *Model) sealTool(i int, state toolblock.State, end ToolEnd) {
 	m.dirty = dirtyFull
 }
 
-// stashUnmatchedEnd records an end that settled no block, dropping the oldest
-// once the ring is full.
-func (m *Model) stashUnmatchedEnd(key string, end ToolEnd) {
-	if len(m.unmatchedEnds) >= unmatchedEndsLimit {
-		copy(m.unmatchedEnds, m.unmatchedEnds[1:])
-		m.unmatchedEnds = m.unmatchedEnds[:len(m.unmatchedEnds)-1]
-	}
-	m.unmatchedEnds = append(m.unmatchedEnds, UnmatchedToolEnd{Key: key, End: end})
-}
-
-// UnmatchedEnds returns the end events settled by the UnmatchedEnd rule,
-// oldest first. It is diagnostic state, not a rendering input.
-func (m *Model) UnmatchedEnds() []UnmatchedToolEnd {
-	out := make([]UnmatchedToolEnd, len(m.unmatchedEnds))
-	copy(out, m.unmatchedEnds)
-	return out
-}
-
-// TakeUnmatchedEnd removes and returns the stashed end that settled no block
-// for key, reporting whether there was one.
+// SweepRunningTools seals every still-Running tool block as interrupted. The
+// turn is over when the sweep runs (the agent loop's DoneEvent), so a Running
+// block's end event never arrived — without the sweep it renders a permanent
+// chevron. It reports the keys it sealed, so a caller can attribute each block
+// without re-reading the log.
 //
-// A caller about to create the block for key uses it to create that block
-// already settled. An end can be applied BEFORE its own start: the view's
-// critical-update fallback runs an end directly when the UI queue is saturated
-// while an earlier start is still queued behind the full queue
-// (internal/tui/event_queue.go), so the block must inherit the end that
-// already arrived — a block created Running in that case would wait for an
-// event that is behind it and be sealed by the sweep as interrupted.
-func (m *Model) TakeUnmatchedEnd(key string) (ToolEnd, bool) {
-	for i, ue := range m.unmatchedEnds {
-		if ue.Key != key {
-			continue
-		}
-		m.unmatchedEnds = append(m.unmatchedEnds[:i], m.unmatchedEnds[i+1:]...)
-		return ue.End, true
-	}
-	return ToolEnd{}, false
-}
-
-// SweepRunningTools seals every still-Running tool block as
-// interrupted. The turn is over when the sweep runs (the agent loop's
-// DoneEvent), so a Running block's end event never arrived — without the
-// sweep it renders a permanent chevron. It reports the keys it sealed, so a
-// caller can attribute each block without re-reading the log.
-//
-// The sweep deliberately does NOT clear the unmatched-end stash, because the
-// sweep can run while a start from the SAME turn is still in flight: the
-// critical fallback runs the DoneEvent's reconciliation directly when the UI
-// queue is saturated, ahead of a start still waiting in that queue. Clearing the
-// stash there would leave that late start to create a Running block after the
-// only sweep of the turn has already run — a permanent chevron, and the end's
-// result discarded. What protects a later turn from an earlier turn's stashed
-// end is the KEY: it is session-unique (yaah-77f1), so a next turn's start can
-// never match it. An event that carries no key has no such guarantee — its
-// fallback id is the run-scoped ordinal — so such an end is never stashed in the
-// first place (App.settleToolEnd takes it straight back out); the stash therefore
-// only ever holds entries a later turn cannot match. It stays bounded by
-// unmatchedEndsLimit, and Model.Clear drops it with the log.
+// It carries no turn state of its own: the model keeps no record of ends that
+// settled nothing (see SettleTool's rule 4), so what to attribute, what to keep
+// for a start still in flight, and when a record is stale are all decisions the
+// caller makes against its own turn-stamped ledger
+// (internal/tui/tool_ledger.go). That split is deliberate — a sweep that also
+// owned the records is what made a turn's records able to outlive their turn.
 func (m *Model) SweepRunningTools() []string {
 	sealed := make([]string, 0, 4)
 	for i := range m.items {
@@ -264,9 +210,6 @@ func (m *Model) CollapseCompacted(boundary int) {
 // Clear empties the log. The window is stale the moment the log empties:
 // recompute at the next repaint.
 func (m *Model) Clear() {
-	// The stash names blocks that are about to vanish, so it goes with them —
-	// a later start must not be settled by an end from a cleared log.
-	m.unmatchedEnds = nil
 	m.items = nil
 	m.promptIdxs = nil
 	m.userScrolled = false
