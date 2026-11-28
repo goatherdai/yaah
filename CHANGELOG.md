@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.229.0](https://github.com/goatherdai/yaah/compare/v0.228.3...v0.229.0) (2026-11-28)
+
+
+### Features
+
+* **agent:** persist a structured tool outcome; TUI resume renders from it, never from text (yaah-77f1 slice B, child 3) ([#473](https://github.com/goatherdai/yaah/issues/473)) ([4c0f31b](https://github.com/goatherdai/yaah/commit/4c0f31bad09b5458a340252bff3b02df3a5c93cd))
+
 ## [0.228.3](https://github.com/goatherdai/yaah/compare/v0.228.2...v0.228.3) (2026-11-28)
 
 
