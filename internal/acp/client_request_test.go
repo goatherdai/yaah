@@ -132,7 +132,7 @@ func TestRequestClient_LateAnswerReachesHookOnce(t *testing.T) {
 		_, outcome, err := s.requestClient(ctx, c, "terminal/create", nil,
 			clientRequestOptions{Late: func(r json.RawMessage) { late <- r }})
 		if err != nil {
-			outcomes <- -1
+			outcomes <- clientFailed
 			return
 		}
 		outcomes <- outcome
@@ -252,9 +252,28 @@ func TestRequestClient_ConcurrentRequestsDoNotCrossDeliver(t *testing.T) {
 
 func TestRequestClient_NoConnectionFailsClosed(t *testing.T) {
 	s := newRequestTestServer()
-	_, _, err := s.requestClient(context.Background(), nil, "test/method", nil, clientRequestOptions{})
+	_, outcome, err := s.requestClient(context.Background(), nil, "test/method", nil, clientRequestOptions{})
 	if err == nil || err.Error() != "test/method: no client connection" {
 		t.Fatalf("err = %v, want no-client-connection error", err)
+	}
+	if outcome != clientFailed {
+		t.Fatalf("outcome = %v, want clientFailed (not the zero value)", outcome)
+	}
+}
+
+func TestRequestClient_NilContextWithoutTimeoutFailsClosed(t *testing.T) {
+	s := newRequestTestServer()
+	c := requestTestConnection(s, nil)
+	var nilCtx context.Context // models a headless ask with no turn context
+	_, outcome, err := s.requestClient(nilCtx, c, "test/method", nil, clientRequestOptions{})
+	if err == nil || err.Error() != "test/method: nil context with no timeout" {
+		t.Fatalf("err = %v, want nil-context error", err)
+	}
+	if outcome != clientFailed {
+		t.Fatalf("outcome = %v, want clientFailed", outcome)
+	}
+	if n := pendingCount(s); n != 0 {
+		t.Fatalf("pending entries after early failure = %d, want 0", n)
 	}
 }
 

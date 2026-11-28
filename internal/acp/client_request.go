@@ -30,7 +30,10 @@ type clientRequestOptions struct {
 type clientRequestOutcome int
 
 const (
-	clientAnswered clientRequestOutcome = iota
+	// clientFailed is deliberately non-zero: a zero-value outcome must not
+	// look like a successful answer.
+	clientFailed clientRequestOutcome = iota + 1
+	clientAnswered
 	clientTimedOut
 	clientTurnEnded
 )
@@ -39,8 +42,10 @@ const (
 // Late hook after the caller gave up.
 const lateAnswerWindow = 30 * time.Second
 
-// answerTimeout resolves the shared control-plane answer bound. approval,
-// elicitation and the TUI/web control bridges all wait this long.
+// answerTimeout resolves the ACP answer bound: an explicit PermissionTimeout
+// when set, otherwise control.AnswerTimeout. That default is shared with the
+// TUI and web control bridges, but those bridges do not honour a
+// PermissionTimeout override — only the ACP approval and elicitation paths do.
 func (s *Server) answerTimeout() time.Duration {
 	if s.PermissionTimeout > 0 {
 		return s.PermissionTimeout
@@ -60,7 +65,12 @@ func (s *Server) requestClient(
 	opts clientRequestOptions,
 ) (clientResponse, clientRequestOutcome, error) {
 	if c == nil {
-		return clientResponse{}, clientAnswered, fmt.Errorf("%s: no client connection", method)
+		return clientResponse{}, clientFailed, fmt.Errorf("%s: no client connection", method)
+	}
+	// With neither bound there is no way out of the wait: a nil Done channel
+	// and a nil timer block forever. Fail closed instead of hanging a caller.
+	if ctx == nil && opts.Timeout <= 0 {
+		return clientResponse{}, clientFailed, fmt.Errorf("%s: nil context with no timeout", method)
 	}
 
 	// One lock covers both id minting and registration: a client cannot

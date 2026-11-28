@@ -326,9 +326,6 @@ func (s *Server) callClientWithLate(ctx context.Context, method string, params a
 		return nil, err
 	}
 	if outcome == clientTurnEnded {
-		if ctx == nil {
-			return nil, context.Canceled
-		}
 		return nil, ctx.Err()
 	}
 	if resp.err != nil {
