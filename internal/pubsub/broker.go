@@ -32,6 +32,14 @@ type subscriber[T any] struct {
 	detached  bool
 	delivered atomic.Int64
 	dropped   atomic.Int64
+
+	// mustDropped counts only the events lost on the must-deliver paths
+	// (PublishMustDeliver, TryPublishMustDeliver): the wedged-view signal.
+	// A subscriber with drops but no must-drops was merely slow — its lossy
+	// token deltas were repaired by the next must-deliver FlushEvent —
+	// while a must-drop means an event class that is never repaired did
+	// not land.
+	mustDropped atomic.Int64
 }
 
 type Broker[T any] struct {
@@ -40,6 +48,7 @@ type Broker[T any] struct {
 	mustDeliverTimeout time.Duration
 	dropped            atomic.Int64
 	delivered          atomic.Int64
+	mustDropped        atomic.Int64
 	closed             atomic.Bool
 }
 
@@ -63,6 +72,18 @@ func (b *Broker[T]) countDelivered(s *subscriber[T]) {
 func (b *Broker[T]) countDropped(s *subscriber[T]) {
 	b.dropped.Add(1)
 	s.dropped.Add(1)
+}
+
+// countMustDropped accounts one must-deliver event that did not reach s's
+// channel: it moves every counter countDropped moves plus the wedged-view
+// signal on both the subscription and the broker aggregate. Every drop site
+// on the must-deliver paths (deliverMust, both its budget-expiry arms) goes
+// through this helper, which is what keeps MustDropped an exact subset of
+// Dropped.
+func (b *Broker[T]) countMustDropped(s *subscriber[T]) {
+	b.countDropped(s)
+	b.mustDropped.Add(1)
+	s.mustDropped.Add(1)
 }
 
 func (b *Broker[T]) Publish(event T) {
@@ -132,7 +153,7 @@ func (b *Broker[T]) deliverMust(event T) {
 	expired := false
 	for _, s := range b.subs {
 		if expired {
-			b.countDropped(s)
+			b.countMustDropped(s)
 			continue
 		}
 		select {
@@ -141,7 +162,7 @@ func (b *Broker[T]) deliverMust(event T) {
 		case <-timer.C:
 			// The single fan-out budget is spent; every remaining
 			// subscriber is counted dropped without a send attempt.
-			b.countDropped(s)
+			b.countMustDropped(s)
 			expired = true
 		}
 	}
@@ -271,6 +292,10 @@ type SubscriberStats struct {
 	ID        string
 	Delivered int64
 	Dropped   int64
+	// MustDropped counts the drops that happened on the must-deliver paths
+	// — an exact subset of Dropped, and the wedged-view signal: its events
+	// are never repaired by a later event the way lossy token deltas are.
+	MustDropped int64
 }
 
 // Stats snapshots the per-subscription counters in subscription order, under
@@ -304,9 +329,10 @@ func (b *Broker[T]) Stats() []SubscriberStats {
 	out := make([]SubscriberStats, 0, len(b.subs))
 	for _, s := range b.subs {
 		out = append(out, SubscriberStats{
-			ID:        s.id,
-			Delivered: s.delivered.Load(),
-			Dropped:   s.dropped.Load(),
+			ID:          s.id,
+			Delivered:   s.delivered.Load(),
+			Dropped:     s.dropped.Load(),
+			MustDropped: s.mustDropped.Load(),
 		})
 	}
 	return out

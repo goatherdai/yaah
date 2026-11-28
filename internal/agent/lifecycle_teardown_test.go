@@ -44,18 +44,22 @@ func TestLogBrokerDrops(t *testing.T) {
 			rows: []pubsub.SubscriberStats{{ID: "tui", Delivered: 10}},
 		},
 		{
-			name: "named subscription with drops is reported with counts",
+			name: "lossy-only drops stay below the warn level",
+			rows: []pubsub.SubscriberStats{{ID: "web", Delivered: 3, Dropped: 4096}},
+		},
+		{
+			name: "named subscription with must-drops is reported with counts",
 			rows: []pubsub.SubscriberStats{
 				{ID: "tui", Delivered: 10, Dropped: 0},
-				{ID: "web", Delivered: 3, Dropped: 4},
+				{ID: "web", Delivered: 3, Dropped: 5, MustDropped: 1},
 			},
-			want:   []string{`subscriber=web`, `delivered=3`, `dropped=4`},
+			want:   []string{`subscriber=web`, `delivered=3`, `dropped=5`, `must_delivered_dropped=1`},
 			noWant: []string{`subscriber=tui`},
 		},
 		{
 			name: "anonymous subscription is reported as view",
-			rows: []pubsub.SubscriberStats{{Delivered: 1, Dropped: 4096}},
-			want: []string{`subscriber=view`, `dropped=4096`},
+			rows: []pubsub.SubscriberStats{{Delivered: 1, Dropped: 4097, MustDropped: 1}},
+			want: []string{`subscriber=view`, `must_delivered_dropped=1`},
 		},
 	}
 	for _, tt := range tests {
@@ -89,7 +93,9 @@ func TestPublishDoneReportsDrops(t *testing.T) {
 	buf := captureLogs(t)
 
 	// A broker with a wedged subscriber: a channel nobody drains fills
-	// after one event, so every later lossy Publish counts a drop.
+	// after one event, so the lossy fills count plain drops, and the
+	// must-deliver DoneEvent publishDone sends counts a must-drop — the
+	// wedged-view signal the report exists to surface.
 	broker := pubsub.NewBroker[Event]()
 	t.Cleanup(broker.Close)
 	sub := broker.Subscribe("", 1)
@@ -112,24 +118,24 @@ func TestPublishDoneReportsDrops(t *testing.T) {
 	l.publishDone(&response, &runErr)
 
 	out := buf.String()
-	if !strings.Contains(out, "dropped events during run") {
+	if !strings.Contains(out, "dropped must-deliver events during run") {
 		t.Errorf("publishDone should report the wedged subscriber, got log: %s", out)
 	}
 	if !strings.Contains(out, `subscriber=view`) {
 		t.Errorf("anonymous brokerView subscription should be reported as view, got log: %s", out)
 	}
-	// The forwarder goroutine must have exited: brokerView.Close was called
-	// by publishDone and drains it. What remains in the wedged subscriber's
-	// single slot is the filler TokenDeltaEvent — the DoneEvent itself was
-	// counted dropped when the shared 50ms must-deliver budget expired on
-	// the full channel — and reading it proves the forwarder ran to
-	// completion rather than leaking.
+	// The wedged subscriber's single slot still holds the filler
+	// TokenDeltaEvent — the DoneEvent itself was counted dropped when the
+	// shared 50ms must-deliver budget expired on the full channel. Reading
+	// it only confirms the filler stayed queued for this subscriber;
+	// the forwarder's exit is separately guaranteed by brokerView.Close,
+	// which waits on its done channel.
 	select {
 	case evt := <-sub:
 		if _, ok := evt.(*TokenDeltaEvent); !ok {
 			t.Errorf("expected the filler TokenDeltaEvent, got %T", evt)
 		}
 	default:
-		t.Error("brokerView forwarder did not drain the subscription before exit")
+		t.Error("wedge setup failed: the filler event is not in the subscription")
 	}
 }

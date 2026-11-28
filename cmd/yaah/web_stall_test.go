@@ -86,7 +86,7 @@ func TestSseViewBareLiteralStillWrites(t *testing.T) {
 // deadline (shortened for the test) expires, and the write returns instead of
 // parking the caller forever.
 func TestSseViewStalledWriteIsBounded(t *testing.T) {
-	handlerDone := make(chan struct{})
+	handlerDone := make(chan bool, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer close(handlerDone)
 		v := &sseView{
@@ -99,6 +99,10 @@ func TestSseViewStalledWriteIsBounded(t *testing.T) {
 		for i := 0; i < 4096 && !v.stalled.Load(); i++ {
 			v.write(payload)
 		}
+		// Report whether the deadline actually tripped: a host with huge
+		// socket buffers could absorb every write, and returning without a
+		// stall would pass the teardown bound without exercising it.
+		handlerDone <- v.stalled.Load()
 	}))
 	defer srv.Close()
 
@@ -114,7 +118,10 @@ func TestSseViewStalledWriteIsBounded(t *testing.T) {
 	}
 
 	select {
-	case <-handlerDone:
+	case stalled := <-handlerDone:
+		if !stalled {
+			t.Fatal("handler returned without stalling: the write deadline never tripped, so the test exercised nothing")
+		}
 		// The handler returned on its own: the deadline bounded the write,
 		// stall() fired, and teardown is free to run — the whole point.
 	case <-time.After(30 * time.Second):

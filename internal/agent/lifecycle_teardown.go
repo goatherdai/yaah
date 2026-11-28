@@ -69,11 +69,19 @@ func (l *Loop) publishDone(response *string, runErr *error) {
 	l.brokerClosed = true
 }
 
-// logBrokerDrops reports every subscription that lost events during the Run,
-// once per Run, after the final DoneEvent. The broker's counters exist so a
-// slow or wedged view can be named rather than inferred; this is their only
-// production reader. Anonymous subscriptions (BrokerView's forwarder) carry no
-// id and are reported as "view" — production has exactly one per broker.
+// logBrokerDrops reports every subscription that lost events during the
+// Run, once per Run, after the final DoneEvent. The broker's counters exist
+// so a slow or wedged view can be named rather than inferred; this is their
+// only production reader. Anonymous subscriptions (BrokerView's forwarder)
+// carry no id and are reported as "view" — production has exactly one per
+// broker.
+//
+// Only must-deliver drops Warn: those events are never repaired by a later
+// event, so a must-drop means the wedged-view case this report exists for.
+// Lossy token-delta drops are expected under a merely slow consumer and are
+// repaired by the next must-deliver FlushEvent, so they log at Debug — a
+// WARN there would fire on every run with a briefly busy view and drown the
+// signal.
 func logBrokerDrops(rows []pubsub.SubscriberStats) {
 	for _, row := range rows {
 		if row.Dropped <= 0 {
@@ -83,7 +91,15 @@ func logBrokerDrops(rows []pubsub.SubscriberStats) {
 		if id == "" {
 			id = "view"
 		}
-		slog.Warn("event broker dropped events during run",
+		if row.MustDropped > 0 {
+			slog.Warn("event broker dropped must-deliver events during run",
+				"subscriber", id,
+				"delivered", row.Delivered,
+				"dropped", row.Dropped,
+				"must_delivered_dropped", row.MustDropped)
+			continue
+		}
+		slog.Debug("event broker dropped lossy stream events during run",
 			"subscriber", id,
 			"delivered", row.Delivered,
 			"dropped", row.Dropped)
