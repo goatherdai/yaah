@@ -57,12 +57,16 @@ func (t *App) queueUpdateDraw(fn func()) {
 	t.enqueueUIEvent(true, fn, false)
 }
 
-func (t *App) queueUpdateCritical(fn func()) {
-	t.enqueueUIEvent(false, fn, true)
+// queueUpdateCritical enqueues a mutator whose loss would misreport state. It
+// reaches the queue even when the queue is saturated (a bounded direct
+// fallback), and reports whether the update was scheduled — see
+// enqueueUIEvent, which is the one place that return value is defined.
+func (t *App) queueUpdateCritical(fn func()) bool {
+	return t.enqueueUIEvent(false, fn, true)
 }
 
-func (t *App) queueUpdateDrawCritical(fn func()) {
-	t.enqueueUIEvent(true, fn, true)
+func (t *App) queueUpdateDrawCritical(fn func()) bool {
+	return t.enqueueUIEvent(true, fn, true)
 }
 
 func (t *App) queueThinkingUpdate(text string) {

@@ -31,6 +31,8 @@ const (
 	// does not exist — dropped, reordered, or belonging to a cleared log.
 	orphanKindUnmatchedEnd = "unmatched_end"
 	// orphanKindSwept: a still-Running block sealed by the turn-end sweep.
+	// After the drop accounting below, this means only that the call's end
+	// never arrived AND no seam observed it being lost.
 	orphanKindSwept = "swept"
 	// orphanKindLateEnd: an end event healed a block the turn-end sweep had
 	// already sealed as Interrupted — the event was merely late.
@@ -38,7 +40,82 @@ const (
 	// orphanKindDuplicateEnd: an end event met a block that was already
 	// terminal. Nothing was overwritten.
 	orphanKindDuplicateEnd = "duplicate_end"
+	// orphanKindDroppedStart: a tool start event's UI update could not be
+	// scheduled, so no block was ever created for the call.
+	orphanKindDroppedStart = "dropped_start"
+	// orphanKindDroppedEnd: a tool end event's UI update could not be
+	// scheduled. The block is still sealed by the turn-end sweep (a block
+	// must never render a permanent chevron), but the loss is attributed
+	// here, where it was observed, not to the sweep.
+	orphanKindDroppedEnd = "dropped_end"
 )
+
+// lostToolEndsLimit bounds the record of end events whose UI update could never
+// be scheduled. The counter is the durable signal; a few keys are kept so the
+// turn-end sweep can attribute the blocks they belong to.
+const lostToolEndsLimit = 16
+
+// recordToolOrphan records one tool-block orphan kind: on the durable OTel
+// counter, and on an in-process tally. The tally exists because the instruments
+// are bound only in a metrics-configured process, so the classification would
+// otherwise be unwitnessable — the same reason the queue outcomes keep
+// uiEventDrops beside RecordTUIQueueEvent.
+func (t *App) recordToolOrphan(kind string) {
+	t.toolOrphanMu.Lock()
+	if t.toolOrphans == nil {
+		t.toolOrphans = make(map[string]int, 6)
+	}
+	t.toolOrphans[kind]++
+	t.toolOrphanMu.Unlock()
+	observability.RecordTUIToolOrphan(context.Background(), kind)
+}
+
+// toolOrphanCounts returns a copy of the orphan tally, keyed by kind.
+func (t *App) toolOrphanCounts() map[string]int {
+	t.toolOrphanMu.Lock()
+	defer t.toolOrphanMu.Unlock()
+	out := make(map[string]int, len(t.toolOrphans))
+	for kind, n := range t.toolOrphans {
+		out[kind] = n
+	}
+	return out
+}
+
+// recordLostToolEnd remembers that key's end event will never be applied, so
+// the turn-end sweep can attribute the block to the drop instead of to its own
+// recovery. It runs on the agent-loop goroutine (HandleEvent's), so the record
+// is mutex-guarded: the sweep reads it on the UI goroutine.
+func (t *App) recordLostToolEnd(key string) {
+	t.lostEndsMu.Lock()
+	defer t.lostEndsMu.Unlock()
+	for _, k := range t.lostEnds {
+		if k == key {
+			return
+		}
+	}
+	if len(t.lostEnds) >= lostToolEndsLimit {
+		copy(t.lostEnds, t.lostEnds[1:])
+		t.lostEnds = t.lostEnds[:len(t.lostEnds)-1]
+	}
+	t.lostEnds = append(t.lostEnds, key)
+}
+
+// takeLostToolEnds returns and clears the recorded lost ends. The sweep is the
+// turn boundary: a loss recorded before it belongs to a block the sweep is
+// about to seal, and a later sweep must not re-attribute it.
+func (t *App) takeLostToolEnds() map[string]bool {
+	t.lostEndsMu.Lock()
+	defer t.lostEndsMu.Unlock()
+	if len(t.lostEnds) == 0 {
+		return nil
+	}
+	lost := make(map[string]bool, len(t.lostEnds))
+	for _, k := range t.lostEnds {
+		lost[k] = true
+	}
+	t.lostEnds = nil
+	return lost
+}
 
 // AddToolError settles the block carrying key into its error state, and
 // counts how the end met the transcript (see transcript.SettleTool).
@@ -48,9 +125,23 @@ func (t *App) AddToolError(key, summary, err string, dur time.Duration) {
 
 // AddToolStart adds a tool block to the transcript.
 // Note: flushes any pending streaming tokens first.
-func (t *App) AddToolStart(id, name, args string) {
+//
+// A start can be applied AFTER its own end: the critical-update fallback runs an
+// end directly when the UI queue is saturated while the start still waits in
+// the queue (internal/tui/event_queue.go). The settlement rule stashes such an
+// end (transcript.SettleTool), so the block is created from it already settled
+// rather than Running — a Running block would wait for an end that is already
+// behind it.
+func (t *App) AddToolStart(key, name, args string) {
 	t.flushPendingTokens()
-	tb := toolblock.New(id, name, args, t.Theme)
+	tb := toolblock.New(key, name, args, t.Theme)
+	if end, ok := t.tr.TakeUnmatchedEnd(key); ok {
+		state := toolblock.Done
+		if end.Error {
+			state = toolblock.Error
+		}
+		tb.Seal(state, end.Summary, end.Result, end.Duration)
+	}
 	t.tr.Append(transcript.ToolItem(tb))
 	t.markDirty()
 }
@@ -72,25 +163,37 @@ func (t *App) settleToolBlock(key string, end transcript.ToolEnd) {
 		t.markDirty()
 	case transcript.LateEnd:
 		t.markDirty()
-		observability.RecordTUIToolOrphan(context.Background(), orphanKindLateEnd)
+		t.recordToolOrphan(orphanKindLateEnd)
 	case transcript.DuplicateEnd:
-		observability.RecordTUIToolOrphan(context.Background(), orphanKindDuplicateEnd)
+		t.recordToolOrphan(orphanKindDuplicateEnd)
 	case transcript.UnmatchedEnd:
-		observability.RecordTUIToolOrphan(context.Background(), orphanKindUnmatchedEnd)
+		t.recordToolOrphan(orphanKindUnmatchedEnd)
 	}
 }
 
-// SweepStuckToolBlocks seals every still-Running tool block at turn end:
-// its end event never arrived, and without the sweep it would render a
-// permanent chevron (the stuck-tool-block finding). Each sealed block
-// renders terminal with an interrupted marker.
+// SweepStuckToolBlocks seals every still-Running tool block at turn end: its
+// end event never arrived, and without the sweep it would render a permanent
+// chevron (the stuck-tool-block finding). Each sealed block renders terminal
+// with an interrupted marker.
+//
+// The sweep is the safety net, not the attribution of first resort: a block
+// whose end event was observed to drop carries that attribution already
+// (recordLostToolEnd at the drop), so it is sealed here without also being
+// counted as swept.
 func (t *App) SweepStuckToolBlocks() int {
-	n := t.tr.SweepRunningTools()
-	if n > 0 {
-		t.markDirty()
-		observability.RecordTUIToolOrphan(context.Background(), orphanKindSwept)
+	lost := t.takeLostToolEnds()
+	sealed := t.tr.SweepRunningTools()
+	if len(sealed) == 0 {
+		return 0
 	}
-	return n
+	t.markDirty()
+	for _, key := range sealed {
+		if lost[key] {
+			continue
+		}
+		t.recordToolOrphan(orphanKindSwept)
+	}
+	return len(sealed)
 }
 
 // AddSubAgentStart adds a sub-agent to the dedicated Subagents pane.

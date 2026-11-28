@@ -234,6 +234,19 @@ type App struct {
 	fallbackSem     chan struct{}
 	fallbackWaiters chan struct{}
 
+	// toolOrphanMu guards toolOrphans, the in-process tally of tool-block
+	// orphan kinds (see recordToolOrphan): the OTel counter is the durable
+	// record, the tally is what a test or a crash report can read.
+	toolOrphanMu sync.Mutex
+	toolOrphans  map[string]int
+
+	// lostEndsMu guards lostEnds, the bounded record of tool end events
+	// whose UI update could never be scheduled (see recordLostToolEnd). It
+	// is written on the agent-loop goroutine and consumed by the turn-end
+	// sweep on the UI goroutine.
+	lostEndsMu sync.Mutex
+	lostEnds   []string
+
 	availableModels []string
 	providerNames   map[string]string
 

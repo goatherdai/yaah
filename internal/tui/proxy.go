@@ -49,25 +49,36 @@ func (t *App) HandleEvent(event agent.Event) {
 			t.flushPendingTokens()
 		})
 	case *agent.ToolStartEvent:
-		t.queueUpdateCritical(func() {
+		// The block is keyed on the event's session-unique identity.
+		// e.ID is the run's dispatch ordinal (it restarts at 1 on every
+		// prompt), so keying on it alone made a later prompt's call
+		// settle an earlier prompt's block (yaah-77f1). A dropped update
+		// is counted below: the block it would have created never exists.
+		key := toolBlockKey(e.Key, e.ID)
+		scheduled := t.queueUpdateCritical(func() {
 			t.pendingTool = e.Name
 			if e.Name == "delegate" {
 				return
 			}
 			t.setActivity(activity.Tool, e.Name)
-			// The block is keyed on the event's session-unique identity.
-			// e.ID is the run's dispatch ordinal (it restarts at 1 on every
-			// prompt), so keying on it alone made a later prompt's call
-			// settle an earlier prompt's block (yaah-77f1).
-			t.AddToolStart(toolBlockKey(e.Key, e.ID), e.Name, e.Args)
+			t.AddToolStart(key, e.Name, e.Args)
 		})
+		if !scheduled && e.Name != "delegate" {
+			// The update will never run, so no block exists for this
+			// call. Count the loss here: nothing downstream can see it.
+			// A delegate draws no tool block, so its loss is not a block
+			// loss and is not counted as one.
+			t.recordToolOrphan(orphanKindDroppedStart)
+		}
 	case *agent.ToolEndEvent:
-		t.queueUpdateCritical(func() {
+		// The same key the start used: a dropped end is recorded under it so
+		// the turn-end sweep can attribute the block it could not settle.
+		key := toolBlockKey(e.Key, e.ID)
+		scheduled := t.queueUpdateCritical(func() {
 			t.pendingTool = ""
 			if e.Name == "delegate" {
 				return
 			}
-			key := toolBlockKey(e.Key, e.ID)
 			if e.Error != "" {
 				t.AddToolError(key, e.Name+" \u274C", e.Error, e.Duration)
 			} else {
@@ -75,6 +86,14 @@ func (t *App) HandleEvent(event agent.Event) {
 			}
 			t.restoreActivity()
 		})
+		if !scheduled && e.Name != "delegate" {
+			// The end will never be applied. Count it as the drop it is
+			// and remember the key, so the turn-end sweep seals the
+			// block (never a permanent chevron) without claiming the
+			// loss as its own.
+			t.recordLostToolEnd(key)
+			t.recordToolOrphan(orphanKindDroppedEnd)
+		}
 	case *agent.SubAgentStartEvent:
 		t.queueUpdateDrawCritical(func() {
 			t.AddSubAgentStart(e.SubAgentID, e.Role, e.Prompt,

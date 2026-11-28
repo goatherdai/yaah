@@ -24,7 +24,7 @@ func TestSweepRunningTools(t *testing.T) {
 	m.SettleTool("f1", ToolEnd{Summary: "boom", Result: "error", Error: true})
 
 	m.Repaint(80) // establish the painted row table
-	if n := m.SweepRunningTools(); n != 1 {
+	if n := len(m.SweepRunningTools()); n != 1 {
 		t.Fatalf("sweep sealed %d blocks, want 1", n)
 	}
 	if running.S() != toolblock.Interrupted {
@@ -38,8 +38,43 @@ func TestSweepRunningTools(t *testing.T) {
 	}
 
 	// A second sweep is a no-op: the sealed blocks are terminal now.
-	if n := m.SweepRunningTools(); n != 0 {
+	if n := len(m.SweepRunningTools()); n != 0 {
 		t.Fatalf("second sweep sealed %d blocks, want 0", n)
+	}
+}
+
+// TestSweepRunningTools_ReportsTheSealedKeys pins that the sweep names what it
+// sealed, so a caller can attribute each block to its own cause instead of
+// treating every sweep as one undifferentiated loss.
+func TestSweepRunningTools_ReportsTheSealedKeys(t *testing.T) {
+	th := colors.NewDarkTheme()
+	m := NewModel(&th)
+	m.Append(ToolItem(toolblock.New("run1.1", "bash", "{}", &th)))
+	m.Append(ToolItem(toolblock.New("run1.2", "read", "{}", &th)))
+	m.SettleTool("run1.2", ToolEnd{Summary: "ok", Result: "result"})
+
+	sealed := m.SweepRunningTools()
+	if len(sealed) != 1 || sealed[0] != "run1.1" {
+		t.Fatalf("sweep sealed %v, want exactly [run1.1]", sealed)
+	}
+}
+
+// TestSweepRunningTools_ClearsTheUnmatchedEndStash pins that an end stashed in
+// one turn cannot settle a block created in a later one: the sweep is the turn
+// boundary, so the stash does not outlive it.
+func TestSweepRunningTools_ClearsTheUnmatchedEndStash(t *testing.T) {
+	th := colors.NewDarkTheme()
+	m, _ := settleFixture(&th, "run1.1")
+	if got := m.SettleTool("run2.1", ToolEnd{Summary: "early", Result: "out"}); got != UnmatchedEnd {
+		t.Fatalf("SettleTool for a missing block = %v, want UnmatchedEnd", got)
+	}
+
+	m.SweepRunningTools()
+	if got := len(m.UnmatchedEnds()); got != 0 {
+		t.Fatalf("stashed ends after the sweep = %d, want 0", got)
+	}
+	if end, ok := m.TakeUnmatchedEnd("run2.1"); ok {
+		t.Fatalf("a cleared stash still settled a block: %+v", end)
 	}
 }
 
