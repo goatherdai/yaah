@@ -46,8 +46,9 @@ const (
 	// orphanKindDroppedEnd: a tool end event's UI update could not be
 	// scheduled. The loss is attributed here, where it was observed, not to
 	// the sweep. The block is sealed by whichever seam reaches it: the sweep,
-	// if the block exists at turn end; otherwise AddToolStart, when the
-	// start lands after the sweep, creates it terminal from this record.
+	// if the block exists at turn end; otherwise AddToolStart, when the start
+	// lands after the sweep, creates it terminal from this record — for a
+	// session-unique key only, since only such a record outlives the sweep.
 	orphanKindDroppedEnd = "dropped_end"
 	// orphanKindDroppedSweep: the DoneEvent's turn-end reconciliation could
 	// not be scheduled. Nothing sweeps this turn, so any still-Running block
