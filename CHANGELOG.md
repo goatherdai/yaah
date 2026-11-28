@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.230.1](https://github.com/goatherdai/yaah/compare/v0.230.0...v0.230.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **acp:** use jsonrpc wire types in client_request test ([#484](https://github.com/goatherdai/yaah/issues/484)) ([a2d564b](https://github.com/goatherdai/yaah/commit/a2d564bfca07e7b5ca9f27e1d346cadaceedfc22))
+
 ## [0.230.0](https://github.com/goatherdai/yaah/compare/v0.229.2...v0.230.0) (2026-11-28)
 
 
