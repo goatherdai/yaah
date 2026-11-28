@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.230.2](https://github.com/goatherdai/yaah/compare/v0.230.1...v0.230.2) (2026-11-28)
+
+
+### Code Refactoring
+
+* **textclip:** retire local UTF-8 cut loops ([#479](https://github.com/goatherdai/yaah/issues/479)) ([11ad722](https://github.com/goatherdai/yaah/commit/11ad722ddf778ec7c489da88ab3dfc792f39d801))
+
 ## [0.230.1](https://github.com/goatherdai/yaah/compare/v0.230.0...v0.230.1) (2026-11-28)
 
 
