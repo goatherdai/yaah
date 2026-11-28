@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.225.1](https://github.com/goatherdai/yaah/compare/v0.225.0...v0.225.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **tui:** stop wake-started turns from the TUI (yaah-l2z1) ([#457](https://github.com/goatherdai/yaah/issues/457)) ([7e71937](https://github.com/goatherdai/yaah/commit/7e71937a57025a34944635576a1c5294789a48e2))
+
 ## [0.225.0](https://github.com/goatherdai/yaah/compare/v0.224.1...v0.225.0) (2026-11-27)
 
 
