@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goatherdai/yaah/internal/agent"
 	"github.com/goatherdai/yaah/internal/control"
 	"github.com/goatherdai/yaah/internal/tui"
 	"github.com/goatherdai/yaah/internal/tui/components/mcpinfo"
@@ -119,9 +120,9 @@ type promptSession interface {
 // the queued prompt's cancel was the only one, which is why a stop could
 // not reach a wake-started turn (yaah-l2z1).
 func submitStopHooks(app submitUI, sess promptSession) (onSubmit func(string), onStop func()) {
-	var cancelSubmit context.CancelFunc
+	var cancelSubmit context.CancelCauseFunc
 	onSubmit = func(input string) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancelCause(context.Background())
 		cancelSubmit = cancel
 		app.AddPrompt(input)
 		app.ShowThinking()
@@ -130,7 +131,11 @@ func submitStopHooks(app submitUI, sess promptSession) (onSubmit func(string), o
 	onStop = func() {
 		app.HideThinking()
 		if cancelSubmit != nil {
-			cancelSubmit()
+			// The queued prompt's cancel fires before HaltCurrentRun,
+			// and the first cancellation wins the cause: it must carry
+			// the halt sentinel, or the classified stop degrades to a
+			// plain cancel (see agent.ErrRunHalted).
+			cancelSubmit(agent.ErrRunHalted)
 			cancelSubmit = nil
 		}
 		sess.HaltCurrentRun()

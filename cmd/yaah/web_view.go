@@ -125,6 +125,9 @@ type sseWireEvent struct {
 	Response      string `json:"response,omitempty"`
 	ContextTokens int    `json:"context_tokens,omitempty"`
 	ContextWindow int    `json:"context_window,omitempty"`
+	// Interrupted marks a done frame whose run ended by a deliberate
+	// stop: the response is the sealed partial, and there is no error.
+	Interrupted bool `json:"interrupted,omitempty"`
 
 	// Running appears only on the ctrl.state catch-up frame sent when a
 	// client connects, so it is a pointer: absent everywhere else.
@@ -317,6 +320,7 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 			ct = e.LastPromptTokens
 		}
 		we = sseWireEvent{Type: "done", Response: e.Response, Error: e.Error,
+			Interrupted:   e.Interrupted,
 			ContextTokens: ct, ContextWindow: e.ContextWindow}
 	case *agent.CompactionStartedEvent:
 		we = sseWireEvent{Type: "ctrl.status", Text: e.StartedSummary()}

@@ -24,6 +24,7 @@ type fakeAgent struct {
 	permissionSelected string
 	stopReason         acp.StopReason
 	block              bool
+	blockSession       bool
 	systemPrompt       bool
 	seenPrompt         string
 	seenSystem         *acp.SystemPrompt
@@ -81,8 +82,12 @@ func (a *fakeAgent) SetSessionConfigOption(context.Context, acp.SetSessionConfig
 func (a *fakeAgent) SetSessionMode(context.Context, acp.SetSessionModeRequest) (acp.SetSessionModeResponse, error) {
 	return acp.SetSessionModeResponse{}, nil
 }
-func (a *fakeAgent) NewSession(_ context.Context, p acp.NewSessionRequest) (acp.NewSessionResponse, error) {
+func (a *fakeAgent) NewSession(ctx context.Context, p acp.NewSessionRequest) (acp.NewSessionResponse, error) {
 	a.seenSystem = p.SystemPrompt
+	if a.blockSession {
+		<-ctx.Done()
+		return acp.NewSessionResponse{}, ctx.Err()
+	}
 	return acp.NewSessionResponse{SessionId: acp.SessionId("sess-fake")}, nil
 }
 
@@ -425,5 +430,30 @@ func TestRunnerCancel(t *testing.T) {
 	defer cancel()
 	if _, err := r.Run(ctx, "sleep", jobs.SubAgentParams{}); err == nil {
 		t.Fatal("expected cancellation error")
+	}
+}
+
+// TestRunnerSetupDeadlineClassifiesTimeout pins the pre-prompt stage of
+// the stop contract: a run-budget deadline that lands during session
+// setup is a timeout, the same as one that lands during the prompt —
+// before the fix the setup error paths recorded no stop at all, and the
+// envelope lost the classification (it failed deterministically on the
+// slow Windows CI runner, where a 10ms deadline expires before the
+// prompt stage).
+func TestRunnerSetupDeadlineClassifiesTimeout(t *testing.T) {
+	agent := &fakeAgent{blockSession: true}
+	r := New(Manifest{Name: "fake", Command: "fake"})
+	r.connect = func(_ context.Context, c acp.Client, _ string) (*connection, error) {
+		return wire(t, agent, c), nil
+	}
+	var stop jobs.SubAgentStop
+	ctx := jobs.WithSubAgentStop(context.Background(), &stop)
+	deadline, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
+	defer cancel()
+	if _, err := r.Run(deadline, "sleep", jobs.SubAgentParams{}); err == nil {
+		t.Fatal("expected deadline error")
+	}
+	if stop.HaltedBySupervisor || stop.FinishReason != "timeout" {
+		t.Fatalf("stop = %+v, want timeout without supervisor halt", stop)
 	}
 }

@@ -40,15 +40,18 @@ func (t *App) HandleCommand(cmd command.Cmd, arg string) bool {
 		}
 		return false
 	case command.CmdStop:
-		if t.Hooks.OnStop != nil {
-			t.Hooks.OnStop()
-			return true
+		// An explicit :stop is clear intent — no arming — but it must
+		// not fabricate a stop echo when nothing runs.
+		if !t.agentActive {
+			t.SetEphemeral("no turn is running — nothing to stop")
+			return false
 		}
-		if t.Hooks.OnAbort != nil {
-			t.Hooks.OnAbort()
-			return true
+		if t.Hooks.OnStop == nil && t.Hooks.OnAbort == nil {
+			t.SetEphemeral("stopping is unavailable in this session")
+			return false
 		}
-		return false
+		t.requestStop()
+		return true
 	case command.CmdSteer:
 		if arg == "" {
 			t.SetEphemeral("usage: " + command.Usage(command.CmdSteer))

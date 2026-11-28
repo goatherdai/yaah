@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -151,14 +152,29 @@ func (t *App) HandleEvent(event agent.Event) {
 		t.queueUpdateDrawCritical(func() {
 			flushed := t.flushPendingTokens()
 			t.pendingTool = ""
+			// A stale arm must not carry into the next turn: one Esc
+			// then must arm again, not fire.
+			t.stopArmedAt = time.Time{}
+			echoFlushed := t.stopEchoFlushed.Swap(false)
 			// Self-healing seal: any tool block still Running has no end
 			// event coming — the turn is over. Sweep it to a terminal
 			// state with an interrupted marker instead of leaving a
 			// permanent chevron (yaah-ebhe).
 			t.SweepStuckToolBlocks()
 			t.setActivity(activity.Idle, "")
-			if !flushed && e.Response != "" {
+			// The response renders only when neither the stop echo's
+			// flush nor this flush painted it: the streamed buffer and
+			// DoneEvent.Response are two renderings of one text, and
+			// the stop path already flushed the buffer at request time.
+			if !flushed && !echoFlushed && e.Response != "" {
 				t.addAssistantResponse(e.Response)
+			}
+			// A deliberate stop seals with the interrupted marker
+			// (yaah-ny97): the partial is already in the transcript —
+			// streamed, or just appended above — so the run's end is
+			// recorded, not raised as a "context canceled" error.
+			if e.Interrupted {
+				t.sealInterrupted()
 			}
 			if e.Error != "" {
 				t.showErrorDialog("Error", e.Error)

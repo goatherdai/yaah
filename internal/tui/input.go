@@ -27,7 +27,14 @@ func (t *App) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 	action := Translate(ev, DefaultBindings())
 	switch action {
 	case ActionQuit:
-		t.Stop()
+		// A layered view keeps tview's built-in Ctrl-C: passing the key
+		// through lets the focused modal dismiss, and an unhandled
+		// Ctrl-C ends the app — the escape hatch stays armed behind
+		// every dialog. In normal focus, Ctrl-C confirms first.
+		if t.focus != focusNormal {
+			return ev
+		}
+		t.confirmQuit()
 		return nil
 	case ActionCommand:
 		t.toggleCommandPalette()
@@ -78,13 +85,19 @@ func (t *App) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 		if t.dismissSuggestions() {
 			return nil
 		}
-		if t.Hooks.OnStop != nil {
-			t.Hooks.OnStop()
+		// Nothing runs: Esc is a no-op instead of firing the stop hooks
+		// at nothing.
+		if !t.agentActive {
 			return nil
 		}
-		if t.Hooks.OnAbort != nil {
-			t.Hooks.OnAbort()
+		// Arming (yaah-ny97): the first Esc arms, the second within the
+		// window fires. A stray Esc can no longer interrupt the turn by
+		// accident, and the armed hint says what the next Esc does.
+		if t.stopArmed() {
+			t.requestStop()
+			return nil
 		}
+		t.armStop()
 		return nil
 	case ActionScrollUp:
 		// The composer owns the arrows while it holds text to edit; an

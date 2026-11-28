@@ -332,8 +332,11 @@ type agentSession struct {
 
 	// runCancel is the session-owned cancellation for the currently
 	// running prompt (adoption plan A3): the target of
-	// HaltCurrentRun — the root-halt bridge. Nil between prompts.
-	runCancel context.CancelFunc
+	// HaltCurrentRun — the root-halt bridge. It is a cause-carrying
+	// cancel: a deliberate stop stamps agent.ErrRunHalted onto the run
+	// context so the loop classifies the run as interrupted rather than
+	// failed. Nil between prompts.
+	runCancel context.CancelCauseFunc
 	// runCtx is the in-flight run's cancellable context, published for seams
 	// that can raise a prompt of their own — the path validator's AskFn asks for
 	// out-of-workspace access from inside a tool call — but are not handed the
@@ -514,7 +517,9 @@ func (s *agentSession) shutdown() {
 	cancelRun := s.runCancel
 	s.mu.RUnlock()
 	if cancelRun != nil {
-		cancelRun()
+		// Teardown is not a user stop: the plain-canceled cause keeps
+		// this run out of the interrupted classification.
+		cancelRun(context.Canceled)
 	}
 	joined := s.waitForRunGate(backgroundJobDrainTimeout)
 	if !joined {
@@ -994,7 +999,7 @@ func (s *agentSession) RunPrompt(ctx context.Context, prompt string) (string, bo
 // in-flight run, which is what HaltCurrentRun cancels. The caller must
 // hold the run gate and must call the returned release when the run ends.
 func (s *agentSession) beginRun(ctx context.Context) (context.Context, func()) {
-	runCtx, cancel := context.WithCancel(ctx)
+	runCtx, cancel := context.WithCancelCause(ctx)
 	s.mu.Lock()
 	s.runCancel = cancel
 	s.runCtx = runCtx
@@ -1006,7 +1011,9 @@ func (s *agentSession) beginRun(ctx context.Context) (context.Context, func()) {
 		s.runCtx = nil
 		s.runInFlight = false
 		s.mu.Unlock()
-		cancel()
+		// Release, not stop: a nil cause keeps this cleanup cancel out
+		// of the halt classification.
+		cancel(nil)
 	}
 }
 
@@ -1140,14 +1147,17 @@ func (s *agentSession) queueWakeFollowup(text string) {
 }
 
 // HaltCurrentRun cancels the currently running prompt, if one is
-// running — the supervisor's root-halt bridge (adoption plan A3). It is
-// the session's ctrl-C equivalent: the run unwinds, the frontends keep
-// their own cancel paths, and a session with no active run is a no-op.
+// running — the supervisor's root-halt bridge (adoption plan A3) and the
+// TUI's stop path. It is the session's ctrl-C equivalent: the run
+// unwinds, the frontends keep their own cancel paths, and a session with
+// no active run is a no-op. The cancellation carries agent.ErrRunHalted
+// so the loop classifies the run as a deliberate stop: the partial answer
+// is sealed with an interrupted marker and no error dialog follows.
 func (s *agentSession) HaltCurrentRun() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.runCancel != nil {
-		s.runCancel()
+		s.runCancel(agent.ErrRunHalted)
 	}
 }
 

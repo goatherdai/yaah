@@ -2,6 +2,7 @@ package yaah
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -286,5 +287,51 @@ func TestSubmitStopHooks_StopCancelsTheQueuedPrompt(t *testing.T) {
 	}
 	if !sess.waitForRunGate(5 * time.Second) {
 		t.Fatal("run gate still held after the stop — the wake turn kept running")
+	}
+}
+
+// TestSubmitStopHooks_StopClassifiesAsHalt pins the classification end
+// to end: the whole chain — the stop hook's cause-cancel, HaltCurrentRun's
+// cause-cancel, the loop's classifier — must end the run with the halt
+// sentinel, not a bare context error, so the surfaces render an
+// interruption instead of a "context canceled" error (yaah-ny97).
+func TestSubmitStopHooks_StopClassifiesAsHalt(t *testing.T) {
+	prov := &blockingProvider{started: make(chan struct{})}
+	sess := newRecordingSession(prov)
+	onSubmit, onStop := submitStopHooks(&fakeTUI{}, sess)
+
+	onSubmit("hello")
+	waitForProvider(t, prov)
+	onStop()
+
+	select {
+	case err := <-sess.returned:
+		if !errors.Is(err, agent.ErrRunHalted) {
+			t.Fatalf("RunPrompt error = %v, want ErrRunHalted", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stop never released the run")
+	}
+}
+
+// TestHaltCurrentRun_ClassifiesAsHalt is the supervisor-bridge shape of
+// the same contract: a root-halt invoked directly on the session — no
+// submit hook involved — carries the halt cause through beginRun's
+// cancellation, so the loop classifies the run it ends as interrupted.
+func TestHaltCurrentRun_ClassifiesAsHalt(t *testing.T) {
+	prov := &blockingProvider{started: make(chan struct{})}
+	sess := newRecordingSession(prov)
+
+	go func() { _, _, _ = sess.RunPrompt(context.Background(), "hello") }()
+	waitForProvider(t, prov)
+	sess.HaltCurrentRun()
+
+	select {
+	case err := <-sess.returned:
+		if !errors.Is(err, agent.ErrRunHalted) {
+			t.Fatalf("RunPrompt error = %v, want ErrRunHalted", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the halt never released the run")
 	}
 }

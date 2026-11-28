@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/goatherdai/yaah/internal/agent/events"
@@ -14,7 +15,14 @@ func (l *Loop) publishDone(response *string, runErr *error) {
 	}
 	var done DoneEvent
 	done.Response = *response
-	if *runErr != nil {
+	switch {
+	case *runErr == nil:
+	case errors.Is(*runErr, ErrRunHalted):
+		// A deliberate stop is not an error: surfaces render the
+		// interruption and the sealed partial instead of an error
+		// dialog reading "context canceled" (yaah-ny97).
+		done.Interrupted = true
+	default:
 		done.Error = (*runErr).Error()
 	}
 	done.ContextTokens = l.EstimatedTokens()
