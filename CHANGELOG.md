@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.228.1](https://github.com/goatherdai/yaah/compare/v0.228.0...v0.228.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **tui:** session-unique tool-call identity and state-aware settlement (yaah-77f1 slice A) ([#467](https://github.com/goatherdai/yaah/issues/467)) ([7083db5](https://github.com/goatherdai/yaah/commit/7083db53469b1fa3b7ce49db0cf97ae3eef0c7d0))
+
 ## [0.228.0](https://github.com/goatherdai/yaah/compare/v0.227.0...v0.228.0) (2026-11-28)
 
 
