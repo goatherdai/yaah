@@ -126,6 +126,7 @@ func TestAcceptSuggestion_CompletesCommandAndHides(t *testing.T) {
 // so the completed text falls through and dispatches in the same keystroke.
 func TestGlobalInputCapture_EnterCompletesPartialCommand(t *testing.T) {
 	ui := newColonUI(t)
+	ui.agentActive = true // :stop only dispatches against a running turn
 	stopped := false
 	ui.Hooks.OnStop = func() { stopped = true }
 	typeText(ui, ":st")
@@ -201,6 +202,7 @@ func TestGlobalInputCapture_EnterExactMatchSelectsExactCommand(t *testing.T) {
 // rather than first rewriting the composer and needing a second Enter.
 func TestGlobalInputCapture_EnterOnFullCommandDispatchesDirectly(t *testing.T) {
 	ui := newColonUI(t)
+	ui.agentActive = true // :stop only dispatches against a running turn
 	stopped := false
 	ui.Hooks.OnStop = func() { stopped = true }
 	typeText(ui, ":stop")
@@ -292,6 +294,7 @@ func TestGlobalInputCapture_ArrowsCycleOnlyWhileVisible(t *testing.T) {
 // a command name, not asking to abort.
 func TestGlobalInputCapture_EscapeDismissesSuggestionsBeforeStopping(t *testing.T) {
 	ui := newColonUI(t)
+	ui.agentActive = true // a turn in flight is what a later Esc arms against
 	stopped := false
 	ui.Hooks.OnStop = func() { stopped = true }
 	typeText(ui, ":st")
@@ -307,12 +310,18 @@ func TestGlobalInputCapture_EscapeDismissesSuggestionsBeforeStopping(t *testing.
 		t.Fatal("Esc stopped the turn instead of just dismissing the strip")
 	}
 
-	// A second Esc, with nothing to dismiss, does stop the turn.
+	// With nothing left to dismiss, Esc arms first and the next one fires.
 	if ret := ui.globalInputCapture(esc); ret != nil {
-		t.Fatal("second Esc not consumed")
+		t.Fatal("arming Esc not consumed")
+	}
+	if stopped {
+		t.Fatal("the arming Esc fired the stop")
+	}
+	if ret := ui.globalInputCapture(esc); ret != nil {
+		t.Fatal("third Esc not consumed")
 	}
 	if !stopped {
-		t.Fatal("second Esc did not stop the turn")
+		t.Fatal("the Esc after the arm did not stop the turn")
 	}
 }
 

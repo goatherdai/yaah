@@ -121,20 +121,28 @@ func TestSubmitInput_NonCommandColonTextIsSentAsPrompt(t *testing.T) {
 }
 
 // Esc must stop the running turn from the message view too, not only while the
-// input box holds focus.
+// input box holds focus — under the arming contract: the first Esc arms,
+// the second fires.
 func TestGlobalInputCapture_EscapeStopsFromAnyNormalFocus(t *testing.T) {
 	ui := newColonUI(t)
+	ui.agentActive = true // a turn in flight is what Esc arms against
 	stopped := false
 	ui.Hooks.OnStop = func() { stopped = true }
 	ui.Hooks.OnAbort = func() { t.Fatal("Esc fell back to OnAbort") }
 	ui.focus = focusNormal
 
-	ev := tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)
-	if ret := ui.globalInputCapture(ev); ret != nil {
+	esc := tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)
+	if ret := ui.globalInputCapture(esc); ret != nil {
 		t.Fatal("Esc not consumed at normal focus")
 	}
+	if stopped {
+		t.Fatal("the first Esc fired the stop instead of arming")
+	}
+	if ret := ui.globalInputCapture(esc); ret != nil {
+		t.Fatal("second Esc not consumed")
+	}
 	if !stopped {
-		t.Fatal("Esc did not stop the turn")
+		t.Fatal("the second Esc did not stop the turn")
 	}
 }
 

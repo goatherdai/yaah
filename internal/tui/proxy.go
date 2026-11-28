@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -151,6 +152,9 @@ func (t *App) HandleEvent(event agent.Event) {
 		t.queueUpdateDrawCritical(func() {
 			flushed := t.flushPendingTokens()
 			t.pendingTool = ""
+			// A stale arm must not carry into the next turn: one Esc
+			// then must arm again, not fire.
+			t.stopArmedAt = time.Time{}
 			// Self-healing seal: any tool block still Running has no end
 			// event coming — the turn is over. Sweep it to a terminal
 			// state with an interrupted marker instead of leaving a
@@ -159,6 +163,13 @@ func (t *App) HandleEvent(event agent.Event) {
 			t.setActivity(activity.Idle, "")
 			if !flushed && e.Response != "" {
 				t.addAssistantResponse(e.Response)
+			}
+			// A deliberate stop seals with the interrupted marker
+			// (yaah-ny97): the partial is already in the transcript —
+			// streamed, or just appended above — so the run's end is
+			// recorded, not raised as a "context canceled" error.
+			if e.Interrupted {
+				t.sealInterrupted()
 			}
 			if e.Error != "" {
 				t.showErrorDialog("Error", e.Error)

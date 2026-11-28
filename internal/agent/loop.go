@@ -271,6 +271,28 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 	// client's return path (review finding B6).
 	messages := l.State.Messages
 	defer func() { l.State.Messages = messages }()
+
+	// A deliberate stop (see ErrRunHalted) classifies the run's outcome
+	// before the teardown and publishDone defers see it (LIFO: registered
+	// last, runs first). The partial answer is sealed into the
+	// conversation with an interrupted marker — a cancelled call's
+	// partial is returned today but never appended, so the session and
+	// the resumed transcript lose it — and the run's error becomes the
+	// halt sentinel so surfaces report an interruption, not a failed
+	// provider call.
+	defer func() {
+		if !RunHalted(ctx) {
+			return
+		}
+		if response != "" {
+			sealed := types.Message{Role: "assistant", Content: response + HaltedContentSuffix}
+			messages = append(messages, sealed)
+			if l.Persister != nil {
+				l.Persister.Persist(sealed)
+			}
+		}
+		runErr = ErrRunHalted
+	}()
 	pipe := l.buildPipeline()
 	traceMw := pipe.GoatherdTraceMiddleware()
 

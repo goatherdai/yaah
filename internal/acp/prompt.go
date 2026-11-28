@@ -401,6 +401,12 @@ func (s *Server) handlePrompt(
 			} else {
 				s.logf("prompt completed: %s", p.SessionID)
 			}
+		case errors.Is(runErr, agent.ErrRunHalted):
+			// A deliberate stop (supervisor root-halt) is a
+			// cancellation from the client's point of view, not a
+			// refusal.
+			stopReason = StopCancelled
+			s.logf("prompt halted: %s", p.SessionID)
 		case errors.Is(runErr, context.Canceled):
 			stopReason = StopCancelled
 			s.logf("prompt cancelled: %s", p.SessionID)

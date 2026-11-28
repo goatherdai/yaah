@@ -246,8 +246,14 @@ func (*WakeEvent) eventMarker() {}
 // cache-inclusive context size; views should prefer it. (Compaction
 // separately subtracts the cached subset.)
 type DoneEvent struct {
-	Response                  string
-	Error                     string
+	Response string
+	Error    string
+	// Interrupted reports that the run ended because of a deliberate
+	// stop (Esc/:stop, supervisor root-halt) rather than completing or
+	// failing: Error is empty, and Response carries whatever the model
+	// produced before the halt. Views seal the partial with an
+	// interrupted marker instead of surfacing an error.
+	Interrupted               bool
 	ContextTokens             int // char/4 estimate of all messages
 	ContextWindow             int
 	LastPromptTokens          int // provider-shaped prompt tokens (compaction raw gate)

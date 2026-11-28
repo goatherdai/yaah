@@ -39,8 +39,8 @@ type Binding struct {
 // are bound. All other actions go through the command palette (Ctrl+P).
 func DefaultBindings() []Binding {
 	return []Binding{
-		{Key: tcell.KeyCtrlC, Action: ActionQuit, Label: "Ctrl+C", HelpText: "quit"},
-		{Key: tcell.KeyEscape, Action: ActionCancel, Label: "Esc", HelpText: "cancel / back, dismiss completion, stop the turn"},
+		{Key: tcell.KeyCtrlC, Action: ActionQuit, Label: "Ctrl+C", HelpText: "confirm quit (or interrupt the running turn)"},
+		{Key: tcell.KeyEscape, Action: ActionCancel, Label: "Esc", HelpText: "back, dismiss completion; press twice to stop the turn"},
 		{Key: tcell.KeyCtrlL, Action: ActionClear, Label: "Ctrl+L", HelpText: "clear screen"},
 		{Key: tcell.KeyCtrlP, Action: ActionCommand, Label: "Ctrl+P", HelpText: "command palette"},
 		{Key: tcell.KeyCtrlR, Action: ActionToggleReasoning, Label: "Ctrl+R", HelpText: "toggle reasoning blocks"},

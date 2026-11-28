@@ -2,6 +2,7 @@ package yaah
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/goatherdai/yaah/internal/agent"
@@ -95,9 +96,15 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 			}
 		}
 		if err != nil {
-			select {
-			case ctrl <- &control.Error{Err: err}:
-			default:
+			// A deliberate stop is not an error: the DoneEvent carries
+			// the interrupted classification, and the error pane must
+			// not follow it with a "context canceled" dialog
+			// (yaah-ny97).
+			if !errors.Is(err, agent.ErrRunHalted) {
+				select {
+				case ctrl <- &control.Error{Err: err}:
+				default:
+				}
 			}
 		}
 		select {

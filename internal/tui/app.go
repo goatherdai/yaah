@@ -182,15 +182,18 @@ type App struct {
 	embeddingModel       string
 	worldStatus          worldinfo.Status
 	agentActive          bool
-	subAgents            []*subagent.Block
-	subAgentsBusy        atomic.Bool
-	activityBusy         atomic.Bool
-	tokensRx             atomic.Int64
-	charsWritten         atomic.Int64
-	uiEventDrops         atomic.Int64
-	uiEventFallbacks     atomic.Int64
-	uiEventFallbackSat   atomic.Int64
-	lastRefreshUnixNano  atomic.Int64
+	// stopArmedAt is the instant the first Esc of a stop arm was
+	// pressed (see stop.go); the zero time is disarmed.
+	stopArmedAt         time.Time
+	subAgents           []*subagent.Block
+	subAgentsBusy       atomic.Bool
+	activityBusy        atomic.Bool
+	tokensRx            atomic.Int64
+	charsWritten        atomic.Int64
+	uiEventDrops        atomic.Int64
+	uiEventFallbacks    atomic.Int64
+	uiEventFallbackSat  atomic.Int64
+	lastRefreshUnixNano atomic.Int64
 	// renderMinDelay is the adaptive throttle (see requestRefresh),
 	// written by refreshMessages on the UI goroutine.
 	renderMinDelay atomic.Int64
