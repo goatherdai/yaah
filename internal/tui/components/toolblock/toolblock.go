@@ -204,15 +204,22 @@ func (b *Block) RenderCtx(ctx colors.RenderCtx) string {
 	return b.renderExpanded(ctx.Width)
 }
 
-func (b *Block) durationStr() string {
-	if b.durationLabel != "" {
-		return b.durationLabel
-	}
-	d := b.endTime.Sub(b.startTime)
+// DurationLabel formats a measured duration the way a live block does
+// ("350ms", "1.4s"), so a restored row's label is indistinguishable from a
+// live one. Callers with no measurement pass their own label instead of
+// calling this — a zero duration here would claim "0ms".
+func DurationLabel(d time.Duration) string {
 	if d < time.Second {
 		return fmt.Sprintf("%dms", d.Milliseconds())
 	}
 	return fmt.Sprintf("%.1fs", d.Seconds())
+}
+
+func (b *Block) durationStr() string {
+	if b.durationLabel != "" {
+		return b.durationLabel
+	}
+	return DurationLabel(b.endTime.Sub(b.startTime))
 }
 
 func (b *Block) renderCollapsed() string {

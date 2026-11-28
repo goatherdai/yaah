@@ -40,11 +40,31 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			CallID:   r.callID,
 			Meta:     r.meta,
 		}
-		*messages = append(*messages, types.ToolResultMsg(r.callID, r.name, r.content))
-		l.Persister.Persist((*messages)[len(*messages)-1])
+		msg := types.ToolResultMsg(r.callID, r.name, r.content)
+		// The persisted outcome is what the engine itself knows: a call that
+		// returned a result is ok, a call that ended in an error is error.
+		// Nothing here is written as cancelled or interrupted — a call
+		// cancelled while queued arrives as an error, and a call that never
+		// produced a result writes no row at all (replay derives interrupted
+		// from that absence).
+		msg.Outcome = toolOutcomeFromErr(r.err)
+		msg.Duration = r.dur
+		*messages = append(*messages, msg)
+		l.Persister.Persist(msg)
 	}
 
 	return results
+}
+
+// toolOutcomeFromErr maps a dispatch's error onto the persisted outcome. The
+// error is the only terminal signal the loop holds, so this is the whole
+// derivation: no result text is inspected (a successful command may print
+// "error: ") and no other status is inferable from here.
+func toolOutcomeFromErr(err error) types.ToolOutcome {
+	if err != nil {
+		return types.ToolOutcomeError
+	}
+	return types.ToolOutcomeOK
 }
 
 // gateVerdictFailed determines whether a quality gate validator's

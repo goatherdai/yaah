@@ -211,28 +211,39 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	duration := time.Since(start)
 
 	errStr := ""
+	// resultBytes is the untruncated size of what this call reports, measured
+	// here because the full text is still in hand and truncateToolResult
+	// returns its input unchanged when the result fits — so a shorter result
+	// below means the cap actually fired.
+	var resultBytes int
 	if err != nil {
 		errStr = err.Error()
 		res = fmt.Sprintf("error: %v", err)
 		if killPartial != "" {
 			res += "\n" + killPartial
 		}
+		resultBytes = len(res)
 	} else {
+		resultBytes = len(res)
 		res = l.truncateToolResult(res)
 	}
+	outcome := toolOutcomeFromErr(err)
 
 	observability.RecordToolCall(runCtx, d.call.Function.Name, duration, err != nil)
 
 	if l.broker != nil {
 		evt := &events.ToolEndEvent{
-			Key:      key,
-			ID:       d.toolID,
-			CallID:   d.call.ID,
-			Name:     d.call.Function.Name,
-			Args:     d.abbreviated,
-			RawArgs:  d.call.Function.Arguments,
-			Result:   res,
-			Duration: duration,
+			Key:         key,
+			ID:          d.toolID,
+			CallID:      d.call.ID,
+			Name:        d.call.Function.Name,
+			Args:        d.abbreviated,
+			RawArgs:     d.call.Function.Arguments,
+			Result:      res,
+			Duration:    duration,
+			Outcome:     outcome,
+			Truncated:   len(res) < resultBytes,
+			ResultBytes: resultBytes,
 		}
 		if err != nil {
 			evt.Error = err.Error()

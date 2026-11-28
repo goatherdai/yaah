@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goatherdai/yaah/internal/tui/components/toolblock"
 )
@@ -18,7 +19,7 @@ func TestRestoreHistoryRendersVisibleRowsInOrder(t *testing.T) {
 			ToolCalls: []HistoryToolCall{
 				{ID: "1", Name: "bash", Args: `{"command":"go test"}`, Summary: "1 test passed", Result: "ok"},
 				{ID: "2", Name: "edit", Args: `{"path":"x.go"}`, Error: "error: denied"},
-				{ID: "3", Name: "read", Args: `{"path":"y.go"}`, ResultMissing: true},
+				{ID: "3", Name: "read", Args: `{"path":"y.go"}`, Interrupted: true},
 			},
 		},
 		{Kind: HistoryUser, Text: "thanks"},
@@ -53,8 +54,8 @@ func TestRestoreHistoryRendersVisibleRowsInOrder(t *testing.T) {
 		t.Errorf("item 4 = %+v, want the failed tool block", ui.tr.ItemAt(4))
 	}
 	thirdTool := ui.tr.ItemAt(5).ToolBlock
-	if thirdTool == nil || thirdTool.S() != toolblock.Done {
-		t.Errorf("item 5 = %+v, want the completed tool block", ui.tr.ItemAt(5))
+	if thirdTool == nil || thirdTool.S() != toolblock.Interrupted {
+		t.Errorf("item 5 = %+v, want the interrupted tool block", ui.tr.ItemAt(5))
 	}
 	if !ui.tr.ItemAt(6).IsPrompt || ui.tr.ItemAt(6).Prompt != "thanks" {
 		t.Errorf("item 6 = %+v, want the last user prompt", ui.tr.ItemAt(6))
@@ -66,24 +67,29 @@ func TestRestoreHistoryRendersVisibleRowsInOrder(t *testing.T) {
 
 // TestRestoreHistoryLabelsMatchLive pins the collapsed text a resumed user
 // sees: live failed blocks are labeled "<tool> ❌" (proxy.go), not with a
-// result-derived summary, and restored blocks never claim 0ms.
+// result-derived summary, a persisted duration renders exactly as a live one,
+// a call with no result renders Interrupted, and restored blocks never claim
+// 0ms.
 func TestRestoreHistoryLabelsMatchLive(t *testing.T) {
 	ui := New("test")
 	ui.SetHistory([]HistoryItem{{
 		Kind: HistoryAssistant,
 		ToolCalls: []HistoryToolCall{
-			{ID: "call-ok", Name: "bash", Summary: "1 test passed", Result: "ok"},
+			{ID: "call-ok", Name: "bash", Summary: "1 test passed", Result: "ok", Duration: 1400 * time.Millisecond},
 			{ID: "call-err", Name: "bash", Summary: "exit status 1", Error: "error: exit status 1"},
-			{ID: "call-orphan", Name: "read", ResultMissing: true},
+			{ID: "call-orphan", Name: "read", Interrupted: true},
 		},
 	}})
 	ui.restoreHistory()
 	ui.refreshMessages()
 	text := ui.tr.PaintedText()
-	for _, want := range []string{"1 test passed", "bash ❌", "result not retained"} {
+	for _, want := range []string{"1 test passed", "1.4s", "bash ❌", "interrupted"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("rendered transcript missing %q: %q", want, text)
 		}
+	}
+	if got := ui.tr.ItemAt(2).ToolBlock; got == nil || got.S() != toolblock.Interrupted {
+		t.Errorf("item 2 = %+v, want the interrupted tool block", ui.tr.ItemAt(2))
 	}
 	if strings.Contains(text, "exit status 1 ❌") {
 		t.Errorf("error block used the computed summary instead of the tool name: %q", text)
