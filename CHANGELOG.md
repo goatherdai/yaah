@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.228.0](https://github.com/goatherdai/yaah/compare/v0.227.0...v0.228.0) (2026-11-28)
+
+
+### Features
+
+* **tui:** conversation scrollbar — window-relative thumb over the painted rows (yaah-74ff.1) ([#465](https://github.com/goatherdai/yaah/issues/465)) ([f7c6729](https://github.com/goatherdai/yaah/commit/f7c67294abb32e165ac30c86b1889179614a1a16))
+
 ## [0.227.0](https://github.com/goatherdai/yaah/compare/v0.226.0...v0.227.0) (2026-11-28)
 
 
