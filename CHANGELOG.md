@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.225.2](https://github.com/goatherdai/yaah/compare/v0.225.1...v0.225.2) (2026-11-28)
+
+
+### Bug Fixes
+
+* **process:** close the process manager on session teardown and kill the whole tree on POSIX (yaah-i1c1) ([#459](https://github.com/goatherdai/yaah/issues/459)) ([a577c5d](https://github.com/goatherdai/yaah/commit/a577c5d0d74734f253f54807168e5c0045c900b4))
+
 ## [0.225.1](https://github.com/goatherdai/yaah/compare/v0.225.0...v0.225.1) (2026-11-28)
 
 
