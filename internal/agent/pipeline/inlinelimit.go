@@ -27,19 +27,16 @@ func (m *InlineLimitMiddleware) PostModel(ctx context.Context, msg *types.Messag
 	if m.max <= 0 || len(msg.ToolCalls) <= m.max {
 		return step, nil
 	}
-	dropped := msg.ToolCalls[m.max:]
-	msg.ToolCalls = msg.ToolCalls[:m.max]
-	step.InlineDropped = len(dropped)
-	for _, tc := range dropped {
-		step.SynthesizedResults = append(step.SynthesizedResults, types.ToolFailedMsg(
-			tc.ID, tc.Function.Name,
-			fmt.Sprintf(
-				"[dropped: this call exceeded the inline tool limit (%d per turn) and was not executed. "+
-					"Break large batches into smaller turns or use the delegate tool for batch work.]",
-				m.max,
-			),
-		))
-	}
+	reason := fmt.Sprintf(
+		"[dropped: this call exceeded the inline tool limit (%d per turn) and was not executed. "+
+			"Break large batches into smaller turns or use the delegate tool for batch work.]",
+		m.max)
+	step.InlineDropped = stripCalls(msg, step, func(i int, _ types.ToolCall) stripDecision {
+		if i < m.max {
+			return stripDecision{keep: true}
+		}
+		return stripDecision{reason: reason}
+	}, nil)
 	return step, nil
 }
 

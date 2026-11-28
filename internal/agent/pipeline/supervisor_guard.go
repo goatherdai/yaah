@@ -55,23 +55,17 @@ func (m *SupervisorGuardMiddleware) PostModel(ctx context.Context, msg *types.Me
 		return step, nil
 	}
 
-	filtered := make([]types.ToolCall, 0, len(msg.ToolCalls))
-	for _, tc := range msg.ToolCalls {
+	// Every tool_call_id on the assistant message needs a result; synthesize
+	// the denial in the approval middleware's own denied-call shape so the
+	// provider does not reject the next request over a dangling ID — and the
+	// model reads the same error surface it already knows how to respond to.
+	stripCalls(msg, step, func(_ int, tc types.ToolCall) stripDecision {
 		reason := m.check(m.ownerID, tc.Function.Name, tc.Function.Arguments)
 		if reason == "" {
-			filtered = append(filtered, tc)
-			continue
+			return stripDecision{keep: true}
 		}
-		// Every tool_call_id on the assistant message needs a result;
-		// synthesize the denial in the approval middleware's own
-		// denied-call shape so the provider does not reject the next
-		// request over a dangling ID — and the model reads the same
-		// error surface it already knows how to respond to.
-		step.SynthesizedResults = append(step.SynthesizedResults,
-			types.ToolFailedMsg(tc.ID, tc.Function.Name,
-				fmt.Sprintf("error: tool %q denied by supervisor guard: %s", tc.Function.Name, reason)))
-	}
-	msg.ToolCalls = filtered
+		return stripDecision{reason: fmt.Sprintf("error: tool %q denied by supervisor guard: %s", tc.Function.Name, reason)}
+	}, nil)
 	return step, nil
 }
 

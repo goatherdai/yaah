@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -27,7 +26,6 @@ type Server struct {
 	name    string
 	version string
 	tools   []ServerToolDef
-	reader  messageReader
 	writer  messageWriter
 }
 
@@ -46,17 +44,15 @@ func (s *Server) AddTool(def ServerToolDef) {
 
 // Serve reads JSON-RPC messages from in, handles them, and writes responses
 // to out. It blocks until the input stream is closed (EOF) or the context is
-// cancelled. Framing is auto-detected from the first inbound message:
-// Content-Length (MCP spec default) or newline-delimited JSON.
+// cancelled. Framing is auto-detected from the first inbound message —
+// Content-Length or newline-delimited JSON — and mirrored on output.
 //
 // Reading happens in a dedicated goroutine so context cancellation is honored
 // promptly even while blocked waiting for the next stdin line. On cancellation
 // the reader goroutine is left blocked on the (now-abandoned) input; the
 // process is expected to exit shortly after Serve returns.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
-	br := bufio.NewReader(in)
-	detector := &serverDetectReader{reader: br}
-	s.reader = detector
+	detector := jsonrpc.NewAutoDetectReader(in)
 
 	type readResult struct {
 		msg jsonrpc.Message
@@ -86,9 +82,12 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 				return fmt.Errorf("read message: %w", r.err)
 			}
 
-			// Lazily create the writer once framing is known.
+			// Lazily create the writer once framing is known. The
+			// detector goroutine hands this goroutine the message over
+			// msgCh, which is the synchronization edge that makes its
+			// Framing() report safe to read here.
 			if s.writer == nil {
-				if detector.framed {
+				if detector.Framing() == jsonrpc.FramingContentLength {
 					s.writer = jsonrpc.NewFramedWriter(out)
 				} else {
 					s.writer = jsonrpc.NewNewlineWriter(out)
@@ -268,33 +267,4 @@ func (s *Server) makeToolError(msg string) json.RawMessage {
 		"isError": true,
 	})
 	return data
-}
-
-// serverDetectReader auto-detects Content-Length vs newline-delimited
-// framing on the first message, then delegates to the appropriate reader.
-// Detection happens inside ReadMessage (in the reader goroutine) so it
-// never blocks the Serve select loop.
-type serverDetectReader struct {
-	reader   *bufio.Reader
-	delegate messageReader
-	framed   bool
-}
-
-func (d *serverDetectReader) ReadMessage() (jsonrpc.Message, error) {
-	if d.delegate != nil {
-		return d.delegate.ReadMessage()
-	}
-	// Peek(1) blocks until at least one byte is available, avoiding
-	// false EOF when a slow client hasn't sent data yet.
-	peek, err := d.reader.Peek(1)
-	if err != nil {
-		return jsonrpc.Message{}, err
-	}
-	if peek[0] == '{' {
-		d.delegate = jsonrpc.NewNewlineReader(d.reader)
-	} else {
-		d.framed = true
-		d.delegate = jsonrpc.NewFramedReader(d.reader)
-	}
-	return d.delegate.ReadMessage()
 }

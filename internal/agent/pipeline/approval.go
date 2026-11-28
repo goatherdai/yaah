@@ -106,35 +106,31 @@ func (m *ApprovalMiddleware) PostModel(ctx context.Context, msg *types.Message, 
 		return step, nil
 	}
 
-	filtered := make([]types.ToolCall, 0, len(msg.ToolCalls))
-	for _, tc := range msg.ToolCalls {
+	stripCalls(msg, step, func(_ int, tc types.ToolCall) stripDecision {
 		name, args := tc.Function.Name, tc.Function.Arguments
 		decision := m.authorize(name, args)
-		var errMsg string
 		switch decision.Gate {
 		case GatePass:
-			filtered = append(filtered, tc)
-			continue
+			return stripDecision{keep: true}
 		case GateDeny, GateWithheld:
 			// Terminal: an origin policy denies, the ruleset denies, or
 			// the mode withholds — none of it approvable. The wording
 			// comes from the decision's origin, so a user's own deny rule
 			// is not reported as an mcp_approval denial.
-			errMsg = "error: " + decision.StripReason(name)
+			return stripDecision{reason: "error: " + decision.StripReason(name)}
 		case GateAsk:
 			// Ask is the only verdict the prompt can change: a rule, a posture,
 			// or the MCP policy asked, and the answer decides.
 			if m.approve != nil && m.approve(ctx, tc.ID, name, args) {
-				filtered = append(filtered, tc)
-				continue
+				return stripDecision{keep: true}
 			}
-			errMsg = fmt.Sprintf("error: tool %q was denied by user", name)
+			return stripDecision{reason: fmt.Sprintf("error: tool %q was denied by user", name)}
+		default:
+			return stripDecision{}
 		}
-		m.emitDeny(name, args, errMsg)
-		step.SynthesizedResults = append(step.SynthesizedResults,
-			types.ToolFailedMsg(tc.ID, name, errMsg))
-	}
-	msg.ToolCalls = filtered
+	}, func(tc types.ToolCall, reason string) {
+		m.emitDeny(tc.Function.Name, tc.Function.Arguments, reason)
+	})
 	return step, nil
 }
 

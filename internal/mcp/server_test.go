@@ -45,10 +45,71 @@ func startServer(t *testing.T, srv *Server) (in io.WriteCloser, out io.Reader, c
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
+		// Close the pipe when Serve exits so a server that returns
+		// before responding surfaces as EOF, not a hung read.
+		defer outWriter.Close()
 		// Ignore serve error; tests check responses directly.
 		_ = srv.Serve(ctx, inReader, outWriter)
 	}()
 	return inWriter, outReader, cancel
+}
+
+// TestServeDetectsNewlineAfterLeadingWhitespace pins the yaah-czzd fix: a
+// newline-delimited client that opens its session with blank lines used to
+// be misdetected as Content-Length framing (the old peek-one-byte detector
+// treated any non-'{' byte as a framed stream). Detection now consumes
+// leading whitespace before deciding, so the first message parses and the
+// response comes back in the client's own framing.
+func TestServeDetectsNewlineAfterLeadingWhitespace(t *testing.T) {
+	srv := NewServer("test-server", "1.0.0")
+	in, out, cancel := startServer(t, srv)
+	defer cancel()
+
+	// Raw bytes, not writeMsg: the leading whitespace is the point.
+	raw := "\n  \n" + `{"jsonrpc":"2.0","id":9,"method":"tools/list"}` + "\n"
+	if _, err := io.WriteString(in, raw); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+
+	resp := readMsg(t, out)
+	if id, ok := resp.IDInt(); !ok || id != 9 {
+		t.Errorf("response ID = %v, want 9 (the request must have parsed)", resp.ID)
+	}
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %v", resp.Error.Message)
+	}
+}
+
+// TestServeMirrorsContentLengthFraming pins the framed half of the
+// auto-detection wiring: a Content-Length-framed request must be answered
+// in the same framing. A mistake on the writer-selection branch (for
+// example comparing against the wrong framing constant) would otherwise
+// only affect framed clients.
+func TestServeMirrorsContentLengthFraming(t *testing.T) {
+	srv := NewServer("test-server", "1.0.0")
+	in, out, cancel := startServer(t, srv)
+	defer cancel()
+
+	if err := jsonrpc.NewFramedWriter(in).WriteMessage(jsonrpc.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("3"),
+		Method:  "tools/list",
+	}); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+
+	// FramedReader fails outright on a newline-delimited response, so a
+	// successful read proves the server picked framed output.
+	resp, err := jsonrpc.NewFramedReader(out).ReadMessage()
+	if err != nil {
+		t.Fatalf("read framed response: %v", err)
+	}
+	if id, ok := resp.IDInt(); !ok || id != 3 {
+		t.Errorf("response ID = %v, want 3", resp.ID)
+	}
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %v", resp.Error.Message)
+	}
 }
 
 // TestInitialize verifies the initialize handshake returns protocol version
