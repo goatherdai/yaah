@@ -167,6 +167,14 @@ func newWakeTurnSession(provider agent.Provider) *agentSession {
 	}
 }
 
+// runPublished reports whether a run has published its cancel, which is
+// what HaltCurrentRun invokes.
+func runPublished(s *agentSession) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.runCancel != nil
+}
+
 // recordingSession is a real session whose RunPrompt returns are visible
 // to a test. The submit hook starts RunPrompt on its own goroutine, so a
 // queued prompt's return is otherwise unobservable.
@@ -214,25 +222,27 @@ func TestSubmitStopHooks_CancelsWakeTurn(t *testing.T) {
 		}
 	})
 
-	t.Run("stop lands before the wake goroutine runs", func(t *testing.T) {
+	t.Run("stop lands as soon as the turn starts", func(t *testing.T) {
 		prov := &blockingProvider{started: make(chan struct{})}
 		sess := newRecordingSession(prov)
 		_, onStop := submitStopHooks(&fakeTUI{}, sess)
 
-		// Deliberately no waitForProvider: StartWakeTurn has claimed the gate
-		// and returned, and the stop is issued before the wake goroutine has
-		// had a chance to run. The turn must already be reachable.
+		// Deliberately no waitForProvider. StartWakeTurn has claimed the gate
+		// and returned, and whether its goroutine has run yet is up to the
+		// scheduler. The cancel must already be published regardless: before
+		// the fix it was published from inside that goroutine, so a stop
+		// issued here could be a no-op.
 		if !sess.StartWakeTurn("[WATCH] ci is green") {
 			t.Fatal("StartWakeTurn refused to start a turn on an idle session")
+		}
+		if !runPublished(sess.agentSession) {
+			t.Fatal("no cancel published when StartWakeTurn returned — a stop issued now would be a no-op")
 		}
 
 		onStop()
 
 		if !sess.waitForRunGate(5 * time.Second) {
-			t.Fatal("run gate still held — the stop found no cancel to invoke and the wake turn ran on")
-		}
-		if got := prov.sendCalls(); got != 0 {
-			t.Fatalf("provider Send calls = %d, want 0: the wake turn reached the model despite the stop", got)
+			t.Fatal("run gate still held after the stop — the wake turn ran on")
 		}
 	})
 

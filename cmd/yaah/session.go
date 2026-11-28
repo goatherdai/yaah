@@ -493,9 +493,11 @@ func (s *agentSession) shutdown() {
 	// A watch can start its own turn. Cancel it (once it has published its
 	// cancel func) and join the run gate — bounded — before the workspace
 	// substrate below is destroyed: a wake mid-Exec must not still hold the
-	// sandbox its owner is tearing down. The join is what waits out the
-	// unwind after the cancel, and covers the instant between a submitted
-	// run taking the gate and publishing its state.
+	// sandbox its owner is tearing down. The join waits out the unwind of
+	// whatever the cancel reached. It does not stop a RunPrompt that is
+	// still queued on the gate: nothing cancels that caller's context, and
+	// RunPrompt does not check s.closed, so one can take the gate after the
+	// join samples it (yaah-l025).
 	s.mu.RLock()
 	cancelRun := s.runCancel
 	s.mu.RUnlock()

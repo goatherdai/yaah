@@ -108,13 +108,14 @@ type promptSession interface {
 // they share one piece of state: the cancel of the context the last submit
 // handed the session.
 //
-// A stop has two things to reach. The run in flight, through the session's
-// HaltCurrentRun: it is registered for every run — including wake-started
-// turns, which never pass through a submit — and cleared when the run
-// returns, so a stop lands on the run actually in flight and is a no-op
-// when none is. And a prompt still queued behind that run: RunPrompt waits
-// on the run gate, so a queued prompt has no run to cancel yet. Its context
-// is cancelled here and it aborts as soon as it gets the gate. Before this
+// A stop has two things to reach. A prompt still queued behind the running
+// turn: RunPrompt waits on the run gate, so a queued prompt has no run to
+// cancel yet. Its context is cancelled first, so it aborts as soon as it
+// gets the gate — even if that is the instant the running turn releases
+// it. And the run in flight, through the session's HaltCurrentRun: it is
+// registered for every run — including wake-started turns, which never
+// pass through a submit — and cleared when the run returns, so a stop lands
+// on the run actually in flight and is a no-op when none is. Before this
 // the queued prompt's cancel was the only one, which is why a stop could
 // not reach a wake-started turn (yaah-l2z1).
 func submitStopHooks(app submitUI, sess promptSession) (onSubmit func(string), onStop func()) {
@@ -128,11 +129,11 @@ func submitStopHooks(app submitUI, sess promptSession) (onSubmit func(string), o
 	}
 	onStop = func() {
 		app.HideThinking()
-		sess.HaltCurrentRun()
 		if cancelSubmit != nil {
 			cancelSubmit()
 			cancelSubmit = nil
 		}
+		sess.HaltCurrentRun()
 	}
 	return onSubmit, onStop
 }
