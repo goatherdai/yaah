@@ -250,6 +250,9 @@ type agentSession struct {
 	// drainTimeout overrides backgroundJobDrainTimeout when set — the
 	// session-owned seam the close tests use; zero means the default.
 	drainTimeout time.Duration
+	// procCloseTimeout overrides backgroundProcessCloseTimeout when set —
+	// the session-owned seam the close tests use; zero means the default.
+	procCloseTimeout time.Duration
 
 	// sessionSandbox owns the isolated workspace backend's lifecycle, when
 	// workspace.backend is containerd: the sandbox was constructed, image-
@@ -437,6 +440,13 @@ type agentSession struct {
 // — the test seam, session-owned per the no-globals convention.
 const backgroundJobDrainTimeout = 30 * time.Second
 
+// backgroundProcessCloseTimeout bounds how long the teardown gives background
+// processes to exit after being asked to terminate, before they are hard-killed
+// (process.Manager.Close adds a short bounded settle on top). A session whose
+// procCloseTimeout field is set uses that instead — the test seam,
+// session-owned per the no-globals convention.
+const backgroundProcessCloseTimeout = 5 * time.Second
+
 // workspaceSandboxDestroyTimeout bounds the sandbox teardown in close() so
 // a wedged containerd daemon cannot hang session shutdown.
 const workspaceSandboxDestroyTimeout = 30 * time.Second
@@ -599,6 +609,23 @@ func (s *agentSession) shutdown() {
 		if !s.backgroundJobs.CloseAndWait(drainTimeout) {
 			drained = false
 			fmt.Fprintf(os.Stderr, "warning: background sub-agent(s) still finishing after %s; continuing session teardown\n", drainTimeout)
+		}
+	}
+	// Background processes (yaah-i1c1) stop here. After the drain: a run or
+	// a sub-agent are the only things that start one, and both are quiesced
+	// by now, so the set cannot grow past this point — the manager refuses
+	// new starts. Before the workspace sandbox is destroyed below, so
+	// nothing keeps writing into a workspace that is being torn down.
+	if s.procMgr != nil {
+		procCloseTimeout := s.procCloseTimeout
+		if procCloseTimeout == 0 {
+			procCloseTimeout = backgroundProcessCloseTimeout
+		}
+		procCtx, cancelProcClose := context.WithTimeout(ctx, procCloseTimeout)
+		report := s.procMgr.Close(procCtx)
+		cancelProcClose()
+		if len(report.Unconfirmed) > 0 {
+			fmt.Fprintf(os.Stderr, "warning: %d background process(es) could not be confirmed stopped: %s\n", len(report.Unconfirmed), strings.Join(report.Unconfirmed, ", "))
 		}
 	}
 	// The egress broker stops AFTER the drain, not before: Stop() waits for its
