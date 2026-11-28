@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,22 +43,42 @@ func TestRunHalted_ClassifiesOnlyDeliberateCause(t *testing.T) {
 	}
 }
 
+// haltOnFirstDelta builds a sub-agent loop against the streaming
+// partial provider and returns a run context cancelled with the halt
+// cause once the chunk has been observed as a token delta. A fixed sleep
+// races the loop's startup — it lost on the Windows CI runner, where the
+// cancel fired before the chunk was read and there was no partial to
+// seal — so the mid-stream stop is gated on the delta.
+func haltOnFirstDelta(t *testing.T) (*Loop, context.Context) {
+	t.Helper()
+	observed := make(chan struct{})
+	var once sync.Once
+	loop := NewSubAgentLoop(&partialThenHangProvider{}, tools.NewEmptyRegistry(), "test-model", "sys", SubAgentConfig{
+		MaxLoopCycles: 1,
+		MaxToolTurns:  1,
+		EventObserver: func(ev Event) {
+			if _, ok := ev.(*TokenDeltaEvent); ok {
+				once.Do(func() { close(observed) })
+			}
+		},
+	})
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	go func() {
+		<-observed
+		cancel(ErrRunHalted)
+	}()
+	t.Cleanup(func() { cancel(nil) })
+	return loop, ctx
+}
+
 // TestLoop_HaltedRunSealsPartialWithMarker: a deliberate stop mid-stream
 // must (1) classify the run as ErrRunHalted — not a provider or context
 // error — and (2) seal the streamed partial into the conversation with
 // the interrupted marker, where a deadline- or cancel-ended run leaves it
 // out (see TestLoop_RunKeepsPartialContentOnDeadline).
 func TestLoop_HaltedRunSealsPartialWithMarker(t *testing.T) {
-	loop := NewSubAgentLoop(&partialThenHangProvider{}, tools.NewEmptyRegistry(), "test-model", "sys", SubAgentConfig{
-		MaxLoopCycles: 1,
-		MaxToolTurns:  1,
-	})
-	ctx, cancel := context.WithCancelCause(context.Background())
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		cancel(ErrRunHalted)
-	}()
-	defer cancel(nil)
+	loop, ctx := haltOnFirstDelta(t)
 
 	got, err := loop.Run(ctx, "answer me")
 	if !errors.Is(err, ErrRunHalted) {
@@ -113,36 +134,14 @@ func TestLoop_HaltedBeforeContentIsBareHalt(t *testing.T) {
 	}
 }
 
-// hangProvider never yields a chunk: the run is stopped by the context
-// alone.
-type hangProvider struct{}
-
-func (p *hangProvider) Send(context.Context, types.ChatRequest) (*types.ChatResponse, error) {
-	return nil, errors.New("streaming only")
-}
-
-func (p *hangProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
-	return make(chan providers.StreamChunk), make(chan error)
-}
-
 // TestLoop_HaltedRunPersistsSealedPartial: the sealed partial must land
 // in the session history — the resumed transcript and the next turn's
 // context both see the interrupted answer (yaah-ny97 AC2), not only the
 // in-memory conversation.
 func TestLoop_HaltedRunPersistsSealedPartial(t *testing.T) {
 	db := newPersistTestDB(t, "sess-halt")
-	loop := NewSubAgentLoop(&partialThenHangProvider{}, tools.NewEmptyRegistry(), "test-model", "sys", SubAgentConfig{
-		MaxLoopCycles: 1,
-		MaxToolTurns:  1,
-	})
+	loop, ctx := haltOnFirstDelta(t)
 	loop.Persister = NewSessionPersister(db, nil, "sess-halt")
-
-	ctx, cancel := context.WithCancelCause(context.Background())
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		cancel(ErrRunHalted)
-	}()
-	defer cancel(nil)
 
 	if _, err := loop.Run(ctx, "answer me"); !errors.Is(err, ErrRunHalted) {
 		t.Fatalf("Run error = %v, want ErrRunHalted", err)
@@ -165,4 +164,16 @@ func TestLoop_HaltedRunPersistsSealedPartial(t *testing.T) {
 	if !strings.HasPrefix(*sealed, "almost done") || !strings.HasSuffix(*sealed, HaltedContentSuffix) {
 		t.Errorf("persisted sealed content = %q, want the partial plus the %q marker", *sealed, HaltedContentSuffix)
 	}
+}
+
+// hangProvider never yields a chunk: the run is stopped by the context
+// alone.
+type hangProvider struct{}
+
+func (p *hangProvider) Send(context.Context, types.ChatRequest) (*types.ChatResponse, error) {
+	return nil, errors.New("streaming only")
+}
+
+func (p *hangProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
+	return make(chan providers.StreamChunk), make(chan error)
 }
