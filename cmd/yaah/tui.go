@@ -220,7 +220,14 @@ func runTUI(initialSpec string) error {
 		} else {
 			providerName = parts[0]
 		}
-		sess.SetModel(providerName, modelName)
+		// A refused switch (provider not defined or unusable) keeps the
+		// session's routing: say so instead of updating the header to
+		// a model the next run will not use.
+		if !sess.SetModel(providerName, modelName) {
+			app.SetEphemeral(fmt.Sprintf("cannot switch to %s/%s: provider not usable — keeping %s/%s",
+				providerName, modelName, sess.ProviderName(), sess.ModelName()))
+			return
+		}
 		app.SetProvider(providerName)
 		app.SetModel(modelName)
 	}

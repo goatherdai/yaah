@@ -65,9 +65,12 @@ func Show(app *tview.Application, pages *tview.Pages, servers []Server, th *colo
 	textView.SetBorder(true).
 		SetTitle(" MCP Servers ").
 		SetTitleColor(tcell.ColorYellow)
-
-	flex := modal.Wrap(textView)
-	flex.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
+	// The capture sits on the focused leaf (the textView), the same shape
+	// the pickers use. tview 0.42 also consults a capture on the wrapping
+	// flex (the page's WrapInputHandler), but the leaf is where the key
+	// arrives first; TestShow_EscapeAndEnterDismiss pins both dismissal
+	// keys against the real event loop.
+	textView.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
 		if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyEnter {
 			pages.RemovePage(modalPageName)
 			onDismiss()
@@ -75,6 +78,8 @@ func Show(app *tview.Application, pages *tview.Pages, servers []Server, th *colo
 		}
 		return ev
 	})
+
+	flex := modal.Wrap(textView)
 
 	pages.AddPage(modalPageName, flex, true, true)
 	app.SetFocus(textView)

@@ -94,6 +94,8 @@ func pickOAuthProvider(cfg *config.Config, arg string) (string, error) {
 // a configured OAuth provider; "" picks the single configured provider
 // automatically; multiple configured providers without a name are
 // refused with the names listed, since the caller has no way to ask.
+// The refusal wording is command-neutral — the resolver backs both
+// :login and :logout.
 func resolveOAuthProvider(cfg *config.Config, arg string) (string, error) {
 	if arg != "" {
 		return pickOAuthProvider(cfg, arg)
@@ -105,7 +107,7 @@ func resolveOAuthProvider(cfg *config.Config, arg string) (string, error) {
 	case 1:
 		return names[0], nil
 	default:
-		return "", fmt.Errorf("multiple OAuth providers configured (%s) — specify one: :login <name>", strings.Join(names, ", "))
+		return "", fmt.Errorf("multiple OAuth providers configured (%s) — specify one: :login <name> or :logout <name>", strings.Join(names, ", "))
 	}
 }
 
