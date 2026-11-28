@@ -248,11 +248,18 @@ func (t *App) HandleEvent(event agent.Event) {
 		})
 		if !scheduled {
 			// The turn-end reconciliation never runs: nothing sweeps this
-			// turn, so a still-Running block keeps its chevron and the
-			// lost-end record is never consumed. It cannot be run here —
-			// the transcript belongs to the UI goroutine — and re-queueing
-			// it could seal the NEXT turn's blocks, so the loss is recorded
-			// instead of recovered (yaah-77f1 review).
+			// turn, so a still-Running block keeps its chevron. The sweep
+			// cannot be run here — the transcript belongs to the UI
+			// goroutine — and re-queueing it could seal the NEXT turn's
+			// blocks, so the loss is recorded instead of recovered.
+			//
+			// The turn-scoped lost-end records go with the missing sweep: no
+			// sweep of this turn will consume them, and their fallback keys
+			// repeat next prompt, where they would suppress a different
+			// turn's swept attribution. Unique-keyed records stay, because a
+			// start from this turn may still land and consume one
+			// (yaah-77f1 review).
+			t.dropFallbackLostEnds()
 			t.recordToolOrphan(orphanKindDroppedSweep)
 		}
 	}

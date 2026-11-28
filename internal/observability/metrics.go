@@ -222,7 +222,6 @@ func RecordTUIQueueEvent(ctx context.Context, eventType, outcome string, depth i
 	}
 }
 
-// RecordTUIRefresh records refresh count, duration, cadence, and queue depth.
 // RecordTUIToolOrphan counts one tool-block orphan, classified by kind:
 //
 //   - "unmatched_end": an end event met no block at all. It is stashed so a
@@ -239,8 +238,10 @@ func RecordTUIQueueEvent(ctx context.Context, eventType, outcome string, depth i
 //     drop accounting this means only that the end never arrived and no seam
 //     observed the loss.
 //   - "dropped_sweep": the turn-end reconciliation itself could never be
-//     scheduled, so nothing swept this turn and no block was sealed. Recorded
-//     because it is the only seam that observes a missing turn boundary.
+//     scheduled, so nothing swept this turn. Recorded because it is the only
+//     seam that observes a missing turn boundary. The fallback-keyed lost-end
+//     records are discarded with it (they are only valid for their own turn);
+//     a unique-keyed one survives for a start that still lands.
 func RecordTUIToolOrphan(ctx context.Context, kind string) {
 	if tuiToolOrphans == nil {
 		return
@@ -248,6 +249,7 @@ func RecordTUIToolOrphan(ctx context.Context, kind string) {
 	tuiToolOrphans.Add(ctx, 1, metric.WithAttributes(attribute.String("orphan_kind", kind)))
 }
 
+// RecordTUIRefresh records refresh count, duration, cadence, and queue depth.
 func RecordTUIRefresh(ctx context.Context, duration time.Duration, cadence time.Duration, queueDepth int) {
 	if tuiRefreshCount == nil {
 		return

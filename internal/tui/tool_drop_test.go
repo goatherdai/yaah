@@ -525,3 +525,63 @@ func TestKeylessDroppedEndIsNotAlsoCountedAsSwept(t *testing.T) {
 		t.Fatalf("dropped_end = %d after the sweep, want 1 (counts: %v)", got, counts)
 	}
 }
+
+// TestDroppedTurnEndDoesNotStrandItsFallbackLosses pins the boundary a missing
+// sweep leaves behind. When the DoneEvent's reconciliation cannot be scheduled,
+// no sweep of that turn will ever consume its lost-end records; a fallback-keyed
+// one carries a run-scoped ordinal that repeats on the next prompt, so letting it
+// survive would suppress the NEXT turn's swept attribution for a block it never
+// observed being lost. A unique-keyed record is kept — a start from its own turn
+// may still land and consume it.
+func TestDroppedTurnEndDoesNotStrandItsFallbackLosses(t *testing.T) {
+	ui, stop := newQueuedApp(t)
+	defer stop()
+
+	// Turn 1: a keyless end and then the turn end itself, both unschedulable.
+	restore := saturate(t, ui)
+	ui.HandleEvent(&agent.ToolEndEvent{ID: 1, Name: "read", Args: `{"path":"a"}`, Result: "dropped", Duration: time.Millisecond})
+	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
+	restore()
+
+	counts := ui.toolOrphanCounts()
+	if counts[orphanKindDroppedEnd] != 1 || counts[orphanKindDroppedSweep] != 1 {
+		t.Fatalf("turn 1 counts = %v, want one dropped_end and one dropped_sweep", counts)
+	}
+
+	// Turn 2 reuses ordinal 1 and grows a block whose end never arrives: the
+	// sweep must attribute it, not the stale record from turn 1.
+	ui.HandleEvent(&agent.ToolStartEvent{ID: 1, Name: "read", Args: `{"path":"b"}`})
+	waitForUI(t, ui, func() bool { return runningToolBlocks(ui) == 1 },
+		"turn 2's keyless start created no Running block")
+	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
+	waitForUI(t, ui, func() bool { return runningToolBlocks(ui) == 0 },
+		"turn 2's sweep did not seal the block")
+
+	counts = ui.toolOrphanCounts()
+	if got := counts[orphanKindSwept]; got != 1 {
+		t.Fatalf("swept = %d, want 1: a stale fallback record from the previous turn suppressed this turn's attribution (counts: %v)", got, counts)
+	}
+}
+
+// TestDroppedTurnEndKeepsUniqueLosses pins the other half: a lost end whose key
+// identifies the call survives a missing sweep, because a start from that same
+// turn can still land and use it.
+func TestDroppedTurnEndKeepsUniqueLosses(t *testing.T) {
+	ui, stop := newQueuedApp(t)
+	defer stop()
+
+	restore := saturate(t, ui)
+	ui.HandleEvent(&agent.ToolEndEvent{
+		Key: "run1.1", ID: 1, Name: "read", Args: `{"path":"a"}`, Result: "the-result", Duration: time.Millisecond,
+	})
+	ui.HandleEvent(&agent.DoneEvent{Response: "done", ContextWindow: 8000})
+	restore()
+
+	// The turn's reconciliation was lost, but the start still lands: its block
+	// must be terminal, not Running.
+	ui.HandleEvent(&agent.ToolStartEvent{Key: "run1.1", ID: 1, Name: "read", Args: `{"path":"a"}`})
+	waitForUI(t, ui, func() bool {
+		blocks := toolBlocks(ui, "run1.1")
+		return len(blocks) == 1 && !blocks[0].IsRunning()
+	}, "a lost turn end stranded a keyed start as Running")
+}

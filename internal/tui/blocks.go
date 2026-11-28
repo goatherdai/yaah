@@ -135,6 +135,28 @@ func (t *App) takeLostToolEnd(key string) bool {
 	return false
 }
 
+// dropFallbackLostEnds discards the turn-scoped lost-end records, keeping the
+// ones whose key can identify the call. It runs when the turn-end reconciliation
+// could not be scheduled: that sweep will never consume them, and a fallback key
+// is a run-scoped ordinal that repeats on the next prompt — so a surviving record
+// would suppress the NEXT turn's swept attribution for a block it never observed
+// being lost. A unique-keyed record is kept, because a start from this turn may
+// still land and consume it.
+func (t *App) dropFallbackLostEnds() {
+	t.lostEndsMu.Lock()
+	defer t.lostEndsMu.Unlock()
+	if len(t.lostEnds) == 0 {
+		return
+	}
+	kept := t.lostEnds[:0]
+	for _, le := range t.lostEnds {
+		if le.unique {
+			kept = append(kept, le)
+		}
+	}
+	t.lostEnds = kept
+}
+
 // takeLostToolEnds returns and clears the recorded lost ends. The sweep is the
 // turn boundary: a loss recorded before it belongs to a block the sweep is
 // about to seal, and a later sweep must not re-attribute it.
@@ -192,11 +214,12 @@ func (t *App) AddToolEnd(key, summary, result string, dur time.Duration) {
 	t.settleToolEnd(key, transcript.ToolEnd{Summary: summary, Result: result, Duration: dur}, true)
 }
 
-// settleToolBlock applies one end event through the transcript's single
+// settleToolEnd applies one end event through the transcript's single
 // settlement rule and surfaces whatever it could not do: a healed or
 // duplicated end is real drift in the event stream and is counted, while a
 // settled block only needs its repaint scheduled.
-// settleToolEnd applies one tool end. unique reports whether key identifies the
+//
+// It applies one tool end. unique reports whether key identifies the
 // call for the session (a key minted from the event's Key) or is the run-scoped
 // ordinal fallback used for a keyless event. Only a unique key may be stashed
 // for a start that has not arrived yet: the sweep no longer clears the stash, so
