@@ -97,6 +97,7 @@ yaah/
 │   ├── skills/                  # SKILL.md discovery/parsing
 │   ├── spinner/                 # terminal spinner primitives
 │   ├── supervisionapi/          # neutral supervision errors and Firing shared by agent and tools
+│   ├── textclip/                # single owner of UTF-8-safe bounded string cuts
 │   ├── todo/                    # todo-list model shared by the views
 │   ├── toolargs/                # strict tool-argument decoding, unknown-key errors
 │   ├── tracestore/              # trace store open seam: backend + DSN from config → kernel StoreConfig
