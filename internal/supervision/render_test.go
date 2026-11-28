@@ -940,6 +940,8 @@ func TestClipRunes(t *testing.T) {
 		{name: "exactly the cap", in: "12345", max: 5, wantRunes: 5},
 		{name: "ellipsis fits inside the cap", in: strings.Repeat("a", 20), max: 10, wantRunes: 10, wantEllipsis: true},
 		{name: "max one leaves only the ellipsis", in: "ab", max: 1, wantRunes: 1, wantEllipsis: true},
+		{name: "max one keeps a single-rune value", in: "a", max: 1, wantRunes: 1},
+		{name: "max one keeps empty", in: "", max: 1, wantRunes: 0},
 		{name: "multi-byte", in: strings.Repeat("日", 200), max: 160, wantRunes: 160, wantEllipsis: true},
 		{name: "no cap", in: strings.Repeat("a", 20), max: 0, wantRunes: 20},
 		{name: "negative max is no cap", in: "abc", max: -3, wantRunes: 3},

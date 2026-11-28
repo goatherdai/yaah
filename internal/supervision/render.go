@@ -607,6 +607,10 @@ func singleLine(s string) string {
 // character. max <= 0 means no cap, and the input is returned unchanged.
 func clipRunes(s string, max int) string {
 	if max == 1 {
+		kept, truncated := textclip.Runes(s, 1)
+		if !truncated {
+			return kept // an empty or one-rune value already fits
+		}
 		return "…" // the marker is the whole budget
 	}
 	return textclip.HeadRunesWithin(s, max, "…")
