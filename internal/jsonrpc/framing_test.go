@@ -221,6 +221,30 @@ func TestAutoDetectReader_picksFramed(t *testing.T) {
 	}
 }
 
+// TestAutoDetectReaderFramingMode pins the accessor the MCP stdio server
+// uses to mirror the detected mode in its own writer: empty before the
+// first read, the settled mode after.
+func TestAutoDetectReaderFramingMode(t *testing.T) {
+	reader := NewAutoDetectReader(strings.NewReader("  \n{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"ping\"}\n"))
+	if got := reader.Framing(); got != "" {
+		t.Errorf("Framing before first read = %q, want empty", got)
+	}
+	if _, err := reader.ReadMessage(); err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+	if got := reader.Framing(); got != FramingNewline {
+		t.Errorf("Framing after a newline message = %q, want %q", got, FramingNewline)
+	}
+
+	framed := NewAutoDetectReader(strings.NewReader("Content-Length: 2\r\n\r\n{}"))
+	if _, err := framed.ReadMessage(); err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+	if got := framed.Framing(); got != FramingContentLength {
+		t.Errorf("Framing after a framed message = %q, want %q", got, FramingContentLength)
+	}
+}
+
 // --- Batch responses ------------------------------------------------------
 
 func TestBatchUnsupportedResponses(t *testing.T) {

@@ -51,6 +51,32 @@ func startServer(t *testing.T, srv *Server) (in io.WriteCloser, out io.Reader, c
 	return inWriter, outReader, cancel
 }
 
+// TestServeDetectsNewlineAfterLeadingWhitespace pins the yaah-czzd fix: a
+// newline-delimited client that opens its session with blank lines used to
+// be misdetected as Content-Length framing (the old peek-one-byte detector
+// treated any non-'{' byte as a framed stream). Detection now consumes
+// leading whitespace before deciding, so the first message parses and the
+// response comes back in the client's own framing.
+func TestServeDetectsNewlineAfterLeadingWhitespace(t *testing.T) {
+	srv := NewServer("test-server", "1.0.0")
+	in, out, cancel := startServer(t, srv)
+	defer cancel()
+
+	// Raw bytes, not writeMsg: the leading whitespace is the point.
+	raw := "\n  \n" + `{"jsonrpc":"2.0","id":9,"method":"tools/list"}` + "\n"
+	if _, err := io.WriteString(in, raw); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+
+	resp := readMsg(t, out)
+	if id, ok := resp.IDInt(); !ok || id != 9 {
+		t.Errorf("response ID = %v, want 9 (the request must have parsed)", resp.ID)
+	}
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %v", resp.Error.Message)
+	}
+}
+
 // TestInitialize verifies the initialize handshake returns protocol version
 // and server identity.
 func TestInitialize(t *testing.T) {

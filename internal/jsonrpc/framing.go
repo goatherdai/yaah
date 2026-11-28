@@ -161,6 +161,12 @@ func (w *NewlineWriter) WriteMessage(msg Message) error {
 	return nil
 }
 
+// The framing modes AutoDetectReader can settle on.
+const (
+	FramingContentLength = "framed"
+	FramingNewline       = "newline"
+)
+
 // AutoDetectReader picks between the two stdio framings on the first
 // message and delegates to the chosen reader for every later one.
 // Spec-compliant servers send "{json}\n" (newline mode); LSP-style servers
@@ -171,6 +177,7 @@ type AutoDetectReader struct {
 	inner  interface {
 		ReadMessage() (Message, error)
 	}
+	mode string
 }
 
 // NewAutoDetectReader creates a reader that auto-detects framing on the
@@ -178,6 +185,16 @@ type AutoDetectReader struct {
 func NewAutoDetectReader(r io.Reader) *AutoDetectReader {
 	return &AutoDetectReader{reader: bufio.NewReader(r)}
 }
+
+// Framing reports the framing detected so far: empty before the first
+// ReadMessage settles detection, FramingNewline or FramingContentLength
+// after. It exists for the peer that must mirror the detected mode in its
+// own writer — the MCP stdio server, which answers framed clients with
+// framed responses and newline clients with newline responses. The mode is
+// written during ReadMessage, so a reader on another goroutine may only
+// consult Framing after that ReadMessage's result has been handed over
+// through a channel or other synchronization edge.
+func (a *AutoDetectReader) Framing() string { return a.mode }
 
 // ReadMessage reads the next message, detecting the framing on the first
 // call. Leading whitespace is consumed until the first meaningful byte —
@@ -200,11 +217,13 @@ func (a *AutoDetectReader) ReadMessage() (Message, error) {
 				return Message{}, err
 			}
 			a.inner = NewNewlineReader(a.reader)
+			a.mode = FramingNewline
 		default:
 			if err := a.reader.UnreadByte(); err != nil {
 				return Message{}, err
 			}
 			a.inner = NewFramedReader(a.reader)
+			a.mode = FramingContentLength
 		}
 		return a.inner.ReadMessage()
 	}

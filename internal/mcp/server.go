@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -54,8 +53,7 @@ func (s *Server) AddTool(def ServerToolDef) {
 // the reader goroutine is left blocked on the (now-abandoned) input; the
 // process is expected to exit shortly after Serve returns.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
-	br := bufio.NewReader(in)
-	detector := &serverDetectReader{reader: br}
+	detector := jsonrpc.NewAutoDetectReader(in)
 	s.reader = detector
 
 	type readResult struct {
@@ -86,9 +84,12 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 				return fmt.Errorf("read message: %w", r.err)
 			}
 
-			// Lazily create the writer once framing is known.
+			// Lazily create the writer once framing is known. The
+			// detector goroutine hands this goroutine the message over
+			// msgCh, which is the synchronization edge that makes its
+			// Framing() report safe to read here.
 			if s.writer == nil {
-				if detector.framed {
+				if detector.Framing() == jsonrpc.FramingContentLength {
 					s.writer = jsonrpc.NewFramedWriter(out)
 				} else {
 					s.writer = jsonrpc.NewNewlineWriter(out)
@@ -268,33 +269,4 @@ func (s *Server) makeToolError(msg string) json.RawMessage {
 		"isError": true,
 	})
 	return data
-}
-
-// serverDetectReader auto-detects Content-Length vs newline-delimited
-// framing on the first message, then delegates to the appropriate reader.
-// Detection happens inside ReadMessage (in the reader goroutine) so it
-// never blocks the Serve select loop.
-type serverDetectReader struct {
-	reader   *bufio.Reader
-	delegate messageReader
-	framed   bool
-}
-
-func (d *serverDetectReader) ReadMessage() (jsonrpc.Message, error) {
-	if d.delegate != nil {
-		return d.delegate.ReadMessage()
-	}
-	// Peek(1) blocks until at least one byte is available, avoiding
-	// false EOF when a slow client hasn't sent data yet.
-	peek, err := d.reader.Peek(1)
-	if err != nil {
-		return jsonrpc.Message{}, err
-	}
-	if peek[0] == '{' {
-		d.delegate = jsonrpc.NewNewlineReader(d.reader)
-	} else {
-		d.framed = true
-		d.delegate = jsonrpc.NewFramedReader(d.reader)
-	}
-	return d.delegate.ReadMessage()
 }
