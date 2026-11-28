@@ -131,17 +131,17 @@ func (v *View) wasAnnounced(callID string) bool {
 func toolCallID(id int64) string { return "t" + strconv.FormatInt(id, 10) }
 
 // toolCallIDFor renders the identifier a tool_call and its matching update are
-// correlated by. The event's session-unique Key wins over the legacy "t"+ID
-// fallback: ID is the run's dispatch ordinal and restarts at 1 on every
-// prompt, so keying on it made a later prompt's update address an earlier
-// prompt's call (yaah-77f1). A provider call id, when the model supplied one,
-// stays ahead of both so a client correlating on it is unaffected.
+// correlated by. The event's session-unique Key is authoritative: ID is the
+// run's dispatch ordinal and restarts at 1 on every prompt, and a provider
+// call id is no better — providers routinely regenerate "call_1" per response,
+// so it repeats across prompts too. Both are therefore fallbacks for an event
+// that carries no key, never a preference over it (yaah-77f1).
 func toolCallIDFor(key, callID string, id int64) string {
-	if callID != "" {
-		return callID
-	}
 	if key != "" {
 		return key
+	}
+	if callID != "" {
+		return callID
 	}
 	return toolCallID(id)
 }

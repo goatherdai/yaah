@@ -585,3 +585,37 @@ func TestView_toolCallIDCarriesTheSessionKey(t *testing.T) {
 		t.Fatalf("ids = %v, want the events' session keys", ids)
 	}
 }
+
+// TestView_toolCallIDKeyBeatsARepeatedProviderCallID pins the ordering the
+// second review round asked for: a provider call id repeats across prompts
+// because providers regenerate "call_1" per response, so the session key must
+// win over it — not merely over the run-scoped ordinal. A provider id is still
+// used when an event carries no key at all (yaah-77f1).
+func TestView_toolCallIDKeyBeatsARepeatedProviderCallID(t *testing.T) {
+	var got []any
+	v := NewView()
+	send := captureUpdate(&got)
+
+	v.SendTo("s", send, &agent.ToolStartEvent{Key: "turn-a.1", ID: 1, CallID: "call_1", Name: "bash"})
+	v.SendTo("s", send, &agent.ToolStartEvent{Key: "turn-b.1", ID: 1, CallID: "call_1", Name: "bash"})
+	v.SendTo("s", send, &agent.ToolStartEvent{ID: 3, CallID: "call_7", Name: "bash"})
+
+	if len(got) != 3 {
+		t.Fatalf("updates = %d, want 3", len(got))
+	}
+	ids := make([]string, 0, 3)
+	for _, u := range got {
+		m := decodeUpdate(t, u)
+		id, _ := m["toolCallId"].(string)
+		ids = append(ids, id)
+	}
+	if ids[0] == ids[1] {
+		t.Fatalf("two prompts sharing provider call id call_1 gave one toolCallId %q", ids[0])
+	}
+	if ids[0] != "turn-a.1" || ids[1] != "turn-b.1" {
+		t.Fatalf("ids = %v, want each event's session key", ids)
+	}
+	if ids[2] != "call_7" {
+		t.Fatalf("id for an event with no key = %q, want the provider call id", ids[2])
+	}
+}

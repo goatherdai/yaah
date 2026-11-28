@@ -1371,8 +1371,8 @@ Events published during streaming and tool execution:
 | `TokenDeltaEvent` | Each streamed content delta | `Text string` |
 | `ThinkingEvent` | Each reasoning/thinking delta | `Text string` |
 | `FlushEvent` | Model finishes a streaming segment | `Content string` |
-| `ToolStartEvent` | Before tool execution | `ID int64`; `Name, Args string` |
-| `ToolEndEvent` | After tool execution | `ID int64`; `Name, Args, Result, Error string`; `Duration time.Duration` |
+| `ToolStartEvent` | Before tool execution | `Key string` (session-unique call identity); `ID int64` (run-scoped ordinal, not an identity); `Name, Args string` |
+| `ToolEndEvent` | After tool execution | `Key string`; `ID int64` (run-scoped ordinal, not an identity); `Name, Args, Result, Error string`; `Duration time.Duration` |
 | `SubAgentStartEvent` | Sub-agent begins | `SubAgentID, Role, Model, Prompt string` |
 | `SubAgentEndEvent` | Sub-agent completes | `SubAgentID, Role, Model, Prompt, Error, Result string`; `Duration time.Duration` |
 | `DoneEvent` | Agent loop finishes | `Response, Error, FinishReason, ResponseModel string`; `ContextTokens, ContextWindow, LastPromptTokens, LastPromptTokensInclusive int`; `Usage` |
