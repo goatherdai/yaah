@@ -26,3 +26,10 @@ func signalTree(p *os.Process, sig syscall.Signal) error {
 	}
 	return p.Signal(sig)
 }
+
+// signalDirect reaches the process alone, by its os.Process handle: the
+// handle remembers the reap, so this cannot hit a reused pid (see
+// Info.signal for when the group form is not allowed).
+func signalDirect(p *os.Process, sig syscall.Signal) error {
+	return p.Signal(sig)
+}

@@ -35,7 +35,11 @@ type Info struct {
 	logDropped  bool   // at least one old byte was overwritten
 	cmd         *exec.Cmd
 	done        chan struct{} // closed once the process has exited and been reaped (or the start failed)
-	mu          sync.Mutex
+	// waitMu is held by the exit goroutine across cmd.Wait. signal try-locks
+	// it: a free waitMu means nobody is reaping, so the pid cannot have been
+	// reused and the group form of the signal is safe.
+	waitMu sync.Mutex
+	mu     sync.Mutex // status and the log ring
 }
 
 // Status returns the current lifecycle state under the same mutex used by
@@ -53,6 +57,30 @@ func (p *Info) Status() string {
 // gone.
 func (p *Info) Done() <-chan struct{} {
 	return p.done
+}
+
+// signal delivers sig without ever addressing a reaped pid. The group form
+// (proc_unix.go) names the process by pid, and a pid can be reused the moment
+// cmd.Wait has reaped it — so it is used only while the exit goroutine is
+// provably outside cmd.Wait and done is not closed: nobody else reaps, so the
+// pid is that of a live or an unreaped zombie process. While the exit
+// goroutine is inside cmd.Wait (waitMu held) the direct signal is used:
+// os.Process refuses a process it has reaped, so that form cannot hit a
+// reused pid either, at the cost of not reaching the rest of the tree.
+func (p *Info) signal(sig syscall.Signal) error {
+	if p.cmd == nil || p.cmd.Process == nil {
+		return nil
+	}
+	if p.waitMu.TryLock() {
+		defer p.waitMu.Unlock()
+		select {
+		case <-p.done:
+			return nil // reaped: nothing left to signal
+		default:
+		}
+		return signalTree(p.cmd.Process, sig)
+	}
+	return signalDirect(p.cmd.Process, sig)
 }
 
 // Logs returns the retained process output. When the buffer overflowed, the
@@ -131,7 +159,11 @@ type Manager struct {
 	mu     sync.Mutex
 	procs  map[string]*Info
 	closed bool
-	nextID atomic.Int64
+	// afterStart, when set, runs after the child has started and before it is
+	// registered — the seam that makes the closed-race below testable. Nil in
+	// production.
+	afterStart func()
+	nextID     atomic.Int64
 }
 
 // NewManager creates a new process manager.
@@ -210,14 +242,20 @@ func (m *Manager) Start(command, description string) (*Info, error) {
 		return info, err
 	}
 
+	if m.afterStart != nil {
+		m.afterStart()
+	}
+
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
 		// cmd.Start already ran, so the child is live but cannot be
 		// registered: Close has swept the map and will never signal it. Kill
 		// and reap it here — a refused start must not orphan the one process
-		// it did spawn. No pipe readers were started on this path, so a
-		// direct Wait is safe.
+		// it did spawn. No pipe readers were started and no exit goroutine
+		// owns the reap on this path, so the group kill is safe and a direct
+		// Wait is, too. The Info comes back with Done closed so the caller can
+		// see the child it spawned is gone.
 		if info.cmd.Process != nil {
 			_ = signalTree(info.cmd.Process, syscall.SIGKILL)
 		}
@@ -225,8 +263,9 @@ func (m *Manager) Start(command, description string) (*Info, error) {
 		info.mu.Lock()
 		info.status = "error"
 		info.mu.Unlock()
+		info.appendLog(fmt.Sprintf("refused: %v\n", ErrClosed))
 		close(info.done)
-		return nil, fmt.Errorf("start %q: %w", command, ErrClosed)
+		return info, fmt.Errorf("start %q: %w", command, ErrClosed)
 	}
 	m.procs[id] = info
 	m.mu.Unlock()
@@ -254,6 +293,11 @@ func (m *Manager) Start(command, description string) (*Info, error) {
 
 	go func() {
 		pipeWg.Wait()
+		// waitMu stays held from the reap through the final status and Done:
+		// as long as it is taken, signal knows the process is being waited on
+		// and stays away from the group form (see Info.signal).
+		info.waitMu.Lock()
+		defer info.waitMu.Unlock()
 		err := cmd.Wait()
 		info.mu.Lock()
 		if info.status == "running" {
@@ -311,7 +355,7 @@ func (m *Manager) Stop(id string) error {
 	info.mu.Unlock()
 
 	if info.cmd != nil && info.cmd.Process != nil {
-		return signalTree(info.cmd.Process, syscall.SIGKILL)
+		return info.signal(syscall.SIGKILL)
 	}
 	return nil
 }
@@ -366,9 +410,9 @@ func (m *Manager) Close(ctx context.Context) CloseReport {
 	// Ask each live process to terminate. Individual delivery errors are
 	// ignored: a process that exited between collection and the signal is
 	// not an error, and Close's result is the report, not per-process
-	// delivery receipts.
+	// delivery receipts. Info.signal never addresses a reaped pid.
 	for _, p := range live {
-		_ = signalTree(p.cmd.Process, syscall.SIGTERM)
+		_ = p.signal(syscall.SIGTERM)
 	}
 	remaining := awaitExits(live, ctx.Done())
 	if len(remaining) == 0 {
@@ -380,7 +424,7 @@ func (m *Manager) Close(ctx context.Context) CloseReport {
 	// and give them one bounded settle to be reaped.
 	report.Escalated = len(remaining)
 	for _, p := range remaining {
-		_ = signalTree(p.cmd.Process, syscall.SIGKILL)
+		_ = p.signal(syscall.SIGKILL)
 	}
 	hardCtx, cancel := context.WithTimeout(context.Background(), hardKillSettle)
 	defer cancel()

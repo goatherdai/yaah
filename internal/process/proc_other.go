@@ -20,3 +20,9 @@ func setOwnProcessGroup(cmd *exec.Cmd) {}
 func signalTree(p *os.Process, _ syscall.Signal) error {
 	return p.Kill()
 }
+
+// signalDirect terminates the direct process — the same call as signalTree
+// here, where there is no tree to address.
+func signalDirect(p *os.Process, _ syscall.Signal) error {
+	return p.Kill()
+}

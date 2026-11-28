@@ -470,7 +470,9 @@ func (s *agentSession) shutdown() {
 	ctx := context.Background()
 	// The session row is written FIRST, before anything in this function can
 	// block. Teardown is bounded but not short — three drains of up to 30s
-	// each — and the termination-signal funnel races it, so a row written at
+	// each, plus the background-process close (5s of grace and a 2s settle:
+	// backgroundProcessCloseTimeout) — and the termination-signal funnel races
+	// it, so a row written at
 	// the end is a row that a second Ctrl-C, a terminal close or a hang can
 	// turn back into ended_at = 0 (the reported bug shape). Ended_at, the
 	// usage attribution and the evidence `yaah sessions list` and a resume
@@ -754,7 +756,7 @@ func handleTerminationSignal(sigs <-chan os.Signal, closeFn func(), exitFn func(
 	if _, ok := <-sigs; !ok {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "\ninterrupt: closing the session, this can take up to a minute; press Ctrl-C again to exit immediately\n")
+	fmt.Fprintf(os.Stderr, "\ninterrupt: closing the session, this can take up to about a minute and a half; press Ctrl-C again to exit immediately\n")
 	go func() {
 		if _, ok := <-sigs; ok {
 			exitFn(interruptExitCode)
