@@ -31,6 +31,8 @@ const (
 	// does not exist — dropped, reordered, or belonging to a cleared log.
 	orphanKindUnmatchedEnd = "unmatched_end"
 	// orphanKindSwept: a still-Running block sealed by the turn-end sweep.
+	// After the drop accounting below, this means only that the call's end
+	// never arrived AND no seam observed it being lost.
 	orphanKindSwept = "swept"
 	// orphanKindLateEnd: an end event healed a block the turn-end sweep had
 	// already sealed as Interrupted — the event was merely late.
@@ -38,19 +40,170 @@ const (
 	// orphanKindDuplicateEnd: an end event met a block that was already
 	// terminal. Nothing was overwritten.
 	orphanKindDuplicateEnd = "duplicate_end"
+	// orphanKindDroppedStart: a tool start event's UI update could not be
+	// scheduled, so no block was ever created for the call.
+	orphanKindDroppedStart = "dropped_start"
+	// orphanKindDroppedEnd: a tool end event's UI update could not be
+	// scheduled. The loss is attributed here, where it was observed, not to
+	// the sweep. The block is sealed by whichever seam reaches it: the sweep,
+	// if the block exists at turn end; otherwise AddToolStart, when the start
+	// lands after the sweep, creates it terminal from this record — for a
+	// session-unique key only, since only such a record outlives the sweep.
+	orphanKindDroppedEnd = "dropped_end"
+	// orphanKindDroppedSweep: the DoneEvent's turn-end reconciliation could
+	// not be scheduled. Nothing sweeps this turn, so any still-Running block
+	// keeps its chevron and the lost-end record is never consumed. The
+	// sweep itself cannot be run from the event goroutine — the transcript
+	// is owned by the UI goroutine — so the loss is recorded instead of
+	// recovered: it is the only seam that observes it.
+	orphanKindDroppedSweep = "dropped_sweep"
 )
+
+// lostToolEndsLimit bounds the record of end events whose UI update could never
+// be scheduled. The counter is the durable signal; a few keys are kept so the
+// turn-end sweep can attribute the blocks they belong to.
+const lostToolEndsLimit = 16
+
+// recordToolOrphan records one tool-block orphan kind: on the durable OTel
+// counter, and on an in-process tally. The tally exists because the instruments
+// are bound only in a metrics-configured process, so the classification would
+// otherwise be unwitnessable — the same reason the queue outcomes keep
+// uiEventDrops beside RecordTUIQueueEvent.
+func (t *App) recordToolOrphan(kind string) {
+	t.toolOrphanMu.Lock()
+	if t.toolOrphans == nil {
+		t.toolOrphans = make(map[string]int, 6)
+	}
+	t.toolOrphans[kind]++
+	t.toolOrphanMu.Unlock()
+	observability.RecordTUIToolOrphan(context.Background(), kind)
+}
+
+// toolOrphanCounts returns a copy of the orphan tally, keyed by kind.
+func (t *App) toolOrphanCounts() map[string]int {
+	t.toolOrphanMu.Lock()
+	defer t.toolOrphanMu.Unlock()
+	out := make(map[string]int, len(t.toolOrphans))
+	for kind, n := range t.toolOrphans {
+		out[kind] = n
+	}
+	return out
+}
+
+// lostToolEnd is one recorded loss. unique reports whether its key identifies
+// the call for the session: a unique record outlives the sweep so a start still
+// in flight can consume it, while a fallback record is turn-scoped — it can
+// attribute this turn's sweep, but it cannot identify a later call.
+type lostToolEnd struct {
+	key    string
+	unique bool
+}
+
+// recordLostToolEnd remembers that key's end event will never be applied, so
+// the turn-end sweep can attribute the block to the drop instead of to its own
+// recovery. It runs on the agent-loop goroutine (HandleEvent's), so the record
+// is mutex-guarded: the sweep reads it on the UI goroutine.
+func (t *App) recordLostToolEnd(key string, unique bool) {
+	t.lostEndsMu.Lock()
+	defer t.lostEndsMu.Unlock()
+	for _, le := range t.lostEnds {
+		if le.key == key {
+			return
+		}
+	}
+	if len(t.lostEnds) >= lostToolEndsLimit {
+		copy(t.lostEnds, t.lostEnds[1:])
+		t.lostEnds = t.lostEnds[:len(t.lostEnds)-1]
+	}
+	t.lostEnds = append(t.lostEnds, lostToolEnd{key: key, unique: unique})
+}
+
+// takeLostToolEnd reports whether key's end event was recorded as lost by a
+// key that can identify the call, removing that record. It is consumed by
+// AddToolStart when the start lands after the turn-end sweep, so the block is
+// created terminal instead of Running. A fallback-keyed record is not offered
+// here: the ordinal cannot prove it belongs to this start rather than a later
+// turn's.
+func (t *App) takeLostToolEnd(key string) bool {
+	t.lostEndsMu.Lock()
+	defer t.lostEndsMu.Unlock()
+	for i, le := range t.lostEnds {
+		if le.key == key && le.unique {
+			t.lostEnds = append(t.lostEnds[:i], t.lostEnds[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// dropFallbackLostEnds discards the turn-scoped lost-end records, keeping the
+// ones whose key can identify the call. It runs when the turn-end reconciliation
+// could not be scheduled: that sweep will never consume them, and a fallback key
+// is a run-scoped ordinal that repeats on the next prompt — so a surviving record
+// would suppress the NEXT turn's swept attribution for a block it never observed
+// being lost. A unique-keyed record is kept, because a start from this turn may
+// still land and consume it.
+func (t *App) dropFallbackLostEnds() {
+	t.lostEndsMu.Lock()
+	defer t.lostEndsMu.Unlock()
+	if len(t.lostEnds) == 0 {
+		return
+	}
+	kept := t.lostEnds[:0]
+	for _, le := range t.lostEnds {
+		if le.unique {
+			kept = append(kept, le)
+		}
+	}
+	t.lostEnds = kept
+}
+
+// takeLostToolEnds returns and clears the recorded lost ends. The sweep is the
+// turn boundary: a loss recorded before it belongs to a block the sweep is
+// about to seal, and a later sweep must not re-attribute it.
+func (t *App) takeLostToolEnds() []lostToolEnd {
+	t.lostEndsMu.Lock()
+	defer t.lostEndsMu.Unlock()
+	if len(t.lostEnds) == 0 {
+		return nil
+	}
+	lost := make([]lostToolEnd, len(t.lostEnds))
+	copy(lost, t.lostEnds)
+	t.lostEnds = nil
+	return lost
+}
 
 // AddToolError settles the block carrying key into its error state, and
 // counts how the end met the transcript (see transcript.SettleTool).
 func (t *App) AddToolError(key, summary, err string, dur time.Duration) {
-	t.settleToolBlock(key, transcript.ToolEnd{Summary: summary, Result: err, Duration: dur, Error: true})
+	t.settleToolEnd(key, transcript.ToolEnd{Summary: summary, Result: err, Duration: dur, Error: true}, true)
 }
 
 // AddToolStart adds a tool block to the transcript.
 // Note: flushes any pending streaming tokens first.
-func (t *App) AddToolStart(id, name, args string) {
+//
+// A start can be applied AFTER its own end: the critical-update fallback runs an
+// end directly when the UI queue is saturated while the start still waits in
+// the queue (internal/tui/event_queue.go). The settlement rule stashes such an
+// end (transcript.SettleTool), so the block is created from it already settled
+// rather than Running — a Running block would wait for an end that is already
+// behind it.
+func (t *App) AddToolStart(key, name, args string) {
 	t.flushPendingTokens()
-	tb := toolblock.New(id, name, args, t.Theme)
+	tb := toolblock.New(key, name, args, t.Theme)
+	if end, ok := t.tr.TakeUnmatchedEnd(key); ok {
+		state := toolblock.Done
+		if end.Error {
+			state = toolblock.Error
+		}
+		tb.Seal(state, end.Summary, end.Result, end.Duration)
+	} else if t.takeLostToolEnd(key) {
+		// The end was dropped, not merely late: no result survives to render,
+		// but this start landed after the turn's only sweep, so nothing else
+		// will ever seal it. Create it terminal instead of Running — a Running
+		// block would keep its chevron for the rest of the session.
+		tb.Interrupt()
+	}
 	t.tr.Append(transcript.ToolItem(tb))
 	t.markDirty()
 }
@@ -59,38 +212,83 @@ func (t *App) AddToolStart(id, name, args string) {
 // The caller (proxy.go) is responsible for routing errors via AddToolError.
 // Tools may legitimately return empty results (e.g., successful delete with no output).
 func (t *App) AddToolEnd(key, summary, result string, dur time.Duration) {
-	t.settleToolBlock(key, transcript.ToolEnd{Summary: summary, Result: result, Duration: dur})
+	t.settleToolEnd(key, transcript.ToolEnd{Summary: summary, Result: result, Duration: dur}, true)
 }
 
-// settleToolBlock applies one end event through the transcript's single
+// settleToolEnd applies one end event through the transcript's single
 // settlement rule and surfaces whatever it could not do: a healed or
 // duplicated end is real drift in the event stream and is counted, while a
 // settled block only needs its repaint scheduled.
-func (t *App) settleToolBlock(key string, end transcript.ToolEnd) {
+//
+// It applies one tool end. unique reports whether key identifies the
+// call for the session (a key minted from the event's Key) or is the run-scoped
+// ordinal fallback used for a keyless event. Only a unique key may be stashed
+// for a start that has not arrived yet: the sweep no longer clears the stash, so
+// a fallback key — an ordinal that restarts at 1 on every prompt — could settle
+// a later turn's start, which is precisely the corruption the key exists to end.
+func (t *App) settleToolEnd(key string, end transcript.ToolEnd, unique bool) {
 	switch t.tr.SettleTool(key, end) {
 	case transcript.Settled:
 		t.markDirty()
 	case transcript.LateEnd:
 		t.markDirty()
-		observability.RecordTUIToolOrphan(context.Background(), orphanKindLateEnd)
+		t.recordToolOrphan(orphanKindLateEnd)
 	case transcript.DuplicateEnd:
-		observability.RecordTUIToolOrphan(context.Background(), orphanKindDuplicateEnd)
+		t.recordToolOrphan(orphanKindDuplicateEnd)
 	case transcript.UnmatchedEnd:
-		observability.RecordTUIToolOrphan(context.Background(), orphanKindUnmatchedEnd)
+		if !unique {
+			// SettleTool stashed it; take it straight back. Nothing may hoard
+			// an end whose identity cannot tell two turns apart.
+			t.tr.TakeUnmatchedEnd(key)
+		}
+		t.recordToolOrphan(orphanKindUnmatchedEnd)
 	}
 }
 
-// SweepStuckToolBlocks seals every still-Running tool block at turn end:
-// its end event never arrived, and without the sweep it would render a
-// permanent chevron (the stuck-tool-block finding). Each sealed block
-// renders terminal with an interrupted marker.
+// SweepStuckToolBlocks seals every still-Running tool block at turn end: its
+// end event never arrived, and without the sweep it would render a permanent
+// chevron (the stuck-tool-block finding). Each sealed block renders terminal
+// with an interrupted marker.
+//
+// The sweep is the safety net, not the attribution of first resort: a block
+// whose end event was observed to drop carries that attribution already
+// (recordLostToolEnd at the drop), so it is sealed here without also being
+// counted as swept.
 func (t *App) SweepStuckToolBlocks() int {
-	n := t.tr.SweepRunningTools()
-	if n > 0 {
-		t.markDirty()
-		observability.RecordTUIToolOrphan(context.Background(), orphanKindSwept)
+	lost := t.takeLostToolEnds()
+	sealed := t.tr.SweepRunningTools()
+
+	sealedSet := make(map[string]bool, len(sealed))
+	for _, key := range sealed {
+		sealedSet[key] = true
 	}
-	return n
+	lostKeys := make(map[string]bool, len(lost))
+	for _, le := range lost {
+		lostKeys[le.key] = true
+		// A unique-keyed loss whose block does not exist yet is NOT settled
+		// here: its start is still in flight (the same saturated-queue
+		// reordering this file has to tolerate elsewhere), so the record goes
+		// back and AddToolStart consumes it when that start lands. Dropping it
+		// would leave the late start to create a Running block after the turn's
+		// only sweep — the permanent chevron. A fallback-keyed loss cannot name
+		// a start that will arrive later, so it is spent here, where it
+		// suppresses this turn's swept count and is never re-recorded.
+		if le.unique && !sealedSet[le.key] {
+			t.recordLostToolEnd(le.key, le.unique)
+		}
+	}
+
+	if len(sealed) == 0 {
+		return 0
+	}
+	t.markDirty()
+	for _, key := range sealed {
+		if lostKeys[key] {
+			continue
+		}
+		t.recordToolOrphan(orphanKindSwept)
+	}
+	return len(sealed)
 }
 
 // AddSubAgentStart adds a sub-agent to the dedicated Subagents pane.

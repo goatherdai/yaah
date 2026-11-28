@@ -24,7 +24,7 @@ func TestSweepRunningTools(t *testing.T) {
 	m.SettleTool("f1", ToolEnd{Summary: "boom", Result: "error", Error: true})
 
 	m.Repaint(80) // establish the painted row table
-	if n := m.SweepRunningTools(); n != 1 {
+	if n := len(m.SweepRunningTools()); n != 1 {
 		t.Fatalf("sweep sealed %d blocks, want 1", n)
 	}
 	if running.S() != toolblock.Interrupted {
@@ -38,8 +38,56 @@ func TestSweepRunningTools(t *testing.T) {
 	}
 
 	// A second sweep is a no-op: the sealed blocks are terminal now.
-	if n := m.SweepRunningTools(); n != 0 {
+	if n := len(m.SweepRunningTools()); n != 0 {
 		t.Fatalf("second sweep sealed %d blocks, want 0", n)
+	}
+}
+
+// TestSweepRunningTools_ReportsTheSealedKeys pins that the sweep names what it
+// sealed, so a caller can attribute each block to its own cause instead of
+// treating every sweep as one undifferentiated loss.
+func TestSweepRunningTools_ReportsTheSealedKeys(t *testing.T) {
+	th := colors.NewDarkTheme()
+	m := NewModel(&th)
+	m.Append(ToolItem(toolblock.New("run1.1", "bash", "{}", &th)))
+	m.Append(ToolItem(toolblock.New("run1.2", "read", "{}", &th)))
+	m.SettleTool("run1.2", ToolEnd{Summary: "ok", Result: "result"})
+
+	sealed := m.SweepRunningTools()
+	if len(sealed) != 1 || sealed[0] != "run1.1" {
+		t.Fatalf("sweep sealed %v, want exactly [run1.1]", sealed)
+	}
+}
+
+// TestSweepRunningTools_KeepsTheStashForALateStart pins the property the sweep
+// must NOT break: the sweep can run while a start from the same turn is still
+// in flight (the critical fallback runs the DoneEvent's reconciliation directly
+// ahead of a start still queued behind a saturated queue), so a stashed end must
+// survive it — otherwise that late start creates a Running block after the only
+// sweep of the turn has run, and the end's result is discarded.
+//
+// What keeps a later turn from consuming an earlier turn's stashed end is the
+// session-unique key, not the sweep: a next turn's start cannot match "run2.1".
+func TestSweepRunningTools_KeepsTheStashForALateStart(t *testing.T) {
+	th := colors.NewDarkTheme()
+	m, _ := settleFixture(&th, "run1.1")
+	if got := m.SettleTool("run2.1", ToolEnd{Summary: "early", Result: "out"}); got != UnmatchedEnd {
+		t.Fatalf("SettleTool for a missing block = %v, want UnmatchedEnd", got)
+	}
+
+	m.SweepRunningTools()
+
+	end, ok := m.TakeUnmatchedEnd("run2.1")
+	if !ok {
+		t.Fatal("the sweep dropped an end a start from the same turn still needed")
+	}
+	if end.Result != "out" {
+		t.Fatalf("stashed end result = %q, want the end's own result", end.Result)
+	}
+	// A start from a LATER turn still cannot reach it: the key is the guard,
+	// which is what the removed clear was standing in for.
+	if _, ok := m.TakeUnmatchedEnd("run3.1"); ok {
+		t.Fatal("a later turn's key matched an earlier turn's stashed end")
 	}
 }
 
@@ -58,5 +106,20 @@ func TestSweepRunningTools_MarksDirty(t *testing.T) {
 	}
 	if strings.Contains(m.PaintedText(), "▶") {
 		t.Fatalf("swept block still painted with the running chevron: %q", m.PaintedText())
+	}
+}
+
+// TestClearDropsTheUnmatchedEndStash pins that a cleared transcript takes the
+// stash with it: the entries name blocks that no longer exist, and the sweep no
+// longer clears them, so nothing else would.
+func TestClearDropsTheUnmatchedEndStash(t *testing.T) {
+	th := colors.NewDarkTheme()
+	m, _ := settleFixture(&th, "run1.1")
+	if got := m.SettleTool("run2.1", ToolEnd{Summary: "early", Result: "out"}); got != UnmatchedEnd {
+		t.Fatalf("SettleTool for a missing block = %v, want UnmatchedEnd", got)
+	}
+	m.Clear()
+	if n := len(m.UnmatchedEnds()); n != 0 {
+		t.Fatalf("stashed ends after Clear = %d, want 0", n)
 	}
 }

@@ -142,7 +142,7 @@ func initMetrics() {
 
 	tuiToolOrphans, _ = meter.Int64Counter(
 		"yaah.tui.tool_orphans",
-		metric.WithDescription("Tool blocks sealed without a matched end event: unmatched end events and still-Running blocks swept at turn end"),
+		metric.WithDescription("Tool call lifecycle drift by orphan_kind: end events that met no block or a settled one, tool updates that could never be scheduled, and still-Running blocks sealed by the turn-end sweep"),
 	)
 
 	memoryEmbedFailures, _ = meter.Int64Counter(
@@ -222,13 +222,28 @@ func RecordTUIQueueEvent(ctx context.Context, eventType, outcome string, depth i
 	}
 }
 
-// RecordTUIRefresh records refresh count, duration, cadence, and queue depth.
-// RecordTUIToolOrphan counts one tool-block orphan, by how the end event met
-// the transcript: "unmatched_end" (an end arrived with no block to receive
-// it), "swept" (a still-Running block sealed by the turn-end sweep),
-// "late_end" (an end healed a block the sweep had already sealed as
-// interrupted) and "duplicate_end" (an end met a block that was already
-// terminal; nothing was overwritten).
+// RecordTUIToolOrphan counts one tool-block orphan, classified by kind:
+//
+//   - "unmatched_end": an end event met no block at all. It is stashed so a
+//     merely-late start can still create the block settled.
+//   - "dropped_start": a tool start's UI update could never be scheduled, so
+//     no block was ever created for that call.
+//   - "dropped_end": a tool end's UI update could never be scheduled. The loss
+//     is attributed here, where it was observed. Whichever seam reaches the
+//     block seals it: the turn-end sweep if the block exists by then, otherwise
+//     AddToolStart — but that second path needs a session-unique key, since only
+//     such a record outlives the sweep. A keyless call's late start can still
+//     create a Running block.
+//   - "duplicate_end": an end met a block that was already terminal.
+//   - "late_end": an end healed a block the sweep had sealed as interrupted.
+//   - "swept": a still-Running block sealed by the turn-end sweep. After the
+//     drop accounting this means only that the end never arrived and no seam
+//     observed the loss.
+//   - "dropped_sweep": the turn-end reconciliation itself could never be
+//     scheduled, so nothing swept this turn. Recorded because it is the only
+//     seam that observes a missing turn boundary. The fallback-keyed lost-end
+//     records are discarded with it (they are only valid for their own turn);
+//     a unique-keyed one survives for a start that still lands.
 func RecordTUIToolOrphan(ctx context.Context, kind string) {
 	if tuiToolOrphans == nil {
 		return
@@ -236,6 +251,7 @@ func RecordTUIToolOrphan(ctx context.Context, kind string) {
 	tuiToolOrphans.Add(ctx, 1, metric.WithAttributes(attribute.String("orphan_kind", kind)))
 }
 
+// RecordTUIRefresh records refresh count, duration, cadence, and queue depth.
 func RecordTUIRefresh(ctx context.Context, duration time.Duration, cadence time.Duration, queueDepth int) {
 	if tuiRefreshCount == nil {
 		return

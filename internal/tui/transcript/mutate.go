@@ -43,8 +43,9 @@ const (
 // view layer is the durable signal, not this ring.
 const unmatchedEndsLimit = 8
 
-// UnmatchedToolEnd is an end event that settled no block, kept so a caller can
-// inspect the drift instead of only counting it.
+// UnmatchedToolEnd is an end event that settled no block, kept so the block its
+// key names can be created already settled if the start is merely late, and so
+// a caller can inspect the drift instead of only counting it.
 type UnmatchedToolEnd struct {
 	Key string
 	End ToolEnd
@@ -123,24 +124,59 @@ func (m *Model) UnmatchedEnds() []UnmatchedToolEnd {
 	return out
 }
 
+// TakeUnmatchedEnd removes and returns the stashed end that settled no block
+// for key, reporting whether there was one.
+//
+// A caller about to create the block for key uses it to create that block
+// already settled. An end can be applied BEFORE its own start: the view's
+// critical-update fallback runs an end directly when the UI queue is saturated
+// while an earlier start is still queued behind the full queue
+// (internal/tui/event_queue.go), so the block must inherit the end that
+// already arrived — a block created Running in that case would wait for an
+// event that is behind it and be sealed by the sweep as interrupted.
+func (m *Model) TakeUnmatchedEnd(key string) (ToolEnd, bool) {
+	for i, ue := range m.unmatchedEnds {
+		if ue.Key != key {
+			continue
+		}
+		m.unmatchedEnds = append(m.unmatchedEnds[:i], m.unmatchedEnds[i+1:]...)
+		return ue.End, true
+	}
+	return ToolEnd{}, false
+}
+
 // SweepRunningTools seals every still-Running tool block as
 // interrupted. The turn is over when the sweep runs (the agent loop's
-// DoneEvent), so a Running block's end event was dropped or reordered —
-// without the sweep it renders a permanent chevron. It reports how many
-// blocks it sealed.
-func (m *Model) SweepRunningTools() int {
-	n := 0
+// DoneEvent), so a Running block's end event never arrived — without the
+// sweep it renders a permanent chevron. It reports the keys it sealed, so a
+// caller can attribute each block without re-reading the log.
+//
+// The sweep deliberately does NOT clear the unmatched-end stash, because the
+// sweep can run while a start from the SAME turn is still in flight: the
+// critical fallback runs the DoneEvent's reconciliation directly when the UI
+// queue is saturated, ahead of a start still waiting in that queue. Clearing the
+// stash there would leave that late start to create a Running block after the
+// only sweep of the turn has already run — a permanent chevron, and the end's
+// result discarded. What protects a later turn from an earlier turn's stashed
+// end is the KEY: it is session-unique (yaah-77f1), so a next turn's start can
+// never match it. An event that carries no key has no such guarantee — its
+// fallback id is the run-scoped ordinal — so such an end is never stashed in the
+// first place (App.settleToolEnd takes it straight back out); the stash therefore
+// only ever holds entries a later turn cannot match. It stays bounded by
+// unmatchedEndsLimit, and Model.Clear drops it with the log.
+func (m *Model) SweepRunningTools() []string {
+	sealed := make([]string, 0, 4)
 	for i := range m.items {
 		if tb := m.items[i].ToolBlock; tb != nil && tb.IsRunning() {
 			tb.Interrupt()
 			m.items[i].gen++
-			n++
+			sealed = append(sealed, tb.ID())
 		}
 	}
-	if n > 0 {
+	if len(sealed) > 0 {
 		m.dirty = dirtyFull
 	}
-	return n
+	return sealed
 }
 
 // ToggleBlockByIndex toggles the nth toggleable block (reasoning or
@@ -228,6 +264,9 @@ func (m *Model) CollapseCompacted(boundary int) {
 // Clear empties the log. The window is stale the moment the log empties:
 // recompute at the next repaint.
 func (m *Model) Clear() {
+	// The stash names blocks that are about to vanish, so it goes with them —
+	// a later start must not be settled by an end from a cleared log.
+	m.unmatchedEnds = nil
 	m.items = nil
 	m.promptIdxs = nil
 	m.userScrolled = false
