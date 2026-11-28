@@ -3,6 +3,7 @@ package acp
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"strings"
 )
 
@@ -31,14 +32,14 @@ func truncate(s string, max int) string {
 	if max < 0 {
 		max = 0
 	}
-	runes := []rune(s)
-	if len(runes) <= max {
-		return s
-	}
 	if max <= 3 {
+		runes := []rune(s)
+		if len(runes) <= max {
+			return s
+		}
 		return string(runes[:max])
 	}
-	return string(runes[:max-3]) + "..."
+	return textclip.HeadRunesWithin(s, max, "...")
 }
 
 // compactHint condenses the abbreviated tool args into a single-line

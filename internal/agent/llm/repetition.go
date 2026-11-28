@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/goatherdai/yaah/internal/textclip"
 )
 
 // Degenerate repetition guard.
@@ -428,11 +429,6 @@ func truncateAtRuneBoundary(s string, n int) string {
 	if n <= 0 {
 		return ""
 	}
-	if n >= len(s) {
-		return s
-	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n]
+	kept, _ := textclip.Bytes(s, n)
+	return kept
 }

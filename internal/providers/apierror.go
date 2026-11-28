@@ -8,7 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/goatherdai/yaah/internal/textclip"
 )
 
 // APIError is a structured non-2xx response from a provider API.
@@ -78,15 +79,13 @@ func newAPIError(statusCode int, body []byte) *APIError {
 }
 
 // truncateRunes caps s at max bytes without splitting a UTF-8 rune.
+// A non-positive cap yields the empty string.
 func truncateRunes(s string, max int) string {
-	if len(s) <= max {
-		return s
+	if max <= 0 {
+		return ""
 	}
-	cut := max
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut]
+	kept, _ := textclip.Bytes(s, max)
+	return kept
 }
 
 // withRequestDetail appends request context ("msgs=... roles=... model=...")

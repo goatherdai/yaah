@@ -5,11 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"os"
 	"slices"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/goatherdai/yaah/internal/prompts"
 )
@@ -370,14 +370,7 @@ func goTestStatus(exitCode, total, failed int, timedOut, buildFailed, sawPackage
 // tailOutput returns at most the last n bytes of s, starting on a rune
 // boundary, with a marker when it truncated.
 func tailOutput(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	cut := len(s) - n
-	for cut < len(s) && !utf8.RuneStart(s[cut]) {
-		cut++
-	}
-	return "...[output truncated]...\n" + s[cut:]
+	return textclip.Tail(s, n, "...[output truncated]...\n")
 }
 
 // denyGoTestFlags are the go test flags that name a program to execute. They

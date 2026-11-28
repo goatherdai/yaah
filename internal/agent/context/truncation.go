@@ -1,11 +1,11 @@
 package context
 
 import (
+	"github.com/goatherdai/yaah/internal/textclip"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 const (
@@ -45,16 +45,13 @@ func WrapForPaging(s string, width int) string {
 	var b strings.Builder
 	b.Grow(len(s) + len(s)/width + 1)
 	for len(s) > width {
-		cut := width
-		for cut > 0 && !utf8.RuneStart(s[cut]) {
-			cut--
+		kept, _ := textclip.Bytes(s, width)
+		if kept == "" {
+			kept = s[:width] // no rune start within width; cut hard rather than spin
 		}
-		if cut == 0 {
-			cut = width // no rune start within width; cut hard rather than spin
-		}
-		b.WriteString(s[:cut])
+		b.WriteString(kept)
 		b.WriteByte('\n')
-		s = s[cut:]
+		s = s[len(kept):]
 	}
 	if s != "" {
 		b.WriteString(s)

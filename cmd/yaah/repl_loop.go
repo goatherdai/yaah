@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"os"
 	"strings"
 	"time"
@@ -207,10 +208,7 @@ func replRed(s string) string {
 }
 
 func truncateError(s string) string {
-	if len(s) > 500 {
-		return s[:497] + "..."
-	}
-	return s
+	return textclip.HeadWithin(s, 500, "...")
 }
 
 func formatDuration(d time.Duration) string {

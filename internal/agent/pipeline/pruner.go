@@ -17,9 +17,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"unicode/utf8"
 
 	agentctx "github.com/goatherdai/yaah/internal/agent/context"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"github.com/goatherdai/yaah/internal/types"
 )
 
@@ -643,25 +643,13 @@ func countLines(s string) int {
 }
 
 func truncateAtRune(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	cut := max
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut]
+	kept, _ := textclip.Bytes(s, max)
+	return kept
 }
 
 func tailAtRune(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	start := len(s) - max
-	for start < len(s) && !utf8.RuneStart(s[start]) {
-		start++
-	}
-	return s[start:]
+	kept, _ := textclip.TailBytes(s, max)
+	return kept
 }
 
 // Reset clears the pruned set so the fresh tail is re-evaluated from

@@ -5,12 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"log/slog"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	kerneltrace "github.com/goatherdai/goatherd-kernel"
 	"github.com/goatherdai/yaah/internal/types"
@@ -232,14 +232,11 @@ func traceToolOutput(result string) map[string]any {
 }
 
 func capTraceText(s string) (string, bool) {
-	if len(s) <= tracePayloadMaxBytes {
+	kept, truncated := textclip.Bytes(s, tracePayloadMaxBytes)
+	if !truncated {
 		return s, false
 	}
-	cut := tracePayloadMaxBytes
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + fmt.Sprintf("\n...[truncated at %d bytes]...", tracePayloadMaxBytes), true
+	return kept + fmt.Sprintf("\n...[truncated at %d bytes]...", tracePayloadMaxBytes), true
 }
 
 func traceConfigDigest(in TraceSessionContext) (string, bool) {

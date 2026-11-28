@@ -2,6 +2,7 @@
 package errdialog
 
 import (
+	"github.com/goatherdai/yaah/internal/textclip"
 	"strings"
 
 	"github.com/navidys/tvxwidgets"
@@ -44,9 +45,5 @@ func clip(msg string) string {
 		lines = append(lines, "…(truncated)")
 	}
 	result := strings.Join(lines, "\n")
-	runes := []rune(result)
-	if len(runes) > maxChars {
-		result = string(runes[:maxChars]) + "…"
-	}
-	return result
+	return textclip.HeadRunes(result, maxChars, "…")
 }

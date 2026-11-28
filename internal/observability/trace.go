@@ -3,9 +3,9 @@ package observability
 import (
 	"context"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -450,14 +450,7 @@ func RecordStreamEnd(span trace.Span, path string, finishReason string, usageCap
 }
 
 func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	cut := n - 3
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + "..."
+	return textclip.HeadWithin(s, n, "...")
 }
 
 // RecordTUIView records the rendered TUI view as a span event. It creates

@@ -98,8 +98,8 @@ func Test_truncate(t *testing.T) {
 			require.Equal(t, tt.want, truncate(tt.in, tt.n))
 		})
 	}
-	// Note: n < 4 currently panics (slice bounds out of range).
-	// That is a known limitation of the current implementation.
+	// A budget too small to hold the marker yields no text rather than
+	// panicking on a negative slice bound.
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -1,6 +1,6 @@
 package substrate
 
-import "unicode/utf8"
+import "github.com/goatherdai/yaah/internal/textclip"
 
 // ToolResultMaxBytes caps the success detail a single tool call returns. The
 // agent loop applies a second, larger cap with spillover; this one exists so a
@@ -39,28 +39,14 @@ const DroppedMarker = "\n...[truncated — the remainder was dropped and is not 
 // It makes no storage claim of its own: the caller decides whether the rest of
 // the payload is still on disk (a view) or gone (use TruncateAtDropped).
 func TruncateAt(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	cut := max
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + TruncationMarker
+	return textclip.Head(s, max, TruncationMarker)
 }
 
 // TruncateAtDropped caps s at max bytes on a UTF-8 rune boundary and appends
 // DroppedMarker when it cuts: the remainder is discarded, not viewable
 // elsewhere. max <= 0 means no cap.
 func TruncateAtDropped(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	cut := max
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + DroppedMarker
+	return textclip.Head(s, max, DroppedMarker)
 }
 
 // TailTruncationMarker prefixes text kept from the END of an over-long result.
@@ -71,12 +57,5 @@ const TailTruncationMarker = "...[earlier text truncated]..."
 // end with the worktree path they are reporting, so a note that must fit a
 // budget keeps its tail, not its head.
 func KeepTail(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	cut := len(s) - max
-	for cut < len(s) && !utf8.RuneStart(s[cut]) {
-		cut++
-	}
-	return TailTruncationMarker + s[cut:]
+	return textclip.Tail(s, max, TailTruncationMarker)
 }

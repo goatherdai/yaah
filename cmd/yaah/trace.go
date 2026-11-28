@@ -3,6 +3,7 @@ package yaah
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"os"
 	"sort"
 	"strconv"
@@ -585,10 +586,7 @@ func sortedKeys(m map[string]bool) []string {
 }
 
 func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
+	return textclip.HeadWithin(s, maxLen, "...")
 }
 
 // newGoatherdTraceRebuildCmd reconstructs one owner's conversation from trace

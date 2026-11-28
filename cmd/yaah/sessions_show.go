@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goatherdai/yaah/internal/textclip"
 	"strings"
 	"time"
 
@@ -154,7 +155,8 @@ func truncateChars(s string, maxChars int) string {
 	if len(runes) <= maxChars {
 		return s
 	}
-	return string(runes[:maxChars]) + fmt.Sprintf(" … (%d more chars)", len(runes)-maxChars)
+	marker := fmt.Sprintf(" … (%d more chars)", len(runes)-maxChars)
+	return textclip.HeadRunes(s, maxChars, marker)
 }
 
 func init() {
