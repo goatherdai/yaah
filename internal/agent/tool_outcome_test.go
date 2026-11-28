@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	agentctx "github.com/goatherdai/yaah/internal/agent/context"
 	"github.com/goatherdai/yaah/internal/tools"
@@ -117,7 +118,12 @@ func TestToolEndEventCarriesOutcome(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fp := &fakeProvider{responses: toolCallTurnResponses()}
 			reg := tools.NewRegistry()
-			reg.Register(&fakeTool{name: "echo", result: "ok", err: tc.toolErr})
+			// The delay must exceed the coarsest clock tick any CI host
+			// reports: Windows' interrupt-time clock can advance as
+			// little as once per ~15.6ms, so an instantly-returning
+			// fake measures Duration == 0 there and trips the
+			// measured-execution-time assertion below (yaah-9pch).
+			reg.Register(&fakeTool{name: "echo", result: "ok", err: tc.toolErr, delay: 20 * time.Millisecond})
 			view := &recordingView{}
 			loop := &Loop{
 				Config:   LoopConfig{SystemPrompt: "test", MaxLoopCycles: 5},
