@@ -358,7 +358,11 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	flusher.Flush()
 
-	v := &sseView{w: w}
+	v := &sseView{
+		w:       w,
+		rc:      http.NewResponseController(w),
+		stallCh: make(chan struct{}),
+	}
 	v.provider = ws.sess.ProviderName()
 	v.model = ws.sess.ModelName()
 	v.sessionMode = ws.sess.Mode()
@@ -420,7 +424,14 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	go forwardCtrl(streamCtx, ctrlCh, v, ws.am, &ws.idGen)
 
-	<-r.Context().Done()
+	// The stream ends with the request, or earlier when a write has stalled:
+	// a client that stopped reading trips the per-write deadline and stall()
+	// closes v.stallCh, so this handler runs the same ownership-conditional
+	// teardown instead of parking on a dead connection forever.
+	select {
+	case <-r.Context().Done():
+	case <-v.stallCh:
+	}
 
 	// Ownership-conditional teardown. On reload the browser opens the new
 	// stream (installing its view and ctrlCh) before this handler's context
