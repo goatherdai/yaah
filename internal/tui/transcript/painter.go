@@ -31,6 +31,11 @@ type Pane struct {
 	// bottom detection before the first draw.
 	offset int
 	height int
+
+	// Scrollbar foreground colors (scrollbar.go); the defaults are
+	// terminal gray and white, overridden by SetScrollbarColors.
+	trackColor tcell.Color
+	thumbColor tcell.Color
 }
 
 // NewPane returns a pane painting m. The rect is seeded at the
@@ -39,6 +44,8 @@ type Pane struct {
 // wrap the model's rows at that stub width.
 func NewPane(m *Model) *Pane {
 	p := &Pane{Box: tview.NewBox(), model: m}
+	p.trackColor = tcell.ColorGray
+	p.thumbColor = tcell.ColorWhite
 	p.SetRect(0, 0, 80, 24)
 	return p
 }
@@ -46,12 +53,17 @@ func NewPane(m *Model) *Pane {
 // Model returns the painted transcript.
 func (p *Pane) Model() *Model { return p.model }
 
-// ContentWidth returns the pane's inner width, defaulting to 80 before
-// the first layout — the width items are wrapped at.
+// ContentWidth returns the pane's inner width minus the scrollbar's
+// reserved column, defaulting to 79 before the first layout — the
+// width items are wrapped at. The column is reserved unconditionally
+// so the wrap width never changes when content becomes scrollable.
 func (p *Pane) ContentWidth() int {
 	_, _, w, _ := p.GetRect()
 	if w <= 0 {
 		return 80
+	}
+	if w >= 2 {
+		w--
 	}
 	return w
 }
@@ -80,6 +92,14 @@ func (p *Pane) Draw(screen tcell.Screen) {
 		p.ClampOffset()
 	}
 
+	// The scrollbar reserves the rightmost inner column (scrollbar.go):
+	// content never prints under the track.
+	geom, hasTrack := p.ScrollbarGeom()
+	cw := w
+	if hasTrack {
+		cw = w - 1
+	}
+
 	// The pane paints its Box's background — the color captured at
 	// construction, like every other primitive — not the live global:
 	// buildUI overrides PrimitiveBackgroundColor to ColorDefault after
@@ -91,12 +111,15 @@ func (p *Pane) Draw(screen tcell.Screen) {
 		Background(p.GetBackgroundColor())
 	for r := 0; r < h; r++ {
 		sy := y + r
-		for c := 0; c < w; c++ {
+		for c := 0; c < cw; c++ {
 			screen.SetContent(x+c, sy, ' ', nil, blank)
 		}
 		if idx := p.offset + r; idx < len(rows) {
-			tview.Print(screen, rows[idx], x, sy, w, tview.AlignLeft, tview.Styles.PrimaryTextColor)
+			tview.Print(screen, rows[idx], x, sy, cw, tview.AlignLeft, tview.Styles.PrimaryTextColor)
 		}
+	}
+	if hasTrack {
+		p.drawScrollbar(screen, geom)
 	}
 }
 

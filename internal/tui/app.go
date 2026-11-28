@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/goatherdai/yaah/internal/control"
 	"github.com/goatherdai/yaah/internal/todo"
 	"github.com/goatherdai/yaah/internal/tui/colors"
@@ -97,6 +98,11 @@ type App struct {
 	// exception (see transcript.Model).
 	tr   *transcript.Model
 	pane *transcript.Pane
+
+	// scrollDrag is the scrollbar thumb's grab distance (pointer row
+	// minus thumb top) while a thumb drag is active; negative when no
+	// drag is in progress. UI-goroutine only (scrollbar_input.go).
+	scrollDrag int
 
 	Banner     *tview.TextView
 	Input      *tview.TextArea
@@ -277,6 +283,15 @@ func New(version string) *App {
 	}
 	t.tr = transcript.NewModel(t.Theme)
 	t.pane = transcript.NewPane(t.tr)
+	// Scrollbar colors follow the theme; NO_COLOR keeps the terminal's
+	// default foreground so the chrome stays visible but unstyled.
+	track, thumb := tcell.ColorDefault, tcell.ColorDefault
+	if !t.Theme.NoColor {
+		track = tcell.GetColor(t.Theme.Dim)
+		thumb = tcell.GetColor(t.Theme.Heading)
+	}
+	t.pane.SetScrollbarColors(track, thumb)
+	t.scrollDrag = -1
 	t.buildUI()
 	return t
 }

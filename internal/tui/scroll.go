@@ -208,7 +208,7 @@ func (t *App) paneMouseCapture(action tview.MouseAction, event *tcell.EventMouse
 	case tview.MouseScrollDown:
 		t.scrollPaneDown(wheelStep)
 	default:
-		return action, event
+		return t.scrollbarMouse(action, event)
 	}
 	// Claim the wheel: tview redraws after a mouse event only when a
 	// handler consumes it, and the pane's plain Box never does — the
