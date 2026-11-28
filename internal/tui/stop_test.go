@@ -191,3 +191,31 @@ func TestCtrlCInModalKeepsEscapeHatch(t *testing.T) {
 		t.Fatal("Ctrl-C in a modal stacked a confirm dialog")
 	}
 }
+
+// TestStopEchoDoesNotDuplicateSealedPartial pins the render invariant
+// behind the stop echo: the streamed buffer and DoneEvent.Response are
+// two renderings of one text, so after the echo's flush painted the
+// partial, the DoneEvent must not paint it a second time.
+func TestStopEchoDoesNotDuplicateSealedPartial(t *testing.T) {
+	ui := gateApp()
+	done := make(chan struct{})
+	defer close(done)
+	drainUIEvents(ui, done)
+
+	ui.HandleEvent(&agent.TokenDeltaEvent{Text: "the partial"})
+	ui.queueUpdate(func() { ui.requestStop() })
+	waitForUI(t, ui, func() bool {
+		return strings.Contains(ui.tr.PaintedText(), "⏹ interrupted")
+	}, "the stop echo never landed")
+
+	ui.HandleEvent(&agent.DoneEvent{Response: "the partial", Interrupted: true, ContextWindow: 8000})
+	waitForUI(t, ui, func() bool {
+		return strings.Contains(ui.tr.PaintedText(), "◌ interrupted")
+	}, "the seal marker never landed")
+
+	ui.queueUpdate(func() {
+		if got := strings.Count(ui.tr.PaintedText(), "the partial"); got != 1 {
+			t.Errorf("the partial rendered %d times, want exactly 1", got)
+		}
+	})
+}

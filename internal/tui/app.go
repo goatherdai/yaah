@@ -184,7 +184,12 @@ type App struct {
 	agentActive          bool
 	// stopArmedAt is the instant the first Esc of a stop arm was
 	// pressed (see stop.go); the zero time is disarmed.
-	stopArmedAt         time.Time
+	stopArmedAt time.Time
+	// stopEchoFlushed reports that the stop echo's flush painted the
+	// interrupted partial, so the turn's DoneEvent must not render
+	// DoneEvent.Response over it a second time (see stop.go EchoStop).
+	// Cleared at DoneEvent with stopArmedAt.
+	stopEchoFlushed     atomic.Bool
 	subAgents           []*subagent.Block
 	subAgentsBusy       atomic.Bool
 	activityBusy        atomic.Bool

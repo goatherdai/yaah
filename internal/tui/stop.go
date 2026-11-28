@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/goatherdai/yaah/internal/tui/components/question"
@@ -55,9 +54,15 @@ func (t *App) requestStop() {
 
 // EchoStop flushes in-flight streamed tokens into the conversation and
 // renders the stop echo, exactly as EchoPrompt does for a steer: the
-// streamed partial seals ahead of the echo instead of after it.
+// streamed partial seals ahead of the echo instead of after it. When the
+// flush painted the partial, stopEchoFlushed latches so the turn's
+// DoneEvent does not render DoneEvent.Response a second time — the
+// response and the streamed buffer are two renderings of one text, and
+// the request-time flush already chose the buffer.
 func (t *App) EchoStop() {
-	t.flushPendingTokens()
+	if t.flushPendingTokens() {
+		t.stopEchoFlushed.Store(true)
+	}
 	t.tr.Append(transcript.TextItem(
 		t.Theme.Tag(t.Theme.User, stopEchoDisplay),
 	))
@@ -68,7 +73,7 @@ func (t *App) EchoStop() {
 // sealed partial — the "it ended" confirmation that follows the "you
 // asked" echo, matching the interrupted tool-block vocabulary.
 func (t *App) sealInterrupted() {
-	t.tr.Append(transcript.TextItem(fmt.Sprintf("[%s]◌ interrupted[-]", t.Theme.Dim)))
+	t.tr.Append(transcript.TextItem(t.Theme.Tag(t.Theme.Dim, "◌ interrupted")))
 	t.markDirty()
 }
 

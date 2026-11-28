@@ -161,6 +161,21 @@ func (r *Runner) connectChild(ctx context.Context, c acp.Client, cwd string) (*c
 	return &connection{conn: conn, close: closeFn, stderr: stderr.String}, nil
 }
 
+// classifyCtxStop records the run's stop classification when an error
+// ends the turn, whatever stage it failed at: a deadline is the run
+// budget's timeout — retainedStopReason checks HaltedBySupervisor first,
+// so leave that clear here — and any other cancellation is a supervisor
+// halt. A stage failure with a live context records nothing: the
+// envelope classifies how a started run ended, not why it never started.
+func classifyCtxStop(ctx context.Context, err error) {
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
+		jobs.CaptureSubAgentStop(ctx, jobs.SubAgentStop{FinishReason: "timeout"})
+	case ctx.Err() != nil:
+		jobs.CaptureSubAgentStop(ctx, jobs.SubAgentStop{HaltedBySupervisor: true, FinishReason: "cancelled"})
+	}
+}
+
 // Run drives one prompt turn in the external agent and returns its final text.
 func (r *Runner) Run(ctx context.Context, prompt string, params jobs.SubAgentParams) (string, error) {
 	if err := r.Manifest.Validate(); err != nil {
@@ -184,6 +199,7 @@ func (r *Runner) Run(ctx context.Context, prompt string, params jobs.SubAgentPar
 		conn, err = r.connectChild(ctx, collector, cwd)
 	}
 	if err != nil {
+		classifyCtxStop(ctx, err)
 		return "", err
 	}
 	defer conn.close()
@@ -193,6 +209,7 @@ func (r *Runner) Run(ctx context.Context, prompt string, params jobs.SubAgentPar
 		ClientInfo:      &acp.Implementation{Name: "yaah-acpclient", Version: "0"},
 	})
 	if err != nil {
+		classifyCtxStop(ctx, err)
 		return "", stageErr("initialize", err, conn.stderr)
 	}
 
@@ -211,6 +228,7 @@ func (r *Runner) Run(ctx context.Context, prompt string, params jobs.SubAgentPar
 
 	session, err := conn.conn.NewSession(ctx, req)
 	if err != nil {
+		classifyCtxStop(ctx, err)
 		return "", stageErr("session/new", err, conn.stderr)
 	}
 
@@ -255,14 +273,7 @@ func (r *Runner) Run(ctx context.Context, prompt string, params jobs.SubAgentPar
 		Prompt:    []acp.ContentBlock{acp.TextBlock(turnPrompt)},
 	})
 	if err != nil {
-		switch {
-		case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
-			// A run-budget timeout is not a supervisor halt. retainedStopReason
-			// checks HaltedBySupervisor first, so leave it clear here.
-			jobs.CaptureSubAgentStop(ctx, jobs.SubAgentStop{FinishReason: "timeout"})
-		case ctx.Err() != nil:
-			jobs.CaptureSubAgentStop(ctx, jobs.SubAgentStop{HaltedBySupervisor: true, FinishReason: "cancelled"})
-		}
+		classifyCtxStop(ctx, err)
 		return "", stageErr("session/prompt", err, conn.stderr)
 	}
 
