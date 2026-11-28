@@ -47,9 +47,10 @@ func TestRefreshMessages_AppendsNewTailOnly(t *testing.T) {
 }
 
 // msgColumn trims a painted row to the messages column, cutting at the
-// right pane's border glyph when present.
+// scrollbar's track/thumb glyphs and the right pane's border glyph when
+// present — all pane chrome, never content.
 func msgColumn(row string) string {
-	if i := strings.Index(row, "│"); i >= 0 {
+	if i := strings.IndexAny(row, "│┃"); i >= 0 {
 		row = row[:i]
 	}
 	return row

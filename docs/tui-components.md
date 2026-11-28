@@ -43,6 +43,24 @@ The **prompt echo** is a `TextView` pinned at the top of the messages column
 showing the current user prompt so it never scrolls away; it grows from 1 to at
 most 3 rows.
 
+## Conversation pane and scrollbar
+
+The conversation pane is `transcript.Pane`, a custom primitive that paints the
+`transcript.Model`'s wrapped-row table viewport-bounded per frame. The pane's
+rightmost inner column is a **scrollbar**, reserved unconditionally so the wrap
+width never changes when content becomes scrollable:
+
+- The thumb is honest to the **painted window** — its extent covers the rows
+  the model has painted, not the items still collapsed behind the "earlier
+  messages" seam. Dragging to the top backfills older items (the thumb then
+  shrinks against the longer row table); dragging to the bottom seam returns
+  to live-tail follow.
+- Mouse: press on the thumb grabs and drags it; a press above or below pages
+  one viewport (riding the same seams as the keyboard PgUp/PgDn). The wheel
+  and keyboard paths are unchanged.
+- Track and thumb are painted as chrome after the content rows, never content:
+  search, text extraction, and wrapping never see scrollbar glyphs.
+
 ## Activity state machine
 
 The activity line (`components/activity`) tracks the agent's current phase
